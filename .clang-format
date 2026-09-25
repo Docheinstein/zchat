@@ -1,0 +1,19 @@
+﻿---
+AccessModifierOffset: -4
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: None
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakTemplateDeclarations: Yes
+BreakConstructorInitializers: AfterColon
+ColumnLimit: 120
+IndentWidth: 4
+IndentAccessModifiers: false
+NamespaceIndentation: Inner
+PackConstructorInitializers: Never
+PointerAlignment: Left
+SpaceBeforeCpp11BracedList: true
+SpaceBeforeParens: ControlStatements
+...

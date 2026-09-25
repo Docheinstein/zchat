@@ -1,0 +1,9 @@
+build*/
+cmake-build-*/
+tmp/
+
+.idea/
+.vscode/
+*.iml
+
+.DS_Store
