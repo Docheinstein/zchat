@@ -18,6 +18,9 @@ enum class PacketType : char {
     // Versions before colors sent black and white ones as 'A', which are still shown; they do not know 'P', so
     // they show nothing rather than the color codes.
     Art = 'P',
+    // Something happening in a game played in the chat: the text starts with the game's name, see game::Games.
+    // Older versions do not know 'G' and ignore it.
+    Game = 'G',
 };
 
 struct Packet {

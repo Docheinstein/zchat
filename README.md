@@ -54,6 +54,9 @@ While chatting:
 | drop an image      | drag an image file onto the window: the line becomes `/image PATH`, to send with Enter (or add a size first) |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
+| `/game`            | list the games everyone in the chat can play           |
+| `/game finger`     | fastest finger: some words show up for everyone in 3 seconds, the first to type them exactly wins |
+| `/game scores`     | who won what in this session                           |
 | `/update`          | get the latest zchat from git, build it and restart (see below) |
 | `/help`            | list commands                                          |
 | `/quit`, Ctrl+C, Ctrl+D | leave                                             |
@@ -181,6 +184,11 @@ cmake --build build-win
   obfuscation, not real encryption: anyone with zchat, or this code, can read the packets. Plaintext packets from
   older versions are still understood, but older versions cannot read the scrambled ones, so they don't see newer
   peers: everybody should `/update`.
+* **Games** (`/game NAME`) have no server either: whoever starts a round is its referee, and sends everybody what
+  happens in it as `GAME` packets, whose text starts with the game's name (`finger go <round> <words>`). In fastest
+  finger the referee picks the words, and the first message with them that reaches it wins. If two rounds start at
+  once, everybody plays the one with the lowest round number; if the referee leaves, the others give up the round
+  after a while. Older versions ignore `GAME` packets, so they just see people typing funny words.
 * Incoming names and messages are sanitized (control characters stripped) so nobody can mess with your terminal.
 * The input line is edited in raw mode, so incoming messages are printed above what you are typing instead of
   getting mixed with it.
@@ -188,7 +196,7 @@ cmake --build build-win
 Wire format, one datagram per packet (fields separated by `\n`):
 
 ```
-ZCHAT1 \n <J|H|M|L|P> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
+ZCHAT1 \n <J|H|M|L|P|G> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
 ```
 
 which is sent scrambled (see `src/cipher.hpp`):

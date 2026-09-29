@@ -1,5 +1,6 @@
 #include "chat.hpp"
 #include "config.hpp"
+#include "game.hpp"
 #include "image.hpp"
 #include "markup.hpp"
 #include "names.hpp"
@@ -144,6 +145,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  @NAME        tag someone in a message: they hear a sound");
     chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
     chat.notice("  @everyone    tag all the people in the chat: they all hear a sound");
+    chat.notice("  /game        list the games everyone in the chat can play");
+    chat.notice("  /game NAME   start one, like /game finger: the first to type the words shown wins");
     chat.notice("  /update      get the latest zchat, build it and restart");
     chat.notice("  /help        show this help");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
@@ -373,6 +376,7 @@ int run(const Options& options, bool& restart) {
         }
         return std::format("/image {}", line);
     });
+    zchat::game::Games games(chat, terminal);
     chat.start();
 
     // Declared after the chat and the terminal it uses, so that an update in progress is cancelled first.
@@ -424,6 +428,12 @@ int run(const Options& options, bool& restart) {
             forget_nick(chat, rng);
         } else if (input == "/image" || input.starts_with("/image ")) {
             send_image(chat, input.substr(std::min(input.size(), std::string_view("/image ").size())));
+        } else if (input == "/game" || input.starts_with("/game ")) {
+            std::string_view arg = input.substr(std::min(input.size(), std::string_view("/game ").size()));
+            while (!arg.empty() && arg.front() == ' ') {
+                arg.remove_prefix(1);
+            }
+            games.command(arg);
         } else if (input == "/update") {
             if (!updater.start()) {
                 chat.notice("An update is already in progress.");

@@ -93,6 +93,19 @@ void Chat::say(std::string_view text) {
     const std::string clean = text::sanitize(text, max_text_bytes);
     send(PacketType::Message, clean);
     print_message(id_, name(), clean);
+    std::scoped_lock lock(hooks_mutex_);
+    if (hooks_.message) {
+        hooks_.message(id_, name(), clean);
+    }
+}
+
+void Chat::set_game_hooks(GameHooks hooks) {
+    std::scoped_lock lock(hooks_mutex_);
+    hooks_ = std::move(hooks);
+}
+
+void Chat::send_game(std::string_view text) {
+    send(PacketType::Game, text);
 }
 
 void Chat::draw(std::string_view art) {
@@ -308,6 +321,10 @@ void Chat::run(std::stop_token stop) {
             prune_silent_peers();
             next_heartbeat = now + heartbeat_interval;
         }
+        std::scoped_lock lock(hooks_mutex_);
+        if (hooks_.tick) {
+            hooks_.tick();
+        }
     }
 }
 
@@ -389,11 +406,23 @@ void Chat::handle(const Packet& packet) {
         // Let the newcomer know we are here.
         send(PacketType::Here);
         break;
-    case PacketType::Message:
+    case PacketType::Message: {
         if (print_message(packet.sender, packet.name, packet.text)) {
             terminal_.bell();
         }
+        std::scoped_lock lock(hooks_mutex_);
+        if (hooks_.message) {
+            hooks_.message(packet.sender, packet.name, packet.text);
+        }
         break;
+    }
+    case PacketType::Game: {
+        std::scoped_lock lock(hooks_mutex_);
+        if (hooks_.packet) {
+            hooks_.packet(packet.sender, packet.name, packet.text);
+        }
+        break;
+    }
     case PacketType::Art:
         print_art(packet.sender, packet.name, packet.text);
         break;

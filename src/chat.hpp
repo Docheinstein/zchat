@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -76,6 +77,28 @@ public:
     // Prints an informational line (joins, leaves, command output).
     void notice(std::string_view text) const;
 
+    // Our id, which changes with the color.
+    std::uint64_t id() const {
+        return id_;
+    }
+
+    // What the games played in the chat hear about, see game::Games. Called on the chat thread, but a message of
+    // ours on the thread that said it; never at the same time.
+    struct GameHooks {
+        // A Game packet from another peer.
+        std::function<void(std::uint64_t sender, std::string_view name, std::string_view text)> packet;
+        // Every chat line, ours included, after it is printed.
+        std::function<void(std::uint64_t sender, std::string_view name, std::string_view text)> message;
+        // Called a few times per second, for the game's timers.
+        std::function<void()> tick;
+    };
+
+    // Replaces the game hooks; empty ones are not called. Once it returns, the old ones are not running anymore.
+    void set_game_hooks(GameHooks hooks);
+
+    // Sends a Game packet to everybody (not to us).
+    void send_game(std::string_view text);
+
 private:
     using clock = std::chrono::steady_clock;
 
@@ -109,6 +132,10 @@ private:
     std::map<std::uint64_t, Peer> peers_;
     // Ids we used before changing color: our own late packets from them must not look like another peer.
     std::vector<std::uint64_t> old_ids_;
+
+    // Held while a hook runs, so set_game_hooks() can wait for it.
+    std::mutex hooks_mutex_;
+    GameHooks hooks_;
 
     std::jthread thread_;
 };
