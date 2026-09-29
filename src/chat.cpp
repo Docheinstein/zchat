@@ -78,6 +78,17 @@ void Chat::say(std::string_view text) {
     print_message(id_, name(), clean);
 }
 
+void Chat::draw(std::string_view art) {
+    Packet packet;
+    packet.type = PacketType::Art;
+    packet.name = name();
+    packet.text = std::string(art);
+    // Cleaned up the same way the others will see it.
+    const std::string clean = decode(encode(packet)).value_or(Packet {}).text;
+    send(PacketType::Art, clean);
+    print_art(id_, name(), clean);
+}
+
 void Chat::set_name(std::string name) {
     {
         std::scoped_lock lock(name_mutex_);
@@ -115,6 +126,19 @@ void Chat::print_message(std::uint64_t id, std::string_view name, std::string_vi
     const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", timestamp()) : timestamp();
     terminal_.print(
         std::format("{} {}: {}", time, colored_name(id, name), markup::render(text, terminal_.colors())));
+}
+
+void Chat::print_art(std::uint64_t id, std::string_view name, std::string_view art) const {
+    const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", timestamp()) : timestamp();
+    // All in one print, so lines printed meanwhile by other threads do not end up in the middle of the drawing.
+    std::string out = std::format("{} {}:", time, colored_name(id, name));
+    while (!art.empty()) {
+        const auto nl = art.find('\n');
+        out += "\n      ";
+        out += art.substr(0, nl);
+        art.remove_prefix(nl == std::string_view::npos ? art.size() : nl + 1);
+    }
+    terminal_.print(out);
 }
 
 std::vector<std::string> Chat::peers() const {
@@ -257,6 +281,9 @@ void Chat::handle(const Packet& packet) {
         break;
     case PacketType::Message:
         print_message(packet.sender, packet.name, packet.text);
+        break;
+    case PacketType::Art:
+        print_art(packet.sender, packet.name, packet.text);
         break;
     case PacketType::Here:
     case PacketType::Leave:

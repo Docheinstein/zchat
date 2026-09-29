@@ -198,7 +198,8 @@ std::optional<std::string> BroadcastSocket::receive(std::chrono::milliseconds ti
     if (::select(static_cast<int>(s + 1), &read_set, nullptr, nullptr, &tv) <= 0) {
         return std::nullopt;
     }
-    std::array<char, 2048> buffer;
+    // Room for the biggest packet, an Art drawing.
+    std::array<char, 4096> buffer;
     const auto n = ::recvfrom(s, buffer.data(), static_cast<int>(buffer.size()), 0, nullptr, nullptr);
     if (n <= 0) {
         return std::nullopt;

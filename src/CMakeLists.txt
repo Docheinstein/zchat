@@ -4,6 +4,7 @@ target_sources(zchat PUBLIC
     chat.cpp
     color.cpp
     config.cpp
+    image.cpp
     main.cpp
     markup.cpp
     names.cpp
@@ -14,6 +15,8 @@ target_sources(zchat PUBLIC
 )
 
 target_include_directories(zchat PUBLIC .)
+# Third party code: its warnings are not ours to fix.
+target_include_directories(zchat SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/third_party/stb)
 
 find_package(Threads REQUIRED)
 target_link_libraries(zchat PRIVATE Threads::Threads)

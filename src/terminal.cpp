@@ -406,7 +406,10 @@ void Terminal::print(std::string_view line) {
         return;
     }
     std::string out = clear_line_locked();
-    out += line;
+    for (const char c : line) {
+        // In raw mode, a line feed alone may not go back to the start of the line.
+        out += c == '\n' ? std::string_view("\r\n") : std::string_view(&c, 1);
+    }
     out += "\r\n";
     write(out);
     redraw_locked();

@@ -53,6 +53,9 @@ public:
     // Sends a chat line to everybody.
     void say(std::string_view text);
 
+    // Sends a picture drawn with characters to everybody: its rows, separated by '\n'.
+    void draw(std::string_view art);
+
     // Tells the others this peer is leaving and stops listening. Safe to call more than once.
     void stop();
 
@@ -83,6 +86,7 @@ private:
     void handle(const Packet& packet);
     void send(PacketType type, std::string_view text = {});
     void print_message(std::uint64_t id, std::string_view name, std::string_view text) const;
+    void print_art(std::uint64_t id, std::string_view name, std::string_view art) const;
     void prune_silent_peers();
 
     // Changes with the color, see set_color().
