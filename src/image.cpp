@@ -1,6 +1,7 @@
 #include "image.hpp"
 
 #include "color.hpp"
+#include "protocol.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +10,7 @@
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -42,8 +44,143 @@ namespace {
     constexpr std::uintmax_t max_file_bytes = 64 * 1024 * 1024;
     constexpr long long max_pixels = 64LL * 1024 * 1024;
 
-    // From dark to bright: a bright pixel gets a character with more ink, as terminals are usually dark.
+    // Every character of a drawing gets its hue from a color code before it (see color_code()). With colors,
+    // render() shows each one as a solid block, as bright as its place in the ramp (so pictures look the same in
+    // every terminal and font), dimmed further by a brightness code (see dim_levels); quadrant blocks, for cells
+    // with bright and dark parts, keep their shape. Without colors, the ASCII characters are shown as they are.
     constexpr std::string_view ramp = " .:-=+*#%@";
+
+    // How bright the characters after a code are, as a fraction of what their place in the ramp makes them; every row
+    // starts at full.
+    struct DimLevel {
+        char code;
+        double level;
+    };
+    constexpr std::array dim_levels = std::to_array<DimLevel>({
+        {'(', 0.08},
+        {')', 0.12},
+        {'[', 0.17},
+        {']', 0.23},
+        {'{', 0.3},
+        {'}', 0.38},
+        {'<', 0.47},
+        {'>', 0.56},
+        {'^', 0.66},
+        {'~', 0.77},
+        {';', 0.88},
+        {'?', 1.0},
+    });
+    constexpr std::size_t full_level = dim_levels.size() - 1;
+
+    std::optional<double> dim_of_code(char code) {
+        if (code == '`') {
+            return 0.0;
+        }
+        for (const auto& dim : dim_levels) {
+            if (dim.code == code) {
+                return dim.level;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Indexed by the lit quarters: 1 top left, 2 top right, 4 bottom left, 8 bottom right.
+    constexpr std::array<std::string_view, 16> quadrants = {" ", "▘", "▝", "▀", "▖", "▌", "▞", "▛",
+                                                            "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█"};
+
+    // Two colors per character: a background, set by '&' followed by a color code and a brightness code ('|' goes
+    // back to none, the terminal's), and a foreground for the ink of the character, which can be black ('`' as its
+    // brightness). With them, the blocks below draw an edge anywhere in a character to an eighth of its size, and
+    // keep thin dark outlines that would otherwise be averaged away. They are all drawn by the terminal itself in
+    // Windows Terminal (and by most fonts) to fill exactly their part of the character.
+    constexpr char background_code = '&';
+    constexpr char no_background_code = '|';
+    constexpr char black_code = '`';
+
+    // The part of a character a block inks, on an 8 x 8 grid: bit row * 8 + column.
+    struct Block {
+        std::string_view glyph;
+        std::uint64_t mask;
+    };
+    constexpr std::uint64_t rows_mask(int from, int to) {
+        std::uint64_t mask = 0;
+        for (int r = from; r < to; ++r) {
+            mask |= std::uint64_t {0xFF} << (r * 8);
+        }
+        return mask;
+    }
+    constexpr std::uint64_t cols_mask(int from, int to) {
+        std::uint64_t mask = 0;
+        for (int r = 0; r < 8; ++r) {
+            for (int c = from; c < to; ++c) {
+                mask |= std::uint64_t {1} << (r * 8 + c);
+            }
+        }
+        return mask;
+    }
+    constexpr std::uint64_t top_left = rows_mask(0, 4) & cols_mask(0, 4);
+    constexpr std::uint64_t top_right = rows_mask(0, 4) & cols_mask(4, 8);
+    constexpr std::uint64_t bottom_left = rows_mask(4, 8) & cols_mask(0, 4);
+    constexpr std::uint64_t bottom_right = rows_mask(4, 8) & cols_mask(4, 8);
+    constexpr std::array blocks = std::to_array<Block>({
+        {"▀", rows_mask(0, 4)},
+        {"▔", rows_mask(0, 1)},
+        {"▁", rows_mask(7, 8)},
+        {"▂", rows_mask(6, 8)},
+        {"▃", rows_mask(5, 8)},
+        {"▄", rows_mask(4, 8)},
+        {"▅", rows_mask(3, 8)},
+        {"▆", rows_mask(2, 8)},
+        {"▇", rows_mask(1, 8)},
+        {"▏", cols_mask(0, 1)},
+        {"▎", cols_mask(0, 2)},
+        {"▍", cols_mask(0, 3)},
+        {"▌", cols_mask(0, 4)},
+        {"▋", cols_mask(0, 5)},
+        {"▊", cols_mask(0, 6)},
+        {"▉", cols_mask(0, 7)},
+        {"▐", cols_mask(4, 8)},
+        {"▕", cols_mask(7, 8)},
+        {"▘", top_left},
+        {"▝", top_right},
+        {"▖", bottom_left},
+        {"▗", bottom_right},
+        {"▚", top_left | bottom_right},
+        {"▞", top_right | bottom_left},
+        {"▛", top_left | top_right | bottom_left},
+        {"▜", top_left | top_right | bottom_right},
+        {"▙", top_left | bottom_left | bottom_right},
+        {"▟", top_right | bottom_left | bottom_right},
+    });
+
+    // How much of its character a block inks, or nullopt for anything else.
+    std::optional<double> block_coverage(std::string_view glyph) {
+        if (glyph == "█") {
+            return 1.0;
+        }
+        for (const auto& block : blocks) {
+            if (block.glyph == glyph) {
+                return static_cast<double>(std::popcount(block.mask)) / 64;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // How much closer to its pixels a character with two colors must be than one of a single color, as the squared
+    // difference of their colors (0 to 3 for each of the 64 points): a shape only for real detail, which also saves
+    // bytes.
+    constexpr double detail_margin = 64 * 0.004;
+
+    // Contrast is stretched only for washed out pictures, whose brightness spans less than this, and brightened at
+    // most so much: a dark picture stays darker than a bright one, and a picture with good contrast as it is.
+    constexpr double washed_out_range = 0.6;
+    constexpr double max_gain = 2.0;
+    // Darker than this is blank.
+    constexpr double blank_below = 0.05;
+    // A level already set is kept when it is this close to the right one, which saves a code.
+    constexpr double keep_level_within = 0.05;
+    // How much better quadrants must match than an even block to be used: only for real edges.
+    constexpr double quadrant_margin = 0.04;
 
     constexpr std::array<std::string_view, 10> extensions = {".png", ".jpg", ".jpeg", ".gif", ".bmp",
                                                              ".tga", ".psd", ".ppm",  ".pgm", ".pnm"};
@@ -250,54 +387,309 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
         cols = std::clamp<std::size_t>(std::llround(static_cast<double>(width) * rows * 2.0 / height), 1, max_cols);
     }
 
-    // The average brightness and color of the pixels under each character.
+    // The average brightness and color of the pixels under each character, and of each quarter of it
+    // (top left, top right, bottom left, bottom right).
     std::vector<double> cells(rows * cols);
+    std::vector<std::array<double, 4>> quarters(rows * cols);
     std::vector<char> codes(rows * cols);
     for (std::size_t r = 0; r < rows; ++r) {
         const std::size_t y0 = r * height / rows;
         const std::size_t y1 = std::max(y0 + 1, (r + 1) * height / rows);
+        // With a single row (or column) of pixels, both halves are that row.
+        const std::size_t ym = y1 - y0 >= 2 ? (y0 + y1) / 2 : y1;
         for (std::size_t c = 0; c < cols; ++c) {
             const std::size_t x0 = c * width / cols;
             const std::size_t x1 = std::max(x0 + 1, (c + 1) * width / cols);
-            double sum = 0;
+            const std::size_t xm = x1 - x0 >= 2 ? (x0 + x1) / 2 : x1;
+            std::array<double, 4> sums {};
+            std::array<double, 4> counts {};
             std::array<double, 3> rgb {};
             for (std::size_t y = y0; y < y1; ++y) {
                 for (std::size_t x = x0; x < x1; ++x) {
                     const unsigned char* pixel = pixels.get() + (y * width + x) * 4;
-                    sum += brightness(pixel);
+                    const std::size_t q = (x < xm ? 0 : 1) + (y < ym ? 0 : 2);
+                    sums[q] += brightness(pixel);
+                    counts[q] += 1;
                     for (std::size_t k = 0; k < 3; ++k) {
                         rgb[k] += static_cast<double>(pixel[k]) * pixel[3];
                     }
                 }
             }
-            cells[r * cols + c] = sum / static_cast<double>((y1 - y0) * (x1 - x0));
-            codes[r * cols + c] = color_code(rgb);
+            const std::size_t i = r * cols + c;
+            cells[i] = (sums[0] + sums[1] + sums[2] + sums[3]) / (counts[0] + counts[1] + counts[2] + counts[3]);
+            for (std::size_t q = 0; q < 4; ++q) {
+                // A quarter without pixels (a cell one pixel wide or tall) looks like the whole cell.
+                quarters[i][q] = counts[q] > 0 ? sums[q] / counts[q] : cells[i];
+            }
+            codes[i] = color_code(rgb);
         }
     }
 
-    // Stretch the contrast, so dim or washed out pictures use the whole ramp.
+    // Stretch the contrast of washed out pictures, so they use all the shades, but brighten dim ones only so much:
+    // a dark picture should still look dark.
     const auto [lo, hi] = std::ranges::minmax(cells);
-    if (hi - lo > 0.05) {
-        for (double& v : cells) {
-            v = (v - lo) / (hi - lo);
+    if (hi - lo > 0.05 && hi - lo < washed_out_range) {
+        const double gain = std::min(1 / (hi - lo), max_gain);
+        const auto stretch = [&](double& v) {
+            v = std::clamp((v - lo) * gain, 0.0, 1.0);
+        };
+        std::ranges::for_each(cells, stretch);
+        for (auto& q : quarters) {
+            std::ranges::for_each(q, stretch);
         }
     }
+
+    // The ways of drawing a row: Rich with brightness codes and quadrants, Plain with the ramp only (like pictures
+    // were first drawn), for when a row would not fit in a packet otherwise (see max_art_row_bytes).
+    enum class Style { Rich, Plain };
+    struct State {
+        char color = 0;
+        std::size_t dim = full_level;
+    };
+    struct Choice {
+        std::string_view text = " ";
+        std::size_t dim = full_level;
+    };
+    const auto ramp_char = [](std::size_t step) {
+        return ramp.substr(step, 1);
+    };
+    const auto choose = [&](std::size_t i, const State& state, Style style) {
+        const auto& q = quarters[i];
+        const auto spread = [&](double shown) {
+            return (std::abs(shown - q[0]) + std::abs(shown - q[1]) + std::abs(shown - q[2]) + std::abs(shown - q[3])) / 4;
+        };
+        const double last = static_cast<double>(ramp.size() - 1);
+        if (cells[i] < blank_below) {
+            return Choice {};
+        }
+        if (style == Style::Plain) {
+            return Choice {ramp_char(static_cast<std::size_t>(std::lround(cells[i] * last)))};
+        }
+
+        // An even area: the ramp character bright enough for it (so the picture reads as ASCII art without colors),
+        // dimmed to the right brightness.
+        const auto step = std::clamp<std::size_t>(static_cast<std::size_t>(std::ceil(cells[i] * last)), 1, ramp.size() - 1);
+        const double wanted = std::min(1.0, cells[i] * last / static_cast<double>(step));
+        // The nearest level, or the one already set when it is close enough, which saves a code.
+        std::size_t dim = state.dim;
+        if (std::abs(dim_levels[dim].level - wanted) > keep_level_within) {
+            dim = static_cast<std::size_t>(std::ranges::min_element(dim_levels, {}, [&](const DimLevel& l) {
+                                               return std::abs(l.level - wanted);
+                                           }) -
+                                           dim_levels.begin());
+        }
+        const Choice uniform {ramp_char(step), dim};
+        const double uniform_error = spread(dim_levels[dim].level * static_cast<double>(step) / last);
+
+        // Bright and dark parts: quadrants, the lit quarters in the color at some level, the others dark, when they
+        // look clearly better. (15, all lit, is an even block.)
+        Choice quadrant;
+        double quadrant_error = std::numeric_limits<double>::infinity();
+        for (std::size_t lit = 1; lit < 15; ++lit) {
+            for (std::size_t d = 0; d < dim_levels.size(); ++d) {
+                double error = 0;
+                for (std::size_t k = 0; k < 4; ++k) {
+                    error += std::abs((lit >> k & 1 ? dim_levels[d].level : 0.0) - q[k]);
+                }
+                if (error / 4 < quadrant_error) {
+                    quadrant_error = error / 4;
+                    quadrant = {quadrants[lit], d};
+                }
+            }
+        }
+        return quadrant_error + quadrant_margin < uniform_error ? quadrant : uniform;
+    };
+
+    // The best way: two colors per character, and the block that makes them look the most like its pixels. Each
+    // character is looked at as 8 x 8 points, with the average color of the pixels under each.
+    struct Paint {
+        char hue = 0;
+        // Index in dim_levels, or nullopt for black.
+        std::optional<std::size_t> dim;
+        bool operator==(const Paint&) const = default;
+    };
+    const auto paint_of = [&](const std::array<double, 3>& rgb) {
+        const double strongest = std::max({rgb[0], rgb[1], rgb[2]});
+        if (strongest < blank_below) {
+            return Paint {};
+        }
+        const auto dim = static_cast<std::size_t>(std::ranges::min_element(dim_levels, {}, [&](const DimLevel& l) {
+                                                      return std::abs(l.level - strongest);
+                                                  }) -
+                                                  dim_levels.begin());
+        return Paint {color_code(rgb), dim};
+    };
+    const auto two_color_row = [&](std::size_t r) {
+        const std::size_t y0 = r * height / rows;
+        const std::size_t y1 = std::max(y0 + 1, (r + 1) * height / rows);
+        std::string line;
+        // Each row starts over without a color, at full brightness and without a background.
+        char hue = 0;
+        std::size_t dim = full_level;
+        bool black = false;
+        std::optional<Paint> background;
+        for (std::size_t c = 0; c < cols; ++c) {
+            const std::size_t x0 = c * width / cols;
+            const std::size_t x1 = std::max(x0 + 1, (c + 1) * width / cols);
+            std::array<std::array<double, 3>, 64> points {};
+            for (std::size_t py = 0; py < 8; ++py) {
+                const std::size_t ya = y0 + py * (y1 - y0) / 8;
+                const std::size_t yb = std::max(ya + 1, y0 + (py + 1) * (y1 - y0) / 8);
+                for (std::size_t px = 0; px < 8; ++px) {
+                    const std::size_t xa = x0 + px * (x1 - x0) / 8;
+                    const std::size_t xb = std::max(xa + 1, x0 + (px + 1) * (x1 - x0) / 8);
+                    auto& point = points[py * 8 + px];
+                    for (std::size_t y = ya; y < yb; ++y) {
+                        for (std::size_t x = xa; x < xb; ++x) {
+                            const unsigned char* pixel = pixels.get() + (y * width + x) * 4;
+                            for (std::size_t k = 0; k < 3; ++k) {
+                                // On a black background, like the terminal's.
+                                point[k] += pixel[k] * pixel[3] / (255.0 * 255.0);
+                            }
+                        }
+                    }
+                    for (double& v : point) {
+                        v /= static_cast<double>((yb - ya) * (xb - xa));
+                    }
+                }
+            }
+            // For a set of points in one color and the others in another, the best colors are their averages, and
+            // what is left is how much the points differ from them.
+            double squares = 0;
+            std::array<double, 3> total {};
+            for (const auto& p : points) {
+                for (std::size_t k = 0; k < 3; ++k) {
+                    squares += p[k] * p[k];
+                    total[k] += p[k];
+                }
+            }
+            const auto norm = [](const std::array<double, 3>& s) {
+                return s[0] * s[0] + s[1] * s[1] + s[2] * s[2];
+            };
+            const auto average = [](std::array<double, 3> s, double n) {
+                for (double& v : s) {
+                    v /= n;
+                }
+                return s;
+            };
+            const double even_error = squares - norm(total) / 64;
+            double best_error = even_error;
+            const Block* best = nullptr;
+            std::array<double, 3> ink {};
+            std::array<double, 3> rest {};
+            for (const auto& block : blocks) {
+                std::array<double, 3> in {};
+                for (std::size_t b = 0; b < 64; ++b) {
+                    if (block.mask >> b & 1) {
+                        for (std::size_t k = 0; k < 3; ++k) {
+                            in[k] += points[b][k];
+                        }
+                    }
+                }
+                const auto n_in = static_cast<double>(std::popcount(block.mask));
+                const std::array<double, 3> out {total[0] - in[0], total[1] - in[1], total[2] - in[2]};
+                const double error = squares - norm(in) / n_in - norm(out) / (64 - n_in);
+                if (error + detail_margin < best_error) {
+                    best_error = error + detail_margin;
+                    best = &block;
+                    ink = average(in, n_in);
+                    rest = average(out, 64 - n_in);
+                }
+            }
+
+            Paint fg = paint_of(best ? ink : average(total, 64));
+            std::optional<Paint> bg;
+            std::string_view glyph = "@"; // an even character: '@', a full block when shown (see render())
+            if (best) {
+                glyph = best->glyph;
+                if (const Paint p = paint_of(rest); p.dim) {
+                    bg = p;
+                } else if (!fg.dim) {
+                    // Both black.
+                    glyph = " ";
+                }
+            } else if (!fg.dim) {
+                glyph = " ";
+            }
+
+            if (glyph == " ") {
+                // Spaces show the background: none, like the terminal's.
+                if (background) {
+                    line += no_background_code;
+                    background.reset();
+                }
+                line += ' ';
+                continue;
+            }
+            if (!fg.dim) {
+                if (!black) {
+                    line += black_code;
+                    black = true;
+                }
+            } else {
+                if (fg.hue != hue) {
+                    hue = fg.hue;
+                    line += hue;
+                }
+                if (black || *fg.dim != dim) {
+                    dim = *fg.dim;
+                    black = false;
+                    line += dim_levels[dim].code;
+                }
+            }
+            // A full character hides its background, which then stays as it is.
+            if (best && bg != background) {
+                if (bg) {
+                    line += background_code;
+                    line += bg->hue;
+                    line += dim_levels[*bg->dim].code;
+                } else {
+                    line += no_background_code;
+                }
+                background = bg;
+            }
+            line += glyph;
+        }
+        if (background) {
+            // Trailing spaces must not show a background either.
+            line += no_background_code;
+        }
+        line.erase(line.find_last_not_of(std::string_view(" |")) + 1);
+        return line;
+    };
 
     std::vector<std::string> lines(rows);
     for (std::size_t r = 0; r < rows; ++r) {
-        // Each row starts over without a color, so it can be read by itself.
-        char color = 0;
-        for (std::size_t c = 0; c < cols; ++c) {
-            const auto level = static_cast<std::size_t>(cells[r * cols + c] * static_cast<double>(ramp.size()));
-            const char glyph = ramp[std::min(level, ramp.size() - 1)];
-            // A color only when it changes, and never for spaces, which do not show it.
-            if (glyph != ' ' && codes[r * cols + c] != color) {
-                color = codes[r * cols + c];
-                lines[r] += color;
-            }
-            lines[r] += glyph;
+        lines[r] = two_color_row(r);
+        if (lines[r].size() <= max_art_row_bytes) {
+            continue;
         }
-        lines[r].erase(lines[r].find_last_not_of(' ') + 1);
+        for (const Style style : {Style::Rich, Style::Plain}) {
+            std::string& line = lines[r];
+            line.clear();
+            // Each row starts over without a color, at full brightness, so it can be read by itself.
+            State state;
+            for (std::size_t c = 0; c < cols; ++c) {
+                const std::size_t i = r * cols + c;
+                const Choice ch = choose(i, state, style);
+                // Spaces do not show a color or a brightness, so they keep them.
+                if (ch.text != " ") {
+                    if (codes[i] != state.color) {
+                        state.color = codes[i];
+                        line += state.color;
+                    }
+                    if (ch.dim != state.dim) {
+                        state.dim = ch.dim;
+                        line += dim_levels[ch.dim].code;
+                    }
+                }
+                line += ch.text;
+            }
+            line.erase(line.find_last_not_of(' ') + 1);
+            if (line.size() <= max_art_row_bytes) {
+                break;
+            }
+        }
     }
 
     // Drop the blank border (e.g. a transparent background), so the drawing is as small as it can be.
@@ -325,47 +717,120 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
 }
 
 std::string render(std::string_view art, bool colors) {
+    // Each character becomes a solid block of its color, as dark as its glyph is thin: the picture looks the same
+    // in every terminal, instead of depending on how its font draws the symbols and how much space it leaves between
+    // lines. Only the way it is shown changes, so pictures from older versions look the same. The brightness codes
+    // dim it further, and the blocks keep their shape, in their color on their background color. Without colors,
+    // each character becomes the ASCII symbol as bright as it looks, which gives the black and white ASCII art.
     std::string out;
-    if (!colors) {
-        std::ranges::copy_if(art, std::back_inserter(out), [](char c) {
-            return !color_of_code(c);
-        });
-        return out;
-    }
-    // With colors, each character becomes a solid block of its color, as dark as its glyph is thin: the picture
-    // looks the same in every terminal, instead of depending on how its font draws the symbols and how much space
-    // it leaves between lines. Only the way it is shown changes, so pictures from older versions look the same.
     std::optional<Color> hue;
+    double level = 1.0;
+    std::optional<Color> background;
     std::optional<Color> shown;
-    for (const char c : art) {
+    std::optional<Color> shown_background;
+    bool reading_background = false;
+    const auto scaled = [](Color c, double by) {
+        const auto shade = [&](std::uint8_t v) {
+            return static_cast<std::uint8_t>(std::lround(v * by));
+        };
+        return Color {shade(c.r), shade(c.g), shade(c.b)};
+    };
+    const auto value = [](const std::optional<Color>& c) {
+        return c ? std::max({c->r, c->g, c->b}) / 255.0 : 0.0;
+    };
+    // Shows a character of the given brightness (with colors) or looks (without).
+    const auto show = [&](double brightness, bool with_background) {
+        const std::optional<Color> fg = hue ? std::optional(scaled(*hue, brightness)) : std::nullopt;
+        const std::optional<Color> bg = with_background ? background : std::nullopt;
+        if (bg != shown_background) {
+            out += bg ? std::format("\x1b[48;2;{};{};{}m", bg->r, bg->g, bg->b) : std::string("\x1b[49m");
+            shown_background = bg;
+        }
+        if (fg && fg != shown) {
+            out += std::format("\x1b[{}m", ansi_foreground(*fg));
+            shown = fg;
+        }
+    };
+    const auto ramp_symbol = [](double v) {
+        return ramp[static_cast<std::size_t>(std::lround(std::clamp(v, 0.0, 1.0) * static_cast<double>(ramp.size() - 1)))];
+    };
+    const double last = static_cast<double>(ramp.size() - 1);
+    for (std::size_t i = 0; i < art.size(); ++i) {
+        const char c = art[i];
+        if (reading_background) {
+            // '&': a color code, then a brightness code.
+            if (const auto color = color_of_code(c); color && i + 1 < art.size()) {
+                background = scaled(*color, dim_of_code(art[i + 1]).value_or(1.0));
+                ++i;
+            }
+            reading_background = false;
+            continue;
+        }
         if (const auto color = color_of_code(c)) {
             hue = color;
             continue;
         }
-        const auto level = ramp.find(c);
-        if (hue && c != ' ' && level != std::string_view::npos) {
-            auto shade = [&](std::uint8_t v) {
-                return static_cast<std::uint8_t>(std::lround(v * static_cast<double>(level) / (ramp.size() - 1)));
-            };
-            const Color color {shade(hue->r), shade(hue->g), shade(hue->b)};
-            if (color != shown) {
-                out += std::format("\x1b[{}m", ansi_foreground(color));
-                shown = color;
+        if (const auto dim = dim_of_code(c)) {
+            level = *dim;
+            if (level == 0 && !hue) {
+                hue = Color {};
             }
-            out += "\u2588"; // █
+            continue;
+        }
+        if (c == background_code) {
+            reading_background = true;
+            continue;
+        }
+        if (c == no_background_code) {
+            background.reset();
             continue;
         }
         if (c == '\n') {
-            // Each row starts over without a color, like in to_ascii().
-            if (shown) {
+            // Each row starts over without a color, at full brightness and without a background, like in to_ascii().
+            if (colors && (shown || shown_background)) {
                 out += "\x1b[0m";
             }
             hue.reset();
+            background.reset();
             shown.reset();
+            shown_background.reset();
+            level = 1.0;
+            out += c;
+            continue;
         }
-        out += c;
+        const auto step = ramp.find(c);
+        if (step != std::string_view::npos && c != ' ') {
+            const double brightness = level * static_cast<double>(step) / last;
+            if (!colors) {
+                out += hue ? ramp_symbol(brightness * value(hue)) : c;
+            } else if (hue) {
+                show(brightness, false);
+                out += "\u2588"; // █
+            } else {
+                out += c;
+            }
+            continue;
+        }
+        // A UTF-8 character (a block): all its bytes.
+        std::size_t len = 1;
+        while (i + len < art.size() && (static_cast<unsigned char>(art[i + len]) & 0xC0) == 0x80) {
+            ++len;
+        }
+        const std::string_view glyph = art.substr(i, len);
+        i += len - 1;
+        if (!colors) {
+            // As bright as it looks: its ink in its color, the rest in the background.
+            if (const auto coverage = block_coverage(glyph)) {
+                out += ramp_symbol(*coverage * level * value(hue) + (1 - *coverage) * value(background));
+            } else {
+                out += glyph;
+            }
+            continue;
+        }
+        show(level, true);
+        out += glyph;
     }
-    if (shown) {
+    if (colors && (shown || shown_background)) {
         out += "\x1b[0m";
     }
     return out;

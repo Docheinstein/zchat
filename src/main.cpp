@@ -359,6 +359,20 @@ int run(const Options& options, bool& restart) {
     terminal.set_mentions([&chat] {
         return chat.mentionable();
     });
+    // Dropping an image file on the window types its path: show it as the /image command it becomes, which can
+    // still be changed (e.g. given a size) before pressing Enter.
+    terminal.set_rewriter([](std::string_view line) -> std::optional<std::string> {
+        if (!zchat::image::is_dropped_image(line)) {
+            return std::nullopt;
+        }
+        while (!line.empty() && line.front() == ' ') {
+            line.remove_prefix(1);
+        }
+        while (!line.empty() && line.back() == ' ') {
+            line.remove_suffix(1);
+        }
+        return std::format("/image {}", line);
+    });
     chat.start();
 
     // Declared after the chat and the terminal it uses, so that an update in progress is cancelled first.

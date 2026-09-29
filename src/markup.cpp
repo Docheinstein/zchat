@@ -1,6 +1,7 @@
 #include "markup.hpp"
 
 #include "color.hpp"
+#include "text.hpp"
 
 #include <algorithm>
 #include <array>
@@ -57,10 +58,81 @@ namespace {
             "the meeting is on <s>Monday</s> Tuesday",
             "s",
         },
+        {
+            "size",
+            "makes the text smaller or larger",
+            "Changes the size of the text up to </size>, or to the end of the message: tiny (or 1), small (2), "
+            "normal (3) or large (4). Terminals have a single text size, so the letters are replaced by smaller "
+            "or wider Unicode ones: tiny ones are raised, small ones are capitals, large ones are twice as wide. "
+            "Some fonts lack a few of them.",
+            "<size=tiny>psst</size>, <size=small>a quiet voice</size>, <size=large>HELLO</size>, <size=2>2 works "
+            "too</size>",
+        },
     });
 
     // In the same order as all_tags.
-    enum class Kind { Color, Bold, Italic, Underscore, Strikethrough };
+    enum class Kind { Color, Bold, Italic, Underscore, Strikethrough, Size };
+
+    // <size=...>: text sizes, from 1 to 4.
+    enum TextSize { size_tiny = 1, size_small = 2, size_normal = 3, size_large = 4 };
+    constexpr std::array size_names = std::to_array<std::string_view>({"tiny", "small", "normal", "large"});
+
+    // Superscript letters and digits, for tiny text. Letters without one (q) stay as they are.
+    constexpr std::array<std::string_view, 26> tiny_letters = {
+        "ᵃ", "ᵇ", "ᶜ", "ᵈ", "ᵉ", "ᶠ", "ᵍ", "ʰ", "ⁱ", "ʲ", "ᵏ", "ˡ", "ᵐ",
+        "ⁿ", "ᵒ", "ᵖ", "q", "ʳ", "ˢ", "ᵗ", "ᵘ", "ᵛ", "ʷ", "ˣ", "ʸ", "ᶻ",
+    };
+    constexpr std::array<std::string_view, 10> tiny_digits = {"⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"};
+
+    // Small capitals, for small text. (x has none; q is the closest look-alike.)
+    constexpr std::array<std::string_view, 26> small_letters = {
+        "ᴀ", "ʙ", "ᴄ", "ᴅ", "ᴇ", "ꜰ", "ɢ", "ʜ", "ɪ", "ᴊ", "ᴋ", "ʟ", "ᴍ",
+        "ɴ", "ᴏ", "ᴘ", "ǫ", "ʀ", "ꜱ", "ᴛ", "ᴜ", "ᴠ", "ᴡ", "x", "ʏ", "ᴢ",
+    };
+
+    // Appends text in the given size.
+    void append_sized(std::string& out, std::string_view text, int size) {
+        if (size == size_normal) {
+            out += text;
+            return;
+        }
+        for (const char c : text) {
+            const auto u = static_cast<unsigned char>(c);
+            const bool letter = std::isalpha(u) != 0 && u < 0x80;
+            const std::size_t index = letter ? static_cast<std::size_t>(std::tolower(u) - 'a') : 0;
+            if (size == size_large) {
+                // Fullwidth forms: U+FF01 to U+FF5E for '!' to '~', and a wide space.
+                if (c == ' ') {
+                    out += "　";
+                } else if (u > ' ' && u <= '~') {
+                    text::append(out, static_cast<char32_t>(0xFF01 + (u - '!')));
+                } else {
+                    out += c;
+                }
+            } else if (letter) {
+                out += size == size_tiny ? tiny_letters[index] : small_letters[index];
+            } else if (size == size_tiny && c >= '0' && c <= '9') {
+                out += tiny_digits[static_cast<std::size_t>(c - '0')];
+            } else {
+                out += c;
+            }
+        }
+    }
+
+    std::optional<int> parse_size(std::string_view value) {
+        for (std::size_t i = 0; i < size_names.size(); ++i) {
+            if (size_names[i] == value) {
+                return static_cast<int>(i) + size_tiny;
+            }
+        }
+        int size = 0;
+        const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), size);
+        if (value.empty() || ec != std::errc {} || ptr != value.data() + value.size() || size < size_tiny ||
+            size > size_large) {
+            return std::nullopt;
+        }
+        return size;
+    }
 
     // Plain text color, used after the last color tag is closed.
     constexpr std::string_view default_foreground = "\x1b[39m";
@@ -127,16 +199,17 @@ namespace {
         bool closing = false;
         std::optional<Color> color; // for an opening color tag
         int bold_level = 1;         // for an opening bold tag
+        int size = size_normal;     // for an opening size tag
     };
 
     std::optional<ParsedTag> parse_tag(std::string_view inside) {
         ParsedTag tag;
         const auto eq = inside.find('=');
         if (inside.starts_with('/') || eq == std::string_view::npos) {
-            // A closing tag, or one without a value: only color needs one, bold may have one.
+            // A closing tag, or one without a value: color and size need one, bold may have one.
             tag.closing = inside.starts_with('/');
             const auto kind = find_kind(tag.closing ? inside.substr(1) : inside);
-            if (!kind || (*kind == Kind::Color && !tag.closing)) {
+            if (!kind || ((*kind == Kind::Color || *kind == Kind::Size) && !tag.closing)) {
                 return std::nullopt;
             }
             tag.kind = *kind;
@@ -154,6 +227,15 @@ namespace {
                 tag.bold_level > max_bold_level) {
                 return std::nullopt;
             }
+            return tag;
+        }
+        if (kind == Kind::Size) {
+            tag.kind = Kind::Size;
+            const auto size = parse_size(lowercase(value));
+            if (!size) {
+                return std::nullopt;
+            }
+            tag.size = *size;
             return tag;
         }
         if (kind != Kind::Color) {
@@ -193,6 +275,11 @@ std::string render(std::string_view text, bool colors) {
     const auto bold_level = [&] {
         return bold_levels.empty() ? 1 : std::ranges::max(bold_levels);
     };
+    // The open size tags; the last one opened wins.
+    std::vector<int> sizes;
+    const auto append_text = [&](std::string_view s) {
+        append_sized(out, s, sizes.empty() ? size_normal : sizes.back());
+    };
     const auto emit = [&](std::string_view sequence) {
         if (colors) {
             out += sequence;
@@ -209,7 +296,7 @@ std::string render(std::string_view text, bool colors) {
     };
     while (!text.empty()) {
         const auto lt = text.find('<');
-        out += text.substr(0, lt);
+        append_text(text.substr(0, lt));
         if (lt == std::string_view::npos) {
             break;
         }
@@ -221,11 +308,19 @@ std::string render(std::string_view text, bool colors) {
                              ? parse_tag(text.substr(1, gt - 1))
                              : std::nullopt;
         if (!tag) {
-            out += '<';
+            append_text("<");
             text.remove_prefix(1);
             continue;
         }
         text.remove_prefix(gt + 1);
+        if (tag->kind == Kind::Size) {
+            if (!tag->closing) {
+                sizes.push_back(tag->size);
+            } else if (!sizes.empty()) {
+                sizes.pop_back();
+            }
+            continue;
+        }
         // A closing tag with nothing open is ignored, like in HTML.
         if (tag->kind == Kind::Color) {
             if (!tag->closing) {
