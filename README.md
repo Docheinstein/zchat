@@ -52,6 +52,8 @@ While chatting:
 | `/image FILE`      | send a picture, drawn with colored characters (ASCII art) |
 | `/image SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
 | drop an image      | drag an image file onto the window, then press Enter: same as `/image` |
+| `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
+| `@everyone`        | tag all the people in the chat: they all hear a sound  |
 | `/update`          | get the latest zchat from git, build it and restart (see below) |
 | `/help`            | list commands                                          |
 | `/quit`, Ctrl+C, Ctrl+D | leave                                             |

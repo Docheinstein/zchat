@@ -143,6 +143,7 @@ void print_help(zchat::Chat& chat) {
     chat.notice("               (or drop an image file on the window, then press Enter)");
     chat.notice("  @NAME        tag someone in a message: they hear a sound");
     chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
+    chat.notice("  @everyone    tag all the people in the chat: they all hear a sound");
     chat.notice("  /update      get the latest zchat, build it and restart");
     chat.notice("  /help        show this help");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
