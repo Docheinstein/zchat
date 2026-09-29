@@ -13,12 +13,14 @@ struct Tag {
     std::string_view summary;
     std::string_view explanation;
     std::string_view example;
+    // A short name that works the same, e.g. "b" for "bold"; empty when there is none.
+    std::string_view alias = {};
 };
 
 // All the tags, for /tags.
 std::span<const Tag> tags();
 
-// The tag with this name (case-insensitive), or nullptr.
+// The tag with this name or alias (case-insensitive), or nullptr.
 const Tag* find_tag(std::string_view name);
 
 // Turns a (sanitized) message into what to print: tags are removed and, when colors is true, applied as ANSI
