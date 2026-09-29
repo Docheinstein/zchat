@@ -141,9 +141,7 @@ namespace {
 std::filesystem::path parse_path(std::string_view line) {
     const std::string_view s = trim(line);
     std::string raw;
-    if (s.size() >= 2 && (s.front() == '"' || s.front() == '\'') && s.back() == s.front()) {
-        raw = s.substr(1, s.size() - 2);
-    } else if (s.starts_with("file://")) {
+    if (s.starts_with("file://")) {
         std::string_view url = s.substr(std::string_view("file://").size());
         if (url.starts_with("localhost/")) {
             url.remove_prefix(std::string_view("localhost").size());
@@ -157,14 +155,32 @@ std::filesystem::path parse_path(std::string_view line) {
 #endif
     } else {
 #ifdef _WIN32
-        // Backslashes separate folders on Windows.
-        raw = s;
+        // Backslashes separate folders on Windows, so only quotes around the whole path are removed.
+        raw = s.size() >= 2 && (s.front() == '"' || s.front() == '\'') && s.back() == s.front()
+                  ? s.substr(1, s.size() - 2)
+                  : s;
 #else
+        // Quoted the way a shell reads it, as terminals quote a dropped file: '/home/me/my cat.png',
+        // "/home/me/my cat.png", /home/me/my\ cat.png, and a quote in the name like '/home/me/it'\''s.png'.
+        char quote = 0;
         for (std::size_t i = 0; i < s.size(); ++i) {
-            if (s[i] == '\\' && i + 1 < s.size()) {
-                ++i;
+            const char c = s[i];
+            if (quote == '\'') {
+                if (c == '\'') {
+                    quote = 0;
+                } else {
+                    raw += c;
+                }
+            } else if (c == '\\' && i + 1 < s.size() &&
+                       (quote == 0 || std::string_view("\"\\$`").find(s[i + 1]) != std::string_view::npos)) {
+                raw += s[++i];
+            } else if (c == quote && quote == '"') {
+                quote = 0;
+            } else if (quote == 0 && (c == '\'' || c == '"')) {
+                quote = c;
+            } else {
+                raw += c;
             }
-            raw += s[i];
         }
 #endif
     }
