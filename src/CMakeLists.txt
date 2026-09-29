@@ -13,6 +13,7 @@ target_sources(zchat PUBLIC
     markup.cpp
     names.cpp
     net.cpp
+    paint.cpp
     process.cpp
     protocol.cpp
     terminal.cpp

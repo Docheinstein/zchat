@@ -80,5 +80,6 @@ private:
 // The games, each in its own file.
 std::unique_ptr<Game> make_finger(Chat& chat, Terminal& terminal, Games& games);
 std::unique_ptr<Game> make_dice(Chat& chat, Terminal& terminal, Games& games);
+std::unique_ptr<Game> make_paint(Chat& chat, Terminal& terminal, Games& games);
 
 } // namespace zchat::game

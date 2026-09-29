@@ -57,6 +57,7 @@ While chatting:
 | `/game`            | list the games everyone in the chat can play           |
 | `/game finger`     | fastest finger: some words show up for everyone in 3 seconds, the first to type them exactly wins |
 | `/game dice`       | push your luck: `/game dice roll` a die as often as you dare, each roll adds to points only you see, but a 1 loses them all; `/game dice stop` keeps them and shows them to everyone. The highest points kept in 60 seconds win; not stopped in time, and they are lost |
+| `/game paint`      | a shared canvas of 16×16 squares: `/game paint c7 red` colors a square, `/game paint c7-f9 blue` a rectangle, `/game paint c7 none` empties it and `/game paint undo` takes back your last change. Without a color, squares get your brush's: `/game paint color red` picks it, and it starts as the canvas color closest to your name color. Each square painted takes a second before the next change, so the chat has to draw together |
 | `/game scores`     | who won what in this session                           |
 | `/update`          | get the latest zchat from git, build it and restart (see below) |
 | `/help`            | list commands                                          |
@@ -193,7 +194,10 @@ cmake --build build-win
   once, everybody plays the one with the lowest round number; if the referee leaves, the others give up the round
   after a while. In dice everyone rolls their own die, and tells the others when they join, stop (with their
   points) or roll a 1; every zchat ends the round when time is up, or when all the players are done and nobody
-  can join anymore (after 15 seconds), and shows who won. Older versions ignore `GAME` packets, so they just see people typing funny words.
+  can join anymore (after 15 seconds), and shows who won. In paint every zchat keeps its own copy of the canvas: each change of a
+  square carries a clock and a tag from the painter's id, and a square keeps the newest change, so changes lost or
+  heard out of order do not matter. Every 15 seconds each zchat sends a hash of its canvas, and whoever has a
+  different one sends the changes it has, so newcomers and whoever missed a packet catch up. Older versions ignore `GAME` packets, so they just see people typing funny words.
 * Incoming names and messages are sanitized (control characters stripped) so nobody can mess with your terminal.
 * The input line is edited in raw mode, so incoming messages are printed above what you are typing instead of
   getting mixed with it.

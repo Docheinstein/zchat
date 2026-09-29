@@ -82,11 +82,12 @@ void Chat::stop() {
     if (stopped_.exchange(true)) {
         return;
     }
-    send(PacketType::Leave);
+    // The thread first: what it sends after our Leave (a heartbeat, a game's packet) would bring us back.
     thread_.request_stop();
     if (thread_.joinable()) {
         thread_.join();
     }
+    send(PacketType::Leave);
 }
 
 void Chat::say(std::string_view text) {
