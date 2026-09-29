@@ -58,6 +58,10 @@ private:
     std::string prompt_;
     std::size_t prompt_width_ = 0;
     std::string buffer_;
+    // Byte offset of the cursor in buffer_, always at the start of a code point.
+    std::size_t cursor_ = 0;
+    // The first code point of buffer_ shown, when it does not fit on the line.
+    std::size_t view_start_ = 0;
 
     // The lines sent this session, oldest first. history_pos_ is the entry shown by Up/Down; it equals
     // history_.size() while editing a new line, which is kept in draft_ while browsing.

@@ -1,5 +1,6 @@
 #include "chat.hpp"
 
+#include "markup.hpp"
 #include "text.hpp"
 
 #include <algorithm>
@@ -112,7 +113,8 @@ std::string Chat::paint(Color color, std::string_view text) const {
 
 void Chat::print_message(std::uint64_t id, std::string_view name, std::string_view text) const {
     const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", timestamp()) : timestamp();
-    terminal_.print(std::format("{} {}: {}", time, colored_name(id, name), text));
+    terminal_.print(
+        std::format("{} {}: {}", time, colored_name(id, name), markup::render(text, terminal_.colors())));
 }
 
 std::vector<std::string> Chat::peers() const {

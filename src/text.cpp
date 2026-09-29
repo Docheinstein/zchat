@@ -80,33 +80,6 @@ std::string sanitize(std::string_view in, std::size_t max_bytes) {
     return out;
 }
 
-std::string_view tail(std::string_view s, std::size_t max_chars) {
-    std::size_t chars = 0;
-    std::size_t i = s.size();
-    while (i > 0) {
-        std::size_t start = i - 1;
-        while (start > 0 && is_continuation(static_cast<unsigned char>(s[start]))) {
-            --start;
-        }
-        if (chars == max_chars) {
-            break;
-        }
-        ++chars;
-        i = start;
-    }
-    return s.substr(i);
-}
-
-void pop_back(std::string& s) {
-    while (!s.empty()) {
-        const auto c = static_cast<unsigned char>(s.back());
-        s.pop_back();
-        if (!is_continuation(c)) {
-            break;
-        }
-    }
-}
-
 void append(std::string& out, char32_t cp) {
     if (cp < 0x80) {
         out += static_cast<char>(cp);
