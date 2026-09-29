@@ -23,6 +23,8 @@ namespace {
     constexpr auto peer_timeout = 16s;
     constexpr auto interfaces_refresh_interval = 30s;
     constexpr std::size_t dedup_window = 64;
+    // "@everyone" tags all the people in the chat.
+    constexpr std::string_view everyone_tag = "everyone";
 
     std::optional<std::uint64_t> parse_id(std::string_view s) {
         std::uint64_t id = 0;
@@ -151,8 +153,11 @@ std::string Chat::mark_mentions(std::string_view text, bool& tags_us) const {
         std::string name;
         Color color;
         bool us;
+        bool everyone = false;
     };
     std::vector<Person> people;
+    // "@everyone" tags us too. First, so it wins over someone named "everyone": that tags them anyway.
+    people.push_back({std::string(everyone_tag), {}, true, true});
     const std::uint64_t own_id = id_;
     people.push_back({lowercase(name()), color_of_id(own_id), true});
     {
@@ -189,8 +194,13 @@ std::string Chat::mark_mentions(std::string_view text, bool& tags_us) const {
         const std::size_t end = at + 1 + person->name.size();
         const Color c = person->color;
         out += text.substr(done, at - done);
-        out += std::format("<b>{}<color=#{:02x}{:02x}{:02x}>{}</color>{}</b>", person->us ? "<u>" : "", c.r, c.g,
-                           c.b, text.substr(at, end - at), person->us ? "</u>" : "");
+        if (person->everyone) {
+            // Nobody's color: just bold and underlined, as it tags whoever reads it.
+            out += std::format("<b><u>{}</u></b>", text.substr(at, end - at));
+        } else {
+            out += std::format("<b>{}<color=#{:02x}{:02x}{:02x}>{}</color>{}</b>", person->us ? "<u>" : "", c.r, c.g,
+                               c.b, text.substr(at, end - at), person->us ? "</u>" : "");
+        }
         tags_us = tags_us || person->us;
         done = end;
         at = end - 1;
@@ -241,6 +251,13 @@ std::vector<Terminal::Mention> Chat::mentionable() const {
         return lowercase(m.name);
     });
     people.erase(dupes.begin(), dupes.end());
+    // Tagging everyone is offered first, when there is somebody to tag, and only once if someone is named so.
+    std::erase_if(people, [](const Terminal::Mention& m) {
+        return lowercase(m.name) == everyone_tag;
+    });
+    if (!people.empty()) {
+        people.insert(people.begin(), {std::string(everyone_tag), terminal_.colors() ? "1" : ""});
+    }
     return people;
 }
 
