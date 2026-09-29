@@ -27,6 +27,12 @@ namespace {
     constexpr char32_t key_ctrl_w = 0x17;
     constexpr char32_t key_ctrl_z = 0x1A;
     constexpr char32_t key_delete = 0x7F;
+    // Keys without a character, given values past the last Unicode code point.
+    constexpr char32_t key_up = 0x110000;
+    constexpr char32_t key_down = 0x110001;
+
+    // How many sent lines Up/Down can go back to.
+    constexpr std::size_t max_history = 100;
 
 } // namespace
 
@@ -117,16 +123,23 @@ std::optional<std::string> Terminal::read_line_interactive() {
             continue;
         }
         const KEY_EVENT_RECORD& key = record.Event.KeyEvent;
-        if (!key.bKeyDown || key.uChar.UnicodeChar == 0) {
+        if (!key.bKeyDown) {
             continue;
         }
         const auto unit = static_cast<char16_t>(key.uChar.UnicodeChar);
         char32_t cp = unit;
-        if (unit >= 0xD800 && unit <= 0xDBFF) {
+        if (unit == 0) {
+            if (key.wVirtualKeyCode == VK_UP) {
+                cp = key_up;
+            } else if (key.wVirtualKeyCode == VK_DOWN) {
+                cp = key_down;
+            } else {
+                continue;
+            }
+        } else if (unit >= 0xD800 && unit <= 0xDBFF) {
             p.high_surrogate = unit;
             continue;
-        }
-        if (unit >= 0xDC00 && unit <= 0xDFFF) {
+        } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
             if (p.high_surrogate == 0) {
                 continue;
             }
@@ -136,11 +149,7 @@ std::optional<std::string> Terminal::read_line_interactive() {
         for (WORD i = 0; i < (key.wRepeatCount ? key.wRepeatCount : 1); ++i) {
             bool quit = false;
             if (on_char(cp, quit)) {
-                std::scoped_lock lock(mutex_);
-                std::string line = std::move(buffer_);
-                buffer_.clear();
-                redraw_locked();
-                return line;
+                return take_line();
             }
             if (quit) {
                 return std::nullopt;
@@ -214,15 +223,28 @@ namespace {
         }
     }
 
-    // Skips the rest of an escape sequence (arrow keys, function keys, ...), which zchat does not use.
-    void skip_escape_sequence() {
+    // Reads the rest of an escape sequence (arrow keys, function keys, ...). Returns key_up or key_down for
+    // those arrows, 0 for the keys zchat does not use.
+    char32_t read_escape_sequence() {
         int c = read_byte(30);
         if (c != '[' && c != 'O') {
-            return;
+            return 0;
         }
+        std::string params;
         do {
             c = read_byte(30);
+            if (c >= 0 && !(c >= 0x40 && c <= 0x7E)) {
+                params += static_cast<char>(c);
+            }
         } while (c >= 0 && !(c >= 0x40 && c <= 0x7E));
+        // Plain arrows only: "ESC [ A" or "ESC O A", not modified ones like "ESC [ 1 ; 5 A".
+        if (params.empty() && c == 'A') {
+            return key_up;
+        }
+        if (params.empty() && c == 'B') {
+            return key_down;
+        }
+        return 0;
     }
 
 } // namespace
@@ -233,12 +255,13 @@ std::optional<std::string> Terminal::read_line_interactive() {
         if (c < 0) {
             return std::nullopt;
         }
-        if (c == 0x1B) {
-            skip_escape_sequence();
-            continue;
-        }
         char32_t cp = static_cast<char32_t>(c);
-        if (c >= 0x80) {
+        if (c == 0x1B) {
+            cp = read_escape_sequence();
+            if (cp == 0) {
+                continue;
+            }
+        } else if (c >= 0x80) {
             // Collect the rest of a UTF-8 sequence.
             std::string bytes(1, static_cast<char>(c));
             const int len = (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 1;
@@ -261,11 +284,7 @@ std::optional<std::string> Terminal::read_line_interactive() {
         }
         bool quit = false;
         if (on_char(cp, quit)) {
-            std::scoped_lock lock(mutex_);
-            std::string line = std::move(buffer_);
-            buffer_.clear();
-            redraw_locked();
-            return line;
+            return take_line();
         }
         if (quit) {
             return std::nullopt;
@@ -333,6 +352,12 @@ bool Terminal::on_char(char32_t cp, bool& quit) {
     case key_ctrl_u:
         buffer_.clear();
         break;
+    case key_up:
+        recall_locked(-1);
+        break;
+    case key_down:
+        recall_locked(+1);
+        break;
     case key_ctrl_w:
         while (!buffer_.empty() && buffer_.back() == ' ') {
             buffer_.pop_back();
@@ -360,6 +385,34 @@ bool Terminal::on_char(char32_t cp, bool& quit) {
     }
     redraw_locked();
     return false;
+}
+
+std::string Terminal::take_line() {
+    std::scoped_lock lock(mutex_);
+    std::string line = std::move(buffer_);
+    buffer_.clear();
+    draft_.clear();
+    // Blank lines and repeats of the previous line are not worth an extra Up press.
+    if (line.find_first_not_of(' ') != std::string::npos && (history_.empty() || history_.back() != line)) {
+        history_.push_back(line);
+        if (history_.size() > max_history) {
+            history_.pop_front();
+        }
+    }
+    history_pos_ = history_.size();
+    redraw_locked();
+    return line;
+}
+
+void Terminal::recall_locked(int step) {
+    if ((step < 0 && history_pos_ == 0) || (step > 0 && history_pos_ >= history_.size())) {
+        return;
+    }
+    if (history_pos_ == history_.size()) {
+        draft_ = buffer_;
+    }
+    history_pos_ = step < 0 ? history_pos_ - 1 : history_pos_ + 1;
+    buffer_ = history_pos_ == history_.size() ? draft_ : history_[history_pos_];
 }
 
 std::string Terminal::clear_line_locked() {

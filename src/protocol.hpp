@@ -13,7 +13,7 @@ enum class PacketType : char {
     Join = 'J',    // a peer just started; everyone answers with Here
     Here = 'H',    // periodic heartbeat, also the answer to Join
     Message = 'M', // a chat line
-    Leave = 'L',   // a peer is quitting
+    Leave = 'L',   // a peer is quitting, or, when the text is a new sender id, changing color
 };
 
 struct Packet {
