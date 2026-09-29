@@ -1,5 +1,6 @@
 #include "chat.hpp"
 #include "config.hpp"
+#include "markup.hpp"
 #include "names.hpp"
 #include "net.hpp"
 #include "terminal.hpp"
@@ -131,6 +132,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /color NAME  change the color of your name, and keep it for next time");
     chat.notice("               (a name from /color, #rrggbb, or r,g,b)");
     chat.notice("  /color random  pick a random color (not kept)");
+    chat.notice("  /tags        list the tags for messages, like <color=red>text</color>");
+    chat.notice("  /tags NAME   explain a tag, with an example");
     chat.notice("  /help        show this help");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
 }
@@ -204,6 +207,24 @@ void change_color(zchat::Chat& chat, std::string_view arg, std::mt19937_64& rng)
     }
 }
 
+void print_tags(zchat::Chat& chat, std::string_view arg, bool colors) {
+    if (arg.empty()) {
+        chat.notice("Tags you can use in messages, like HTML: <tag=value>text</tag>. /tags NAME tells more.");
+        for (const auto& tag : zchat::markup::tags()) {
+            chat.notice(std::format("  {:<8} {}", tag.name, tag.summary));
+        }
+        return;
+    }
+    const auto* tag = zchat::markup::find_tag(arg);
+    if (!tag) {
+        chat.notice(std::format("Unknown tag {} (try /tags)", zchat::text::sanitize(arg, 32)));
+        return;
+    }
+    chat.notice(std::format("<{}>: {}", tag->name, tag->explanation));
+    chat.notice(std::format("Example: {}", tag->example));
+    chat.notice(std::format("Shows as: {}", zchat::markup::render(tag->example, colors)));
+}
+
 void print_who(zchat::Chat& chat) {
     const auto peers = chat.peers();
     if (peers.empty()) {
@@ -270,6 +291,10 @@ int run(const Options& options) {
                 arg.remove_prefix(1);
             }
             change_color(chat, arg, rng);
+        } else if (input == "/tags" || input == "/tag" || input.starts_with("/tags ") || input.starts_with("/tag ")) {
+            const auto space = input.find(' ');
+            print_tags(chat, space == std::string_view::npos ? std::string_view() : input.substr(space + 1),
+                       terminal.colors());
         } else if (input == "/forget") {
             forget_nick(chat, rng);
         } else if (input == "/help" || input == "/?") {

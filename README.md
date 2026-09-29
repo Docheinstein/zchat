@@ -46,13 +46,28 @@ While chatting:
 | `/color NAME`      | change your name color (e.g. `gold`); it is saved      |
 | `/color #ff8800`   | any color as a hex code (`#f80` works too), or as RGB values: `/color 255,136,0` |
 | `/color random`    | switch to a random color, and forget the saved one     |
+| `/tags`            | list the tags you can use in messages                  |
+| `/tags NAME`       | explain a tag, with an example (`/tag NAME` works too) |
 | `/help`            | list commands                                          |
 | `/quit`, Ctrl+C, Ctrl+D | leave                                             |
 | `//text`           | send a message that starts with `/`                    |
-| Ctrl+U / Ctrl+W    | clear the line / delete the last word                  |
+| Left / Right       | move the cursor in the line                            |
+| Home / End         | go to the start / end of the line (or Ctrl+A / Ctrl+E) |
+| Backspace / Delete | delete before / under the cursor                       |
+| Ctrl+U / Ctrl+W    | clear the line / delete the word before the cursor     |
 | Up / Down          | go through the messages and commands sent this session |
 
 People using a different `--port` are in a different room.
+
+Messages can contain tags, written like HTML: they are not shown, and affect the text after them until they are
+closed or the message ends. For now there is `<color>`, which takes a color name, a hex code or RGB values:
+
+```
+this is a <color=red>test</color>, <color=#ff8800>orange <color=0,200,255>blue</color> orange again</color>
+```
+
+Anything that is not a valid tag is shown as typed. Tags are applied by whoever receives the message, so older
+zchat versions show them as plain text.
 
 The name set with `/nick` is saved in the `zchat` config folder: `%APPDATA%\zchat\config` on Windows,
 `~/.config/zchat/config` on Linux (or `$XDG_CONFIG_HOME/zchat/config`). On start, `--name` wins over the saved

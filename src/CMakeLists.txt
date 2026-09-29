@@ -5,6 +5,7 @@ target_sources(zchat PUBLIC
     color.cpp
     config.cpp
     main.cpp
+    markup.cpp
     names.cpp
     net.cpp
     protocol.cpp

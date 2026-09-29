@@ -3,7 +3,9 @@
 #include "protocol.hpp"
 #include "text.hpp"
 
+#include <algorithm>
 #include <cstdio>
+#include <format>
 #include <iostream>
 
 #ifdef _WIN32
@@ -20,19 +22,70 @@ namespace zchat {
 
 namespace {
 
+    constexpr char32_t key_ctrl_a = 0x01;
     constexpr char32_t key_ctrl_c = 0x03;
     constexpr char32_t key_ctrl_d = 0x04;
+    constexpr char32_t key_ctrl_e = 0x05;
     constexpr char32_t key_backspace = 0x08;
     constexpr char32_t key_ctrl_u = 0x15;
     constexpr char32_t key_ctrl_w = 0x17;
     constexpr char32_t key_ctrl_z = 0x1A;
-    constexpr char32_t key_delete = 0x7F;
+    constexpr char32_t key_delete = 0x7F; // what most terminals send for Backspace
     // Keys without a character, given values past the last Unicode code point.
     constexpr char32_t key_up = 0x110000;
     constexpr char32_t key_down = 0x110001;
+    constexpr char32_t key_left = 0x110002;
+    constexpr char32_t key_right = 0x110003;
+    constexpr char32_t key_home = 0x110004;
+    constexpr char32_t key_end = 0x110005;
+    constexpr char32_t key_forward_delete = 0x110006; // the Delete key
 
     // How many sent lines Up/Down can go back to.
     constexpr std::size_t max_history = 100;
+
+    bool is_continuation(char c) {
+        return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
+    }
+
+    // The start of the code point before pos.
+    std::size_t prev_boundary(std::string_view s, std::size_t pos) {
+        if (pos == 0) {
+            return 0;
+        }
+        --pos;
+        while (pos > 0 && is_continuation(s[pos])) {
+            --pos;
+        }
+        return pos;
+    }
+
+    // The start of the code point after the one at pos.
+    std::size_t next_boundary(std::string_view s, std::size_t pos) {
+        if (pos >= s.size()) {
+            return s.size();
+        }
+        ++pos;
+        while (pos < s.size() && is_continuation(s[pos])) {
+            ++pos;
+        }
+        return pos;
+    }
+
+    std::size_t count_chars(std::string_view s) {
+        return static_cast<std::size_t>(std::ranges::count_if(s, [](char c) {
+            return !is_continuation(c);
+        }));
+    }
+
+    // The byte offset of the code point number index (or s.size() past the end).
+    std::size_t char_offset(std::string_view s, std::size_t index) {
+        std::size_t pos = 0;
+        while (index > 0 && pos < s.size()) {
+            pos = next_boundary(s, pos);
+            --index;
+        }
+        return pos;
+    }
 
 } // namespace
 
@@ -129,11 +182,29 @@ std::optional<std::string> Terminal::read_line_interactive() {
         const auto unit = static_cast<char16_t>(key.uChar.UnicodeChar);
         char32_t cp = unit;
         if (unit == 0) {
-            if (key.wVirtualKeyCode == VK_UP) {
+            switch (key.wVirtualKeyCode) {
+            case VK_UP:
                 cp = key_up;
-            } else if (key.wVirtualKeyCode == VK_DOWN) {
+                break;
+            case VK_DOWN:
                 cp = key_down;
-            } else {
+                break;
+            case VK_LEFT:
+                cp = key_left;
+                break;
+            case VK_RIGHT:
+                cp = key_right;
+                break;
+            case VK_HOME:
+                cp = key_home;
+                break;
+            case VK_END:
+                cp = key_end;
+                break;
+            case VK_DELETE:
+                cp = key_forward_delete;
+                break;
+            default:
                 continue;
             }
         } else if (unit >= 0xD800 && unit <= 0xDBFF) {
@@ -223,8 +294,8 @@ namespace {
         }
     }
 
-    // Reads the rest of an escape sequence (arrow keys, function keys, ...). Returns key_up or key_down for
-    // those arrows, 0 for the keys zchat does not use.
+    // Reads the rest of an escape sequence (arrow keys, function keys, ...). Returns one of the key_* values, or
+    // 0 for the keys zchat does not use.
     char32_t read_escape_sequence() {
         int c = read_byte(30);
         if (c != '[' && c != 'O') {
@@ -237,12 +308,36 @@ namespace {
                 params += static_cast<char>(c);
             }
         } while (c >= 0 && !(c >= 0x40 && c <= 0x7E));
-        // Plain arrows only: "ESC [ A" or "ESC O A", not modified ones like "ESC [ 1 ; 5 A".
-        if (params.empty() && c == 'A') {
-            return key_up;
+        // Plain keys only: "ESC [ A" or "ESC O A", not modified ones like "ESC [ 1 ; 5 A".
+        if (params.empty()) {
+            switch (c) {
+            case 'A':
+                return key_up;
+            case 'B':
+                return key_down;
+            case 'C':
+                return key_right;
+            case 'D':
+                return key_left;
+            case 'H':
+                return key_home;
+            case 'F':
+                return key_end;
+            default:
+                return 0;
+            }
         }
-        if (params.empty() && c == 'B') {
-            return key_down;
+        // "ESC [ 3 ~" and friends, which differ between terminals for Home and End.
+        if (c == '~') {
+            if (params == "1" || params == "7") {
+                return key_home;
+            }
+            if (params == "4" || params == "8") {
+                return key_end;
+            }
+            if (params == "3") {
+                return key_forward_delete;
+            }
         }
         return 0;
     }
@@ -346,11 +441,32 @@ bool Terminal::on_char(char32_t cp, bool& quit) {
         quit = buffer_.empty();
         return false;
     case key_backspace:
-    case key_delete:
-        text::pop_back(buffer_);
+    case key_delete: {
+        const std::size_t start = prev_boundary(buffer_, cursor_);
+        buffer_.erase(start, cursor_ - start);
+        cursor_ = start;
+        break;
+    }
+    case key_forward_delete:
+        buffer_.erase(cursor_, next_boundary(buffer_, cursor_) - cursor_);
+        break;
+    case key_left:
+        cursor_ = prev_boundary(buffer_, cursor_);
+        break;
+    case key_right:
+        cursor_ = next_boundary(buffer_, cursor_);
+        break;
+    case key_home:
+    case key_ctrl_a:
+        cursor_ = 0;
+        break;
+    case key_end:
+    case key_ctrl_e:
+        cursor_ = buffer_.size();
         break;
     case key_ctrl_u:
         buffer_.clear();
+        cursor_ = 0;
         break;
     case key_up:
         recall_locked(-1);
@@ -358,19 +474,24 @@ bool Terminal::on_char(char32_t cp, bool& quit) {
     case key_down:
         recall_locked(+1);
         break;
-    case key_ctrl_w:
-        while (!buffer_.empty() && buffer_.back() == ' ') {
-            buffer_.pop_back();
+    case key_ctrl_w: {
+        // Deletes the word before the cursor, and the spaces after it.
+        std::size_t start = cursor_;
+        while (start > 0 && buffer_[start - 1] == ' ') {
+            --start;
         }
-        while (!buffer_.empty() && buffer_.back() != ' ') {
-            text::pop_back(buffer_);
+        while (start > 0 && buffer_[start - 1] != ' ') {
+            start = prev_boundary(buffer_, start);
         }
+        buffer_.erase(start, cursor_ - start);
+        cursor_ = start;
         break;
+    }
     case '\t':
         cp = ' ';
         [[fallthrough]];
     default:
-        if (cp < 0x20 || (cp >= 0x7F && cp <= 0x9F)) {
+        if (cp < 0x20 || (cp >= 0x7F && cp <= 0x9F) || cp > 0x10FFFF) {
             return false;
         }
         {
@@ -379,7 +500,8 @@ bool Terminal::on_char(char32_t cp, bool& quit) {
             if (buffer_.size() + encoded.size() > max_text_bytes) {
                 return false;
             }
-            buffer_ += encoded;
+            buffer_.insert(cursor_, encoded);
+            cursor_ += encoded.size();
         }
         break;
     }
@@ -391,6 +513,8 @@ std::string Terminal::take_line() {
     std::scoped_lock lock(mutex_);
     std::string line = std::move(buffer_);
     buffer_.clear();
+    cursor_ = 0;
+    view_start_ = 0;
     draft_.clear();
     // Blank lines and repeats of the previous line are not worth an extra Up press.
     if (line.find_first_not_of(' ') != std::string::npos && (history_.empty() || history_.back() != line)) {
@@ -413,6 +537,7 @@ void Terminal::recall_locked(int step) {
     }
     history_pos_ = step < 0 ? history_pos_ - 1 : history_pos_ + 1;
     buffer_ = history_pos_ == history_.size() ? draft_ : history_[history_pos_];
+    cursor_ = buffer_.size();
 }
 
 std::string Terminal::clear_line_locked() {
@@ -423,12 +548,37 @@ std::string Terminal::clear_line_locked() {
 }
 
 void Terminal::redraw_locked() {
-    // Show only the end of the input when it is longer than the line, so it never wraps.
+    // When the input is longer than the line, show the part around the cursor, so it never wraps. The shown part
+    // only scrolls when the cursor would leave it.
     const std::size_t cols = width();
     const std::size_t room = cols > prompt_width_ + 2 ? cols - prompt_width_ - 2 : 1;
+    const std::size_t total = count_chars(buffer_);
+    const std::size_t cursor = count_chars(std::string_view(buffer_).substr(0, cursor_));
+    if (cursor < view_start_) {
+        view_start_ = cursor;
+    } else if (cursor > view_start_ + room) {
+        view_start_ = cursor - room;
+    }
+    // Scroll back when text was deleted, so the line stays full.
+    view_start_ = std::min(view_start_, total > room ? total - room : 0);
+
+    const std::size_t begin = char_offset(buffer_, view_start_);
+    const std::size_t end = char_offset(buffer_, view_start_ + room);
+    const std::string_view before_cursor = std::string_view(buffer_).substr(begin, cursor_ - begin);
     std::string out = clear_line_locked();
     out += prompt_;
-    out += text::tail(buffer_, room);
+    out += std::string_view(buffer_).substr(begin, end - begin);
+    const std::size_t back = count_chars(std::string_view(buffer_).substr(cursor_, end - cursor_));
+    if (back > 0) {
+        if (vt_) {
+            out += std::format("\x1b[{}D", back);
+        } else {
+            // Without escape sequences, writing the start of the line again leaves the cursor at the right place.
+            out += '\r';
+            out += prompt_;
+            out += before_cursor;
+        }
+    }
     write(out);
 }
 
