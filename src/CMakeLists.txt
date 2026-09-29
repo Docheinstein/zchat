@@ -6,7 +6,6 @@ target_sources(zchat PUBLIC
     color.cpp
     config.cpp
     dice.cpp
-    finger.cpp
     game.cpp
     image.cpp
     main.cpp
@@ -15,6 +14,7 @@ target_sources(zchat PUBLIC
     net.cpp
     paint.cpp
     process.cpp
+    race.cpp
     protocol.cpp
     terminal.cpp
     text.cpp

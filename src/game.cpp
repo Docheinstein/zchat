@@ -22,7 +22,7 @@ namespace {
 
 Games::Games(Chat& chat, Terminal& terminal) :
     chat_(chat) {
-    games_.push_back(make_finger(chat, terminal, *this));
+    games_.push_back(make_race(chat, terminal, *this));
     games_.push_back(make_dice(chat, terminal, *this));
     games_.push_back(make_paint(chat, terminal, *this));
 
