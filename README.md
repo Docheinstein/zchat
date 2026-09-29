@@ -30,7 +30,7 @@ zchat [-p PORT] [-n NAME]
 | Option             | Meaning                                                |
 |--------------------|--------------------------------------------------------|
 | `-p`, `--port`     | UDP port of the chat room (default `47474`)            |
-| `-n`, `--name`     | pick your own name instead of a random one             |
+| `-n`, `--name`     | pick a name for this session only (not saved)          |
 | `-h`, `--help`     | show help                                              |
 | `-v`, `--version`  | show the version                                       |
 
@@ -40,16 +40,38 @@ While chatting:
 |--------------------|--------------------------------------------------------|
 | text + Enter       | send a message                                         |
 | `/who`             | list who is in the chat                                |
+| `/nick NAME`       | change your name; it is saved and used next time too   |
+| `/forget`          | forget the saved name and get a new random one         |
+| `/color`           | show your name color and the ones to pick from         |
+| `/color NAME`      | change your name color (e.g. `gold`); it is saved      |
+| `/color #ff8800`   | any color as a hex code (`#f80` works too), or as RGB values: `/color 255,136,0` |
+| `/color random`    | switch to a random color, and forget the saved one     |
 | `/help`            | list commands                                          |
 | `/quit`, Ctrl+C, Ctrl+D | leave                                             |
 | `//text`           | send a message that starts with `/`                    |
 | Ctrl+U / Ctrl+W    | clear the line / delete the last word                  |
+| Up / Down          | go through the messages and commands sent this session |
 
 People using a different `--port` are in a different room.
+
+The name set with `/nick` is saved in the `zchat` config folder: `%APPDATA%\zchat\config` on Windows,
+`~/.config/zchat/config` on Linux (or `$XDG_CONFIG_HOME/zchat/config`). On start, `--name` wins over the saved
+name, which wins over a random one. The color set with `/color` is saved there too.
 
 ## Building
 
 Needs CMake 3.16+ and a C++23 compiler (GCC 13+, Clang 17+, or Visual Studio 2022).
+
+With [just](https://github.com/casey/just) installed, the shortest way is:
+
+```sh
+just build          # configure + build (Release)
+just run            # build and start zchat, extra args are passed on: just run -n Rex
+just install        # install into ~/.local/bin (or: just install /some/prefix)
+just clean          # remove the build directory
+```
+
+Or by hand:
 
 ```sh
 cmake -S . -B build
@@ -78,6 +100,12 @@ cmake --build build-win
   than once this way are dropped by sequence number.
 * On start a peer sends `JOIN`; the others answer with `HERE`, so the newcomer learns who is around. Everybody sends
   `HERE` every 5 seconds as a heartbeat; a peer silent for 16 seconds is considered gone. Quitting sends `LEAVE`.
+* A name's color is `sender id % 12`, so choosing a color means picking a new random id that maps to it. A custom
+  RGB color is stored in the id itself: top 16 bits `c01d`, then the 24-bit color, then random bits chosen so that
+  `id % 12` is still the closest named color for older versions. Colors are drawn with 24-bit ANSI codes, so they
+  look the same in every terminal theme. On a color
+  change the `LEAVE` of the old id carries the new id as its text, so the others move the peer over instead of
+  showing it leave and join (older versions still show a leave and a join).
 * Incoming names and messages are sanitized (control characters stripped) so nobody can mess with your terminal.
 * The input line is edited in raw mode, so incoming messages are printed above what you are typing instead of
   getting mixed with it.

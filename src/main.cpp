@@ -1,9 +1,11 @@
 #include "chat.hpp"
+#include "config.hpp"
 #include "names.hpp"
 #include "net.hpp"
 #include "terminal.hpp"
 #include "text.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <cstdint>
@@ -37,10 +39,20 @@ void print_usage() {
                 "\n"
                 "Options:\n"
                 "  -p, --port PORT   UDP port shared by the chat room (default %u)\n"
-                "  -n, --name NAME   use NAME instead of a random one\n"
+                "  -n, --name NAME   use NAME for this session, instead of the saved or a random one\n"
                 "  -h, --help        show this help\n"
                 "  -v, --version     show the version\n",
                 static_cast<unsigned>(default_port));
+}
+
+// Makes a name typed by the user (or read from the config) usable: sanitized and trimmed; empty when invalid.
+std::string clean_name(std::string_view raw) {
+    std::string name = zchat::text::sanitize(raw, zchat::max_name_bytes);
+    const auto first = name.find_first_not_of(' ');
+    if (first == std::string::npos) {
+        return {};
+    }
+    return name.substr(first, name.find_last_not_of(' ') - first + 1);
 }
 
 // Returns nullopt, after printing why, when the program should exit instead of chatting.
@@ -79,8 +91,8 @@ std::optional<Options> parse_args(int argc, char** argv, int& exit_code) {
             options.port = static_cast<std::uint16_t>(port);
         } else if (arg == "-n" || arg == "--name") {
             const auto v = value();
-            const std::string name = v ? zchat::text::sanitize(*v, zchat::max_name_bytes) : std::string();
-            if (name.empty() || name.find_first_not_of(' ') == std::string::npos) {
+            const std::string name = v ? clean_name(*v) : std::string();
+            if (name.empty()) {
                 if (v) {
                     std::fprintf(stderr, "zchat: invalid name\n");
                 }
@@ -113,9 +125,83 @@ BOOL WINAPI on_console_event(DWORD event) {
 
 void print_help(zchat::Chat& chat) {
     chat.notice("Commands:");
-    chat.notice("  /who    list the people in the chat");
-    chat.notice("  /help   show this help");
-    chat.notice("  /quit   leave the chat (or Ctrl+C, Ctrl+D)");
+    chat.notice("  /who         list the people in the chat");
+    chat.notice("  /nick NAME   change your name, and keep it for next time");
+    chat.notice("  /forget      forget the saved name and get a new random one");
+    chat.notice("  /color NAME  change the color of your name, and keep it for next time");
+    chat.notice("               (a name from /color, #rrggbb, or r,g,b)");
+    chat.notice("  /color random  pick a random color (not kept)");
+    chat.notice("  /help        show this help");
+    chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
+}
+
+void change_nick(zchat::Chat& chat, std::string_view arg) {
+    if (arg.empty()) {
+        chat.notice(std::format("You are {}. Use /nick NAME to change it.", chat.colored_own_name()));
+        return;
+    }
+    const std::string name = clean_name(arg);
+    if (name.empty()) {
+        chat.notice("That name is not valid.");
+        return;
+    }
+    chat.set_name(name);
+    chat.notice(std::format("You are now known as {}", chat.colored_own_name()));
+    if (!zchat::config::set("name", name)) {
+        chat.notice(std::format("Could not save your name to {}", zchat::config::file().string()));
+    }
+}
+
+void forget_nick(zchat::Chat& chat, std::mt19937_64& rng) {
+    if (!zchat::config::remove("name")) {
+        chat.notice(std::format("Could not forget your name in {}", zchat::config::file().string()));
+        return;
+    }
+    // A new name, not the same one again by chance.
+    const std::string old_name = chat.name();
+    std::string name;
+    do {
+        name = zchat::random_name(rng);
+    } while (name == old_name);
+    chat.set_name(name);
+    chat.notice(std::format("Saved name forgotten. You are now known as {}", chat.colored_own_name()));
+}
+
+void change_color(zchat::Chat& chat, std::string_view arg, std::mt19937_64& rng) {
+    if (arg.empty()) {
+        std::string list;
+        for (std::size_t i = 0; i < zchat::palette_size(); ++i) {
+            list += list.empty() ? "" : " ";
+            list += chat.paint(zchat::palette_color(i), zchat::palette_name(i));
+        }
+        chat.notice(std::format("Your color is {}. Use /color NAME to change it, or /color random.",
+                                chat.paint(chat.color(), zchat::describe(chat.color()))));
+        chat.notice(std::format("Colors: {}", list));
+        chat.notice("Or any color as a hex code or RGB values: /color #ff8800, /color 255,136,0");
+        return;
+    }
+    zchat::Color color;
+    const bool random = arg == "random";
+    if (random) {
+        // A palette color different from the current one, so the command always does something.
+        do {
+            color = zchat::palette_color(std::uniform_int_distribution<std::size_t>(0, zchat::palette_size() - 1)(rng));
+        } while (color == chat.color());
+    } else if (const auto parsed = zchat::parse_color(arg)) {
+        color = *parsed;
+    } else {
+        chat.notice(std::format("Unknown color {}: use a name from /color, a hex code like #ff8800, or RGB values "
+                                "like 255,136,0",
+                                zchat::text::sanitize(arg, 32)));
+        return;
+    }
+    chat.set_color(color);
+    chat.notice(std::format("Your name is now {}", chat.colored_own_name()));
+    // A random color is not kept, like the random color zchat starts with when none is saved.
+    const bool saved = random ? zchat::config::remove("color") : zchat::config::set("color", zchat::describe(color));
+    if (!saved) {
+        chat.notice(std::format("Could not save your color to {}", zchat::config::file().string()));
+    }
 }
 
 void print_who(zchat::Chat& chat) {
@@ -135,16 +221,20 @@ void print_who(zchat::Chat& chat) {
 int run(const Options& options) {
     zchat::net::NetworkInit network;
 
+    // --name wins over the nickname saved with /nick, which wins over a random name.
+    std::mt19937_64 rng(std::random_device {}());
     std::string name;
     if (options.name) {
         name = *options.name;
+    } else if (const auto saved = zchat::config::get("name"); saved && !clean_name(*saved).empty()) {
+        name = clean_name(*saved);
     } else {
-        std::mt19937_64 rng(std::random_device {}());
         name = zchat::random_name(rng);
     }
 
     zchat::Terminal terminal;
-    zchat::Chat chat(options.port, name, terminal);
+    const auto saved_color = zchat::config::get("color");
+    zchat::Chat chat(options.port, name, saved_color ? zchat::parse_color(*saved_color) : std::nullopt, terminal);
 #ifdef _WIN32
     active_chat = &chat;
     SetConsoleCtrlHandler(on_console_event, TRUE);
@@ -172,6 +262,16 @@ int run(const Options& options) {
         }
         if (input == "/who" || input == "/list") {
             print_who(chat);
+        } else if (input == "/nick" || input.starts_with("/nick ")) {
+            change_nick(chat, input.substr(std::min(input.size(), std::string_view("/nick ").size())));
+        } else if (input == "/color" || input.starts_with("/color ")) {
+            std::string_view arg = input.substr(std::min(input.size(), std::string_view("/color ").size()));
+            while (!arg.empty() && arg.front() == ' ') {
+                arg.remove_prefix(1);
+            }
+            change_color(chat, arg, rng);
+        } else if (input == "/forget") {
+            forget_nick(chat, rng);
         } else if (input == "/help" || input == "/?") {
             print_help(chat);
         } else if (input.starts_with('/') && !input.starts_with("//")) {

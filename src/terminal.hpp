@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -38,8 +39,12 @@ private:
 
     std::optional<std::string> read_line_plain();
     std::optional<std::string> read_line_interactive();
-    // Handles one typed code point; returns true when the line is complete.
+    // Handles one typed code point (or one of the key_* values); returns true when the line is complete.
     bool on_char(char32_t cp, bool& quit);
+    // Hands out the completed line, remembering it in the history.
+    std::string take_line();
+    // Replaces the input with an older (step -1) or newer (step +1) line from the history.
+    void recall_locked(int step);
     void write(std::string_view data);
     void redraw_locked();
     std::string clear_line_locked();
@@ -53,6 +58,12 @@ private:
     std::string prompt_;
     std::size_t prompt_width_ = 0;
     std::string buffer_;
+
+    // The lines sent this session, oldest first. history_pos_ is the entry shown by Up/Down; it equals
+    // history_.size() while editing a new line, which is kept in draft_ while browsing.
+    std::deque<std::string> history_;
+    std::size_t history_pos_ = 0;
+    std::string draft_;
 };
 
 } // namespace zchat

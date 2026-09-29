@@ -1,5 +1,6 @@
 #pragma once
 
+#include "color.hpp"
 #include "net.hpp"
 #include "protocol.hpp"
 #include "terminal.hpp"
@@ -10,6 +11,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -21,14 +23,29 @@ namespace zchat {
 // There is no server: every peer broadcasts its packets, and keeps track of the others from what it hears.
 class Chat {
 public:
-    Chat(std::uint16_t port, std::string name, Terminal& terminal);
+    // Without a color, a random one is used.
+    Chat(std::uint16_t port, std::string name, std::optional<Color> color, Terminal& terminal);
     ~Chat();
     Chat(const Chat&) = delete;
     Chat& operator=(const Chat&) = delete;
 
-    const std::string& name() const {
+    std::string name() const {
+        std::scoped_lock lock(name_mutex_);
         return name_;
     }
+
+    // Changes our name; the others see the change right away.
+    void set_name(std::string name);
+
+    Color color() const {
+        return color_of_id(id_);
+    }
+
+    // Changes our name color; the others see the change right away.
+    void set_color(Color color);
+
+    // Formats text in a color.
+    std::string paint(Color color, std::string_view text) const;
 
     // Announces this peer and starts listening.
     void start();
@@ -44,7 +61,7 @@ public:
 
     // Our own name, with its color.
     std::string colored_own_name() const {
-        return colored_name(id_, name_);
+        return colored_name(id_, name());
     }
 
     // Formats a name with its color.
@@ -68,7 +85,9 @@ private:
     void print_message(std::uint64_t id, std::string_view name, std::string_view text) const;
     void prune_silent_peers();
 
-    std::uint64_t id_;
+    // Changes with the color, see set_color().
+    std::atomic<std::uint64_t> id_;
+    mutable std::mutex name_mutex_;
     std::string name_;
     Terminal& terminal_;
     net::BroadcastSocket socket_;
@@ -77,6 +96,8 @@ private:
 
     mutable std::mutex peers_mutex_;
     std::map<std::uint64_t, Peer> peers_;
+    // Ids we used before changing color: our own late packets from them must not look like another peer.
+    std::vector<std::uint64_t> old_ids_;
 
     std::jthread thread_;
 };

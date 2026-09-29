@@ -4,9 +4,9 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <ctime>
 #include <format>
-#include <random>
 #include <utility>
 
 namespace zchat {
@@ -20,13 +20,13 @@ namespace {
     constexpr auto interfaces_refresh_interval = 30s;
     constexpr std::size_t dedup_window = 64;
 
-    // Readable ANSI foreground colors for names.
-    constexpr std::array name_colors = {"31", "32", "33", "34", "35", "36", "91", "92", "93", "94", "95", "96"};
-
-    std::uint64_t random_id() {
-        std::random_device rd;
-        std::uint64_t id = (static_cast<std::uint64_t>(rd()) << 32) ^ rd();
-        return id ? id : 1;
+    std::optional<std::uint64_t> parse_id(std::string_view s) {
+        std::uint64_t id = 0;
+        const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), id, 16);
+        if (s.empty() || ec != std::errc {} || ptr != s.data() + s.size() || id == 0) {
+            return std::nullopt;
+        }
+        return id;
     }
 
     std::string timestamp() {
@@ -42,8 +42,8 @@ namespace {
 
 } // namespace
 
-Chat::Chat(std::uint16_t port, std::string name, Terminal& terminal) :
-    id_(random_id()),
+Chat::Chat(std::uint16_t port, std::string name, std::optional<Color> color, Terminal& terminal) :
+    id_(make_id(color)),
     name_(std::move(name)),
     terminal_(terminal),
     socket_(port) {
@@ -74,7 +74,40 @@ void Chat::stop() {
 void Chat::say(std::string_view text) {
     const std::string clean = text::sanitize(text, max_text_bytes);
     send(PacketType::Message, clean);
-    print_message(id_, name_, clean);
+    print_message(id_, name(), clean);
+}
+
+void Chat::set_name(std::string name) {
+    {
+        std::scoped_lock lock(name_mutex_);
+        name_ = std::move(name);
+    }
+    // Peers notice the new name on any packet from us; a heartbeat now saves waiting for the next one.
+    send(PacketType::Here);
+}
+
+void Chat::set_color(Color color) {
+    const std::uint64_t old_id = id_;
+    if (color_of_id(old_id) == color) {
+        return;
+    }
+    const std::uint64_t new_id = make_id(color);
+    {
+        std::scoped_lock lock(peers_mutex_);
+        old_ids_.push_back(old_id);
+    }
+    // The color comes from the id, so we become a new peer. The Leave of the old id names the new one: newer
+    // zchat versions just move us over, older ones see us leave and be back right away.
+    send(PacketType::Leave, std::format("{:x}", new_id));
+    id_ = new_id;
+    send(PacketType::Here);
+}
+
+std::string Chat::paint(Color color, std::string_view text) const {
+    if (!terminal_.colors()) {
+        return std::string(text);
+    }
+    return std::format("\x1b[{}m{}\x1b[0m", ansi_foreground(color), text);
 }
 
 void Chat::print_message(std::uint64_t id, std::string_view name, std::string_view text) const {
@@ -98,9 +131,8 @@ std::string Chat::colored_name(std::uint64_t id, std::string_view name) const {
     if (!terminal_.colors()) {
         return std::string(name);
     }
-    const char* color = name_colors[id % name_colors.size()];
     // Our own name is bold, so it stands out.
-    return std::format("\x1b[{}{}m{}\x1b[0m", id == id_ ? "1;" : "", color, name);
+    return std::format("\x1b[{}{}m{}\x1b[0m", id == id_ ? "1;" : "", ansi_foreground(color_of_id(id)), name);
 }
 
 void Chat::notice(std::string_view text) const {
@@ -116,7 +148,7 @@ void Chat::send(PacketType type, std::string_view text) {
     packet.type = type;
     packet.sender = id_;
     packet.seq = ++seq_;
-    packet.name = name_;
+    packet.name = name();
     packet.text = std::string(text);
     socket_.broadcast(encode(packet));
 }
@@ -144,11 +176,15 @@ void Chat::run(std::stop_token stop) {
 }
 
 void Chat::handle(const Packet& packet) {
-    enum class Event { None, Joined, Discovered, Renamed, Left };
+    enum class Event { None, Joined, Discovered, Renamed, Recolored, Left };
     Event event = Event::None;
     std::string old_name;
+    std::uint64_t new_id = 0;
     {
         std::scoped_lock lock(peers_mutex_);
+        if (std::ranges::find(old_ids_, packet.sender) != old_ids_.end()) {
+            return;
+        }
         auto it = peers_.find(packet.sender);
         if (it == peers_.end()) {
             if (packet.type == PacketType::Leave) {
@@ -174,8 +210,20 @@ void Chat::handle(const Packet& packet) {
             seqs.pop_front();
         }
         if (packet.type == PacketType::Leave) {
+            // A Leave naming another id is a color change, see set_color().
+            const auto next = parse_id(packet.text);
+            if (next && *next != packet.sender) {
+                Peer peer = std::move(it->second);
+                peer.recent_seqs.clear();
+                peer.last_seen = clock::now();
+                // Its first packet from the new id may have arrived already.
+                peers_.try_emplace(*next, std::move(peer));
+                new_id = *next;
+                event = Event::Recolored;
+            } else {
+                event = Event::Left;
+            }
             peers_.erase(it);
-            event = Event::Left;
         }
     }
 
@@ -189,6 +237,9 @@ void Chat::handle(const Packet& packet) {
         break;
     case Event::Renamed:
         notice(std::format("{} is now known as {}", colored_name(packet.sender, old_name), who));
+        break;
+    case Event::Recolored:
+        notice(std::format("{} changed color to {}", who, colored_name(new_id, packet.name)));
         break;
     case Event::Left:
         notice(std::format("{} left the chat", who));
