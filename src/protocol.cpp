@@ -74,6 +74,9 @@ std::optional<Packet> decode(std::string_view data) {
     case 'A': // black and white, from older versions
         packet.type = PacketType::Art;
         break;
+    case 'G':
+        packet.type = PacketType::Game;
+        break;
     default:
         return std::nullopt;
     }
