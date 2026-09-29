@@ -190,3 +190,7 @@ ZX1 <4 byte nonce> <scrambled bytes of the packet above>
   zchat: allow it on *private* networks. On Linux, e.g. `sudo ufw allow 47474/udp`.
 * Broadcasts do not cross routers, and some Wi-Fi networks (guest networks, "client isolation") block traffic
   between devices.
+* **Dropping a picture does nothing** (Linux, Terminator 2.1.3): Terminator itself fails on every drop, in any
+  program (`'bytes' object has no attribute 'encode'` in its log). Until it is updated, this plugin fixes it:
+  `mkdir -p ~/.config/terminator/plugins && cp extras/terminator_fix_drop.py ~/.config/terminator/plugins/`,
+  then restart Terminator (it needs no enabling). `/image FILE` works anyway.

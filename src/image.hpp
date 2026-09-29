@@ -9,8 +9,9 @@
 namespace zchat::image {
 
 // The file named by a line of input, the way terminals type it when a file is dragged and dropped on them:
-// a plain path, a quoted one ("C:\My Pictures\cat.png" or '/home/me/my cat.png'), one with backslash-escaped
-// spaces (/home/me/my\ cat.png, not on Windows), or a file:// URL. Empty when the line is empty.
+// a plain path, a quoted one ("C:\My Pictures\cat.png" or '/home/me/my cat.png'), or a file:// URL. Outside
+// Windows it is unquoted the way a shell does, so /home/me/my\ cat.png and '/home/me/it'\''s.png' work too.
+// Empty when the line is empty.
 std::filesystem::path parse_path(std::string_view line);
 
 // Whether a line of input is nothing but the path of an existing image file, as when one is dropped on the
