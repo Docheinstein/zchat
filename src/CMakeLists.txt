@@ -2,6 +2,7 @@ add_executable(zchat)
 
 target_sources(zchat PUBLIC
     chat.cpp
+    cipher.cpp
     color.cpp
     config.cpp
     image.cpp
