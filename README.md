@@ -55,7 +55,7 @@ While chatting:
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
 | `/game`            | list the games everyone in the chat can play           |
-| `/game finger`     | fastest finger: some words show up for everyone in 3 seconds, the first to type them exactly wins |
+| `/game race`       | typing race: some words show up for everyone in 3 seconds, the first to type them exactly wins |
 | `/game dice`       | push your luck: `/game dice roll` a die as often as you dare, each roll adds to points only you see, but a 1 loses them all; `/game dice stop` keeps them and shows them to everyone. The highest points kept in 60 seconds win; not stopped in time, and they are lost |
 | `/game paint`      | a shared canvas of 16×16 squares: `/game paint c7 red` colors a square, `/game paint c7-f9 blue` a rectangle, `/game paint c7 none` empties it and `/game paint undo` takes back your last change. Without a color, squares get your brush's: `/game paint color red` picks it, and it starts as the canvas color closest to your name color. Each square painted takes a second before the next change, so the chat has to draw together |
 | `/game scores`     | who won what in this session                           |
@@ -187,8 +187,8 @@ cmake --build build-win
   older versions are still understood, but older versions cannot read the scrambled ones, so they don't see newer
   peers: everybody should `/update`.
 * **Games** (`/game NAME`) have no server either: whoever starts a round is its referee, and sends everybody what
-  happens in it as `GAME` packets, whose text starts with the game's name (`finger go <round> <words>`). In fastest
-  finger the referee picks the words, and the first message with them that reaches it wins. One letter of each
+  happens in it as `GAME` packets, whose text starts with the game's name (`race go <round> <words>`). In the race
+  the referee picks the words, and the first message with them that reaches it wins. One letter of each
   word is shown as a Cyrillic lookalike (`а` for `a`), so the words cannot be copied and pasted: typed they match,
   pasted they do not, and whoever pasted them is out of the round. If two rounds start at
   once, everybody plays the one with the lowest round number; if the referee leaves, the others give up the round

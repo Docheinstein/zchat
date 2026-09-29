@@ -146,7 +146,7 @@ void print_help(zchat::Chat& chat) {
     chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
     chat.notice("  @everyone    tag all the people in the chat: they all hear a sound");
     chat.notice("  /game        list the games everyone in the chat can play");
-    chat.notice("  /game NAME   start one, like /game finger: the first to type the words shown wins");
+    chat.notice("  /game NAME   start one, like /game race: the first to type the words shown wins");
     chat.notice("  /game dice roll, /game dice stop  roll the die or keep your points, in a round of dice");
     chat.notice("  /game paint c7 red  color a square of the shared canvas (/game paint shows it)");
     chat.notice("  /game paint color red  pick your brush, for /game paint c7 without a color");

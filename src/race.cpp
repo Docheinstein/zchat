@@ -1,15 +1,15 @@
-// Fastest finger: a phrase shows up for everyone, and the first to type it exactly wins.
+// Race: a typing race. A phrase shows up for everyone, and the first to type it exactly wins.
 //
 // So that it cannot just be copied and pasted, the phrase shown has a letter of each word swapped for one that looks
 // the same from another alphabet (a Latin 'a' for a Cyrillic 'а'): typed on a keyboard it matches, pasted it does
 // not, and the one who pasted it is out of the round.
 //
 // The one who starts a round is its referee. It sends, as Game packets:
-//   finger ready <round>                       a phrase comes in a few seconds
-//   finger go <round> <phrase>                 type it!
-//   finger win <round> <id> <ms> <name>        the first message with the phrase the referee got, after ms
-//   finger paste <round> <id> <name>           someone pasted the phrase shown, and is out of the round
-//   finger none <round> <phrase>               nobody typed it in time
+//   race ready <round>                         a phrase comes in a few seconds
+//   race go <round> <phrase>                   type it!
+//   race win <round> <id> <ms> <name>          the first message with the phrase the referee got, after ms
+//   race paste <round> <id> <name>             someone pasted the phrase shown, and is out of the round
+//   race none <round> <phrase>                 nobody typed it in time
 // where <round> is a random hex number naming the round, and <id> the winner's sender id, in hex.
 
 #include "game.hpp"
@@ -30,7 +30,7 @@ namespace {
     using namespace std::chrono_literals;
     using clock = std::chrono::steady_clock;
 
-    constexpr std::string_view game_name = "finger";
+    constexpr std::string_view game_name = "race";
     // From "ready" to "go": time to get the hands on the keyboard.
     constexpr auto countdown = 3s;
     constexpr auto answer_time = 30s;
@@ -108,9 +108,9 @@ namespace {
         return field;
     }
 
-    class Finger final : public Game {
+    class Race final : public Game {
     public:
-        Finger(Chat& chat, Terminal& terminal, Games& games) :
+        Race(Chat& chat, Terminal& terminal, Games& games) :
             chat_(chat),
             terminal_(terminal),
             games_(games),
@@ -122,14 +122,14 @@ namespace {
         }
 
         std::string_view summary() const override {
-            return "fastest finger: some words show up, the first to type them exactly wins";
+            return "typing race: some words show up, the first to type them exactly wins";
         }
 
         void start() override {
             if (stage_ != Stage::Idle) {
                 chat_.notice(stage_ == Stage::Ready
-                                 ? "A round of fastest finger is about to start: get ready!"
-                                 : std::format("A round of fastest finger is on: type {}", bold(phrase_)));
+                                 ? "A race is about to start: get ready!"
+                                 : std::format("A race is on: type {}", bold(phrase_)));
                 return;
             }
             do {
@@ -217,7 +217,7 @@ namespace {
                 return;
             }
             if (!referee_) {
-                chat_.notice(std::format("The round of fastest finger by {} ended without a result: they may have "
+                chat_.notice(std::format("The race started by {} ended without a result: they may have "
                                          "left.",
                                          referee_name_));
                 stage_ = Stage::Idle;
@@ -288,7 +288,7 @@ namespace {
         }
 
         void announce_ready() {
-            chat_.notice(std::format("⌨️  Fastest finger, started by {}! Some words show up in {} seconds: the first to "
+            chat_.notice(std::format("⌨️  Typing race, started by {}! Some words show up in {} seconds: the first to "
                                      "type them exactly wins.",
                                      referee_name_, countdown.count()));
         }
@@ -299,7 +299,7 @@ namespace {
 
         void announce_win(std::uint64_t id, std::string_view name, std::chrono::milliseconds time) {
             const int wins = games_.add_win(game_name, id, name);
-            chat_.notice(std::format("🏆 {} wins fastest finger in {:.1f} seconds!{}", chat_.colored_name(id, name),
+            chat_.notice(std::format("🏆 {} wins the race in {:.1f} seconds!{}", chat_.colored_name(id, name),
                                      static_cast<double>(time.count()) / 1000,
                                      wins > 1 ? std::format(" That's {} wins.", wins) : ""));
         }
@@ -336,8 +336,8 @@ namespace {
 
 } // namespace
 
-std::unique_ptr<Game> make_finger(Chat& chat, Terminal& terminal, Games& games) {
-    return std::make_unique<Finger>(chat, terminal, games);
+std::unique_ptr<Game> make_race(Chat& chat, Terminal& terminal, Games& games) {
+    return std::make_unique<Race>(chat, terminal, games);
 }
 
 } // namespace zchat::game
