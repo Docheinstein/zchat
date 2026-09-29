@@ -23,8 +23,9 @@ bool is_dropped_image(std::string_view line);
 std::expected<std::string, std::string> to_ascii(const std::filesystem::path& path, std::size_t max_cols,
                                                  std::size_t max_rows);
 
-// Turns ASCII art from to_ascii() into what to print: the color codes become ANSI escape sequences when colors
-// is true, and are dropped otherwise. Art without color codes is shown as it is.
+// Turns ASCII art from to_ascii() into what to print. With colors, each colored character becomes a solid block
+// of its color, darker for the glyphs with less ink; without, the color codes are dropped and the characters are
+// shown as they are. Art without color codes is shown as it is.
 std::string render(std::string_view art, bool colors);
 
 } // namespace zchat::image

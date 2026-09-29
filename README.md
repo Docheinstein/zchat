@@ -49,7 +49,7 @@ While chatting:
 | `/color random`    | switch to a random color, and forget the saved one     |
 | `/tags`            | list the tags you can use in messages                  |
 | `/tags NAME`       | explain a tag, with an example (`/tag NAME` works too) |
-| `/image FILE`      | send a picture, drawn with colored characters (ASCII art) |
+| `/image FILE`      | send a picture, drawn with blocks of color               |
 | `/image SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
 | drop an image      | drag an image file onto the window, then press Enter: same as `/image` |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
@@ -87,8 +87,9 @@ Anything that is not a valid tag is shown as typed. Tags are applied by whoever 
 zchat versions show them as plain text.
 
 Pictures are sent as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
-with more ink, in the color of the picture (it looks best on a dark terminal; without colors, it is black and
-white). PNG, JPEG, GIF, BMP, TGA, PSD and PNM files can be sent. Dropping a file on a terminal types its path, so a
+with more ink, in the color of the picture. They are shown as solid blocks of color, as dark or bright as the
+picture there, so they look the same in every terminal and font (it looks best on a dark terminal; without colors,
+they are shown as the black and white ASCII art). PNG, JPEG, GIF, BMP, TGA, PSD and PNM files can be sent. Dropping a file on a terminal types its path, so a
 line holding nothing but the path of an image file sends the picture, however the terminal writes it: plain, in
 quotes, with `\ ` escapes, or as a `file://` URL. Older zchat versions don't show pictures.
 

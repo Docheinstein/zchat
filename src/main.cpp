@@ -138,7 +138,7 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /color random  pick a random color (not kept)");
     chat.notice("  /tags        list the tags for messages, like <color=red>text</color>");
     chat.notice("  /tags NAME   explain a tag, with an example");
-    chat.notice("  /image [SIZE] FILE  send a picture, drawn with characters");
+    chat.notice("  /image [SIZE] FILE  send a picture, drawn with blocks of color");
     chat.notice("               (SIZE: small, medium, large, a width like 40, or 40x20)");
     chat.notice("               (or drop an image file on the window, then press Enter)");
     chat.notice("  @NAME        tag someone in a message: they hear a sound");

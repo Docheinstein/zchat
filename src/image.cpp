@@ -310,22 +310,46 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
 
 std::string render(std::string_view art, bool colors) {
     std::string out;
-    bool colored = false;
+    if (!colors) {
+        std::ranges::copy_if(art, std::back_inserter(out), [](char c) {
+            return !color_of_code(c);
+        });
+        return out;
+    }
+    // With colors, each character becomes a solid block of its color, as dark as its glyph is thin: the picture
+    // looks the same in every terminal, instead of depending on how its font draws the symbols and how much space
+    // it leaves between lines. Only the way it is shown changes, so pictures from older versions look the same.
+    std::optional<Color> hue;
+    std::optional<Color> shown;
     for (const char c : art) {
         if (const auto color = color_of_code(c)) {
-            if (colors) {
-                out += std::format("\x1b[{}m", ansi_foreground(*color));
-                colored = true;
-            }
+            hue = color;
             continue;
         }
-        if (c == '\n' && colored) {
-            out += "\x1b[0m";
-            colored = false;
+        const auto level = ramp.find(c);
+        if (hue && c != ' ' && level != std::string_view::npos) {
+            auto shade = [&](std::uint8_t v) {
+                return static_cast<std::uint8_t>(std::lround(v * static_cast<double>(level) / (ramp.size() - 1)));
+            };
+            const Color color {shade(hue->r), shade(hue->g), shade(hue->b)};
+            if (color != shown) {
+                out += std::format("\x1b[{}m", ansi_foreground(color));
+                shown = color;
+            }
+            out += "\u2588"; // █
+            continue;
+        }
+        if (c == '\n') {
+            // Each row starts over without a color, like in to_ascii().
+            if (shown) {
+                out += "\x1b[0m";
+            }
+            hue.reset();
+            shown.reset();
         }
         out += c;
     }
-    if (colored) {
+    if (shown) {
         out += "\x1b[0m";
     }
     return out;
