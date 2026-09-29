@@ -154,6 +154,12 @@ cmake --build build-win
   look the same in every terminal theme. On a color
   change the `LEAVE` of the old id carries the new id as its text, so the others move the peer over instead of
   showing it leave and join (older versions still show a leave and a join).
+* Packets are **scrambled** before they are sent, so a packet sniffer does not show the chat in plaintext: each
+  byte is XORed with a keystream (splitmix64, seeded by a key built into zchat and 4 random bytes sent with the
+  packet) and added to the previous scrambled byte, so the same message looks different every time. This is
+  obfuscation, not real encryption: anyone with zchat, or this code, can read the packets. Plaintext packets from
+  older versions are still understood, but older versions cannot read the scrambled ones, so they don't see newer
+  peers: everybody should `/update`.
 * Incoming names and messages are sanitized (control characters stripped) so nobody can mess with your terminal.
 * The input line is edited in raw mode, so incoming messages are printed above what you are typing instead of
   getting mixed with it.
@@ -161,7 +167,13 @@ cmake --build build-win
 Wire format, one datagram per packet (fields separated by `\n`):
 
 ```
-ZCHAT1 \n <J|H|M|L> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
+ZCHAT1 \n <J|H|M|L|P> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
+```
+
+which is sent scrambled (see `src/cipher.hpp`):
+
+```
+ZX1 <4 byte nonce> <scrambled bytes of the packet above>
 ```
 
 ## Troubleshooting

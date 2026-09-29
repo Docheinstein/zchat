@@ -1,5 +1,6 @@
 #include "chat.hpp"
 
+#include "cipher.hpp"
 #include "image.hpp"
 #include "markup.hpp"
 #include "text.hpp"
@@ -266,7 +267,7 @@ void Chat::send(PacketType type, std::string_view text) {
     packet.seq = ++seq_;
     packet.name = name();
     packet.text = std::string(text);
-    socket_.broadcast(encode(packet));
+    socket_.broadcast(cipher::scramble(encode(packet)));
 }
 
 void Chat::run(std::stop_token stop) {
@@ -274,7 +275,9 @@ void Chat::run(std::stop_token stop) {
     auto next_refresh = clock::now() + interfaces_refresh_interval;
     while (!stop.stop_requested()) {
         if (auto data = socket_.receive(200ms)) {
-            if (auto packet = decode(*data); packet && packet->sender != id_) {
+            // Older versions send plaintext: still understood, but never sent.
+            const auto plain = cipher::unscramble(*data);
+            if (auto packet = decode(plain ? *plain : *data); packet && packet->sender != id_) {
                 handle(*packet);
             }
         }
