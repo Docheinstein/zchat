@@ -139,6 +139,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /image [SIZE] FILE  send a picture, drawn with characters");
     chat.notice("               (SIZE: small, medium, large, a width like 40, or 40x20)");
     chat.notice("               (or drop an image file on the window, then press Enter)");
+    chat.notice("  @NAME        tag someone in a message: they hear a sound");
+    chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
     chat.notice("  /help        show this help");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
 }
@@ -349,6 +351,9 @@ int run(const Options& options) {
     chat.notice(
         std::format("Chatting on UDP port {}. Type a message and press Enter, /help for commands.", options.port));
     terminal.set_prompt(terminal.colors() ? "\x1b[1m>\x1b[0m " : "> ", 2);
+    terminal.set_mentions([&chat] {
+        return chat.mentionable();
+    });
     chat.start();
 
     while (auto line = terminal.read_line()) {

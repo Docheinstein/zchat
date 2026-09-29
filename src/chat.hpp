@@ -62,6 +62,9 @@ public:
     // The names of the other peers currently in the chat.
     std::vector<std::string> peers() const;
 
+    // The other peers, sorted by name, for the list shown when typing '@'.
+    std::vector<Terminal::Mention> mentionable() const;
+
     // Our own name, with its color.
     std::string colored_own_name() const {
         return colored_name(id_, name());
@@ -85,7 +88,11 @@ private:
     void run(std::stop_token stop);
     void handle(const Packet& packet);
     void send(PacketType type, std::string_view text = {});
-    void print_message(std::uint64_t id, std::string_view name, std::string_view text) const;
+    // Returns whether the message tags us.
+    bool print_message(std::uint64_t id, std::string_view name, std::string_view text) const;
+    // Turns the "@Name" tags of the people in the chat into markup showing them bold in their color, ours also
+    // underlined. Sets tags_us when we are tagged.
+    std::string mark_mentions(std::string_view text, bool& tags_us) const;
     void print_art(std::uint64_t id, std::string_view name, std::string_view art) const;
     void prune_silent_peers();
 
