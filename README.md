@@ -40,6 +40,7 @@ While chatting:
 |--------------------|--------------------------------------------------------|
 | text + Enter       | send a message                                         |
 | `/who`             | list who is in the chat                                |
+| `/whoami`          | show your name                                         |
 | `/nick NAME`       | change your name; it is saved and used next time too   |
 | `/forget`          | forget the saved name and get a new random one         |
 | `/color`           | show your name color and the ones to pick from         |

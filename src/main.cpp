@@ -130,6 +130,7 @@ BOOL WINAPI on_console_event(DWORD event) {
 void print_help(zchat::Chat& chat) {
     chat.notice("Commands:");
     chat.notice("  /who         list the people in the chat");
+    chat.notice("  /whoami      show your name");
     chat.notice("  /nick NAME   change your name, and keep it for next time");
     chat.notice("  /forget      forget the saved name and get a new random one");
     chat.notice("  /color NAME  change the color of your name, and keep it for next time");
@@ -390,6 +391,8 @@ int run(const Options& options, bool& restart) {
         }
         if (input == "/who" || input == "/list") {
             print_who(chat);
+        } else if (input == "/whoami") {
+            chat.notice(std::format("You are {}.", chat.colored_own_name()));
         } else if (input == "/nick" || input.starts_with("/nick ")) {
             change_nick(chat, input.substr(std::min(input.size(), std::string_view("/nick ").size())));
         } else if (input == "/color" || input.starts_with("/color ")) {
