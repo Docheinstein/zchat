@@ -32,6 +32,15 @@ public:
     virtual void message(std::uint64_t sender, std::string_view name, std::string_view text) = 0;
     // Called a few times per second, for the timers.
     virtual void tick() = 0;
+    // /game NAME ARGS, like /game dice roll: returns whether the game has such a command.
+    virtual bool command(std::string_view args) {
+        (void)args;
+        return false;
+    }
+    // Its commands, like "roll, stop", for the list of games; empty when it has none.
+    virtual std::string_view commands() const {
+        return {};
+    }
 };
 
 // The games that can be played with /game NAME. All calls are safe from any thread.
@@ -42,7 +51,8 @@ public:
     Games(const Games&) = delete;
     Games& operator=(const Games&) = delete;
 
-    // /game ARG: without a game's name, lists them; "scores" shows who won what.
+    // /game ARG: without a game's name, lists them; "scores" shows who won what. /game NAME starts a round of a
+    // game, and /game NAME ARGS is one of its own commands, like /game dice roll.
     void command(std::string_view arg);
 
     // Counts a win of a round of a game; returns how many that player has won in this session. Every zchat
@@ -69,5 +79,6 @@ private:
 
 // The games, each in its own file.
 std::unique_ptr<Game> make_finger(Chat& chat, Terminal& terminal, Games& games);
+std::unique_ptr<Game> make_dice(Chat& chat, Terminal& terminal, Games& games);
 
 } // namespace zchat::game

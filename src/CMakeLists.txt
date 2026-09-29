@@ -5,6 +5,7 @@ target_sources(zchat PUBLIC
     cipher.cpp
     color.cpp
     config.cpp
+    dice.cpp
     finger.cpp
     game.cpp
     image.cpp
