@@ -23,6 +23,7 @@ namespace {
 Games::Games(Chat& chat, Terminal& terminal) :
     chat_(chat) {
     games_.push_back(make_finger(chat, terminal, *this));
+    games_.push_back(make_dice(chat, terminal, *this));
 
     chat_.set_game_hooks({
         .packet =
@@ -65,18 +66,29 @@ void Games::command(std::string_view arg) {
         list();
         return;
     }
-    if (lowercase(arg) == "scores") {
+    const auto space = arg.find(' ');
+    const std::string name = lowercase(arg.substr(0, space));
+    std::string_view args = space == std::string_view::npos ? std::string_view() : arg.substr(space + 1);
+    while (!args.empty() && args.front() == ' ') {
+        args.remove_prefix(1);
+    }
+    if (name == "scores" && args.empty()) {
         print_scores();
         return;
     }
-    const auto it = std::ranges::find_if(games_, [&](const auto& g) {
-        return lowercase(arg) == g->name();
-    });
+    const auto it = std::ranges::find(games_, name, &Game::name);
     if (it == games_.end()) {
-        chat_.notice(std::format("Unknown game {} (try /game)", text::sanitize(arg, 32)));
+        chat_.notice(std::format("Unknown game {} (try /game)", text::sanitize(arg.substr(0, space), 32)));
         return;
     }
-    (*it)->start();
+    if (args.empty()) {
+        (*it)->start();
+    } else if (!(*it)->command(lowercase(args))) {
+        const std::string_view commands = (*it)->commands();
+        chat_.notice(commands.empty() ? std::format("{} has no commands: /game {} starts a round.", name, name)
+                                      : std::format("Unknown command {} for {} (its commands: {})",
+                                                    text::sanitize(args, 32), name, commands));
+    }
 }
 
 int Games::add_win(std::string_view game, std::uint64_t id, std::string_view name) {
@@ -91,6 +103,16 @@ void Games::list() const {
     chat_.notice("Games everyone in the chat can play: /game NAME starts one.");
     for (const auto& g : games_) {
         chat_.notice(std::format("  {:<8} {}", g->name(), g->summary()));
+        if (!g->commands().empty()) {
+            // "roll, stop" becomes "/game dice roll, /game dice stop".
+            std::string line;
+            for (std::string_view rest = g->commands(); !rest.empty();) {
+                const auto comma = rest.find(", ");
+                line += std::format("{}/game {} {}", line.empty() ? "" : ", ", g->name(), rest.substr(0, comma));
+                rest.remove_prefix(comma == std::string_view::npos ? rest.size() : comma + 2);
+            }
+            chat_.notice(std::format("           then {}", line));
+        }
     }
     chat_.notice("  /game scores  who won what in this session");
 }

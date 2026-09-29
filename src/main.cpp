@@ -147,6 +147,7 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  @everyone    tag all the people in the chat: they all hear a sound");
     chat.notice("  /game        list the games everyone in the chat can play");
     chat.notice("  /game NAME   start one, like /game finger: the first to type the words shown wins");
+    chat.notice("  /game dice roll, /game dice stop  roll the die or keep your points, in a round of dice");
     chat.notice("  /update      get the latest zchat, build it and restart");
     chat.notice("  /help        show this help");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
