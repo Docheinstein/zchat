@@ -28,7 +28,7 @@ public:
     // Sets the prompt; prompt_width is its visible width (without escape sequences).
     void set_prompt(std::string prompt, std::size_t prompt_width);
 
-    // Prints a full line above the input line. Thread-safe.
+    // Prints a full line above the input line; it can span several lines, separated by '\n'. Thread-safe.
     void print(std::string_view line);
 
     // Reads the next line typed by the user, or nullopt on end of input (Ctrl+D, Ctrl+C, closed stdin).

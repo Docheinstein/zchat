@@ -14,6 +14,7 @@ enum class PacketType : char {
     Here = 'H',    // periodic heartbeat, also the answer to Join
     Message = 'M', // a chat line
     Leave = 'L',   // a peer is quitting, or, when the text is a new sender id, changing color
+    Art = 'A',     // a picture drawn with characters: the text is its rows, separated by '\n'
 };
 
 struct Packet {
@@ -26,6 +27,9 @@ struct Packet {
 
 inline constexpr std::size_t max_name_bytes = 48;
 inline constexpr std::size_t max_text_bytes = 1000;
+// The size of an Art drawing. At most about 2 KB: bigger datagrams are less likely to make it through.
+inline constexpr std::size_t max_art_cols = 64;
+inline constexpr std::size_t max_art_rows = 32;
 
 std::string encode(const Packet& packet);
 

@@ -1,5 +1,6 @@
 #include "chat.hpp"
 #include "config.hpp"
+#include "image.hpp"
 #include "markup.hpp"
 #include "names.hpp"
 #include "net.hpp"
@@ -134,6 +135,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /color random  pick a random color (not kept)");
     chat.notice("  /tags        list the tags for messages, like <color=red>text</color>");
     chat.notice("  /tags NAME   explain a tag, with an example");
+    chat.notice("  /image FILE  send a picture, drawn with characters");
+    chat.notice("               (or drop an image file on the window, then press Enter)");
     chat.notice("  /help        show this help");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
 }
@@ -225,6 +228,19 @@ void print_tags(zchat::Chat& chat, std::string_view arg, bool colors) {
     chat.notice(std::format("Shows as: {}", zchat::markup::render(tag->example, colors)));
 }
 
+void send_image(zchat::Chat& chat, std::string_view arg) {
+    if (arg.empty()) {
+        chat.notice("Use /image FILE to send a picture, or drop an image file on the window and press Enter.");
+        return;
+    }
+    const auto art = zchat::image::to_ascii(zchat::image::parse_path(arg), zchat::max_art_cols, zchat::max_art_rows);
+    if (!art) {
+        chat.notice(std::format("Cannot send {}: {}", zchat::text::sanitize(arg, 200), art.error()));
+        return;
+    }
+    chat.draw(*art);
+}
+
 void print_who(zchat::Chat& chat) {
     const auto peers = chat.peers();
     if (peers.empty()) {
@@ -297,8 +313,14 @@ int run(const Options& options) {
                        terminal.colors());
         } else if (input == "/forget") {
             forget_nick(chat, rng);
+        } else if (input == "/image" || input.starts_with("/image ")) {
+            send_image(chat, input.substr(std::min(input.size(), std::string_view("/image ").size())));
         } else if (input == "/help" || input == "/?") {
             print_help(chat);
+        } else if (zchat::image::is_dropped_image(input)) {
+            // Dropping a file on a terminal types its path: send the picture instead of the path. Checked before
+            // the unknown commands, as a path can start with '/' too.
+            send_image(chat, input);
         } else if (input.starts_with('/') && !input.starts_with("//")) {
             chat.notice(std::format("Unknown command {} (try /help)", zchat::text::sanitize(input, 64)));
         } else {
