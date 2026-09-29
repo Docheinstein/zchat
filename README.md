@@ -186,7 +186,9 @@ cmake --build build-win
   peers: everybody should `/update`.
 * **Games** (`/game NAME`) have no server either: whoever starts a round is its referee, and sends everybody what
   happens in it as `GAME` packets, whose text starts with the game's name (`finger go <round> <words>`). In fastest
-  finger the referee picks the words, and the first message with them that reaches it wins. If two rounds start at
+  finger the referee picks the words, and the first message with them that reaches it wins. One letter of each
+  word is shown as a Cyrillic lookalike (`а` for `a`), so the words cannot be copied and pasted: typed they match,
+  pasted they do not, and whoever pasted them is out of the round. If two rounds start at
   once, everybody plays the one with the lowest round number; if the referee leaves, the others give up the round
   after a while. Older versions ignore `GAME` packets, so they just see people typing funny words.
 * Incoming names and messages are sanitized (control characters stripped) so nobody can mess with your terminal.
