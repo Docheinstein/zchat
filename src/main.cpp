@@ -214,7 +214,9 @@ void print_tags(zchat::Chat& chat, std::string_view arg, bool colors) {
     if (arg.empty()) {
         chat.notice("Tags you can use in messages, like HTML: <tag=value>text</tag>. /tags NAME tells more.");
         for (const auto& tag : zchat::markup::tags()) {
-            chat.notice(std::format("  {:<8} {}", tag.name, tag.summary));
+            const std::string names = tag.alias.empty() ? std::string(tag.name)
+                                                        : std::format("{}, {}", tag.name, tag.alias);
+            chat.notice(std::format("  {:<17} {}", names, tag.summary));
         }
         return;
     }

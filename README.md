@@ -62,10 +62,20 @@ While chatting:
 People using a different `--port` are in a different room.
 
 Messages can contain tags, written like HTML: they are not shown, and affect the text after them until they are
-closed or the message ends. For now there is `<color>`, which takes a color name, a hex code or RGB values:
+closed or the message ends:
+
+| Tag                | Effect                                                   |
+|--------------------|----------------------------------------------------------|
+| `<color=...>`      | colors the text: a color name, a hex code or RGB values  |
+| `<bold>`, `<b>`    | bold text; `<bold=2>` and `<bold=3>` are even bolder (and brighter) |
+| `<italic>`, `<i>`  | italic text (not shown by the old Windows console)       |
+| `<underscore>`, `<u>` | underlined text                                       |
+| `<strikethrough>`, `<s>` | struck through text (not shown by the old Windows console) |
 
 ```
 this is a <color=red>test</color>, <color=#ff8800>orange <color=0,200,255>blue</color> orange again</color>
+this is <bold>important</bold>, <italic>so <bold>very</bold> nice</italic>, <b=3>urgent!</b>
+read <u>this</u> first, the meeting is on <s>Monday</s> Tuesday
 ```
 
 Anything that is not a valid tag is shown as typed. Tags are applied by whoever receives the message, so older
