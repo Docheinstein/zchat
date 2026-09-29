@@ -49,6 +49,7 @@ While chatting:
 | `/tags`            | list the tags you can use in messages                  |
 | `/tags NAME`       | explain a tag, with an example (`/tag NAME` works too) |
 | `/image FILE`      | send a picture, drawn with colored characters (ASCII art) |
+| `/image SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
 | drop an image      | drag an image file onto the window, then press Enter: same as `/image` |
 | `/help`            | list commands                                          |
 | `/quit`, Ctrl+C, Ctrl+D | leave                                             |

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <charconv>
 #include <cstdint>
 #include <cstdio>
@@ -135,7 +136,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /color random  pick a random color (not kept)");
     chat.notice("  /tags        list the tags for messages, like <color=red>text</color>");
     chat.notice("  /tags NAME   explain a tag, with an example");
-    chat.notice("  /image FILE  send a picture, drawn with characters");
+    chat.notice("  /image [SIZE] FILE  send a picture, drawn with characters");
+    chat.notice("               (SIZE: small, medium, large, a width like 40, or 40x20)");
     chat.notice("               (or drop an image file on the window, then press Enter)");
     chat.notice("  /help        show this help");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
@@ -230,12 +232,76 @@ void print_tags(zchat::Chat& chat, std::string_view arg, bool colors) {
     chat.notice(std::format("Shows as: {}", zchat::markup::render(tag->example, colors)));
 }
 
+struct ArtSize {
+    std::size_t cols = zchat::max_art_cols;
+    std::size_t rows = zchat::max_art_rows;
+};
+
+constexpr std::size_t min_art_cols = 4;
+constexpr std::size_t min_art_rows = 2;
+
+// Reads the size of /image [SIZE] FILE: small, medium or large, a width in characters ("40"), or a width and a
+// height ("40x20"). The picture keeps its proportions, so it fits in that size without filling it. Sizes are
+// limited by what the others can receive.
+std::optional<ArtSize> parse_art_size(std::string_view s) {
+    const auto is = [&](std::string_view word) {
+        return std::ranges::equal(s, word, [](char a, char b) {
+            return std::tolower(static_cast<unsigned char>(a)) == b;
+        });
+    };
+    if (is("small")) {
+        return ArtSize {24, zchat::max_art_rows};
+    }
+    if (is("medium")) {
+        return ArtSize {40, zchat::max_art_rows};
+    }
+    if (is("large")) {
+        return ArtSize {};
+    }
+    const auto number = [](std::string_view digits, std::size_t min, std::size_t max) -> std::optional<std::size_t> {
+        std::size_t value = 0;
+        const auto [ptr, ec] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
+        if (digits.empty() || ec != std::errc {} || ptr != digits.data() + digits.size()) {
+            return std::nullopt;
+        }
+        return std::clamp(value, min, max);
+    };
+    const auto x = s.find_first_of("xX");
+    const auto cols = number(s.substr(0, x), min_art_cols, zchat::max_art_cols);
+    if (!cols) {
+        return std::nullopt;
+    }
+    if (x == std::string_view::npos) {
+        return ArtSize {*cols, zchat::max_art_rows};
+    }
+    const auto rows = number(s.substr(x + 1), min_art_rows, zchat::max_art_rows);
+    if (!rows) {
+        return std::nullopt;
+    }
+    return ArtSize {*cols, *rows};
+}
+
 void send_image(zchat::Chat& chat, std::string_view arg) {
     if (arg.empty()) {
-        chat.notice("Use /image FILE to send a picture, or drop an image file on the window and press Enter.");
+        chat.notice("Use /image [SIZE] FILE to send a picture, or drop an image file on the window and press Enter.");
+        chat.notice(std::format("SIZE is small, medium, large (the default), a width like 40, or a width and height "
+                                "like 40x20, up to {}x{}.",
+                                zchat::max_art_cols, zchat::max_art_rows));
         return;
     }
-    const auto art = zchat::image::to_ascii(zchat::image::parse_path(arg), zchat::max_art_cols, zchat::max_art_rows);
+    // A size first, when there is something after it: "/image 40" alone still sends a file named 40.
+    ArtSize size;
+    if (const auto space = arg.find(' '); space != std::string_view::npos) {
+        std::string_view rest = arg.substr(space + 1);
+        while (!rest.empty() && rest.front() == ' ') {
+            rest.remove_prefix(1);
+        }
+        if (const auto parsed = parse_art_size(arg.substr(0, space)); parsed && !rest.empty()) {
+            size = *parsed;
+            arg = rest;
+        }
+    }
+    const auto art = zchat::image::to_ascii(zchat::image::parse_path(arg), size.cols, size.rows);
     if (!art) {
         chat.notice(std::format("Cannot send {}: {}", zchat::text::sanitize(arg, 200), art.error()));
         return;
