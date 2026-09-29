@@ -105,6 +105,10 @@ source and build folders it was built from. While you keep chatting, it fetches 
 branch, fast-forwards to the new commits, rebuilds, replaces the zchat you are running (the one in the build
 folder, or the installed copy) and restarts it with the same options. The others see you leave and come back.
 
+Before building, it lists what's new since the zchat you are running: the subjects of the new commits, newest
+first. There is no separate changelog, so commit subjects are written for the people chatting, e.g.
+`Added @everyone: tags all the people in the chat`.
+
 It needs git, CMake and the compiler used for the first build. It changes nothing when the clone has local
 commits or uncommitted changes, or when the build fails: the build errors are shown and the running zchat is
 kept. The remote must not ask for a password (use an SSH key or a credential helper).
