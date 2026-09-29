@@ -6,6 +6,7 @@
 #include "net.hpp"
 #include "terminal.hpp"
 #include "text.hpp"
+#include "update.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -141,6 +142,7 @@ void print_help(zchat::Chat& chat) {
     chat.notice("               (or drop an image file on the window, then press Enter)");
     chat.notice("  @NAME        tag someone in a message: they hear a sound");
     chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
+    chat.notice("  /update      get the latest zchat, build it and restart");
     chat.notice("  /help        show this help");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
 }
@@ -325,7 +327,8 @@ void print_who(zchat::Chat& chat) {
     chat.notice(std::format("{} other{} here: {}", peers.size(), peers.size() == 1 ? " is" : "s are", list));
 }
 
-int run(const Options& options) {
+// Returns the exit code; restart is set when zchat was updated and should start again.
+int run(const Options& options, bool& restart) {
     zchat::net::NetworkInit network;
 
     // --name wins over the nickname saved with /nick, which wins over a random name.
@@ -356,7 +359,22 @@ int run(const Options& options) {
     });
     chat.start();
 
-    while (auto line = terminal.read_line()) {
+    // Declared after the chat and the terminal it uses, so that an update in progress is cancelled first.
+    std::atomic<bool> updated {false};
+    zchat::update::Updater updater(
+        [&chat](std::string_view text) {
+            chat.notice(text);
+        },
+        [&] {
+            updated = true;
+            terminal.interrupt();
+        });
+
+    while (!updated) {
+        const auto line = terminal.read_line();
+        if (!line) {
+            break;
+        }
         std::string_view input = *line;
         while (!input.empty() && input.back() == ' ') {
             input.remove_suffix(1);
@@ -388,6 +406,10 @@ int run(const Options& options) {
             forget_nick(chat, rng);
         } else if (input == "/image" || input.starts_with("/image ")) {
             send_image(chat, input.substr(std::min(input.size(), std::string_view("/image ").size())));
+        } else if (input == "/update") {
+            if (!updater.start()) {
+                chat.notice("An update is already in progress.");
+            }
         } else if (input == "/help" || input == "/?") {
             print_help(chat);
         } else if (zchat::image::is_dropped_image(input)) {
@@ -406,22 +428,29 @@ int run(const Options& options) {
 #ifdef _WIN32
     active_chat = nullptr;
 #endif
-    chat.notice("Bye!");
+    restart = updated;
+    if (!restart) {
+        chat.notice("Bye!");
+    }
     return 0;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
+    zchat::update::clean_up();
     int exit_code = 0;
     const auto options = parse_args(argc, argv, exit_code);
     if (!options) {
         return exit_code;
     }
+    bool restart = false;
     try {
-        return run(*options);
+        exit_code = run(*options, restart);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "zchat: %s\n", e.what());
         return 1;
     }
+    // Only now that the terminal is back to normal and the chat socket is closed.
+    return restart ? zchat::update::restart(argv) : exit_code;
 }
