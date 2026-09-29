@@ -32,7 +32,7 @@ namespace {
     // How much of the output of a failed step is shown.
     constexpr std::size_t shown_lines = 10;
     // How many of the new commits are listed.
-    constexpr std::size_t shown_commits = 5;
+    constexpr std::size_t shown_commits = 8;
 
     fs::path utf8_path(std::string_view s) {
         return fs::path(std::u8string(reinterpret_cast<const char8_t*>(s.data()), s.size()));
@@ -184,6 +184,30 @@ void Updater::run(std::stop_token stop) {
     const std::string head_commit = trimmed(head.output);
     const std::string upstream_commit = trimmed(upstream.output);
 
+    // What changed since the running zchat was built: the subjects of the commits it does not have, newest first.
+    // The sources may already be ahead of it (pulled by hand, or an update that could not build), so it counts from
+    // the commit it was built from when that is known, else from the sources.
+    auto list_news = [&] {
+        const bool from_built = !built_commit.empty() &&
+                                git({"merge-base", "--is-ancestor", built_commit, "@{upstream}"}).exit_code == 0;
+        const auto log = git({"log", "--no-merges", "--format=%s",
+                              std::format("{}..@{{upstream}}", from_built ? built_commit : "HEAD")});
+        if (log.exit_code != 0 || stop.stop_requested()) {
+            return;
+        }
+        const auto commits = last_lines(log.output, static_cast<std::size_t>(-1));
+        if (commits.empty()) {
+            return;
+        }
+        notice_(std::format("What's new ({} update{}):", commits.size(), commits.size() == 1 ? "" : "s"));
+        for (std::size_t i = 0; i < commits.size() && i < shown_commits; ++i) {
+            notice_(std::format("  - {}", commits[i]));
+        }
+        if (commits.size() > shown_commits) {
+            notice_(std::format("  ... and {} more", commits.size() - shown_commits));
+        }
+    };
+
     if (head_commit != upstream_commit) {
         if (git({"merge-base", "--is-ancestor", "HEAD", "@{upstream}"}).exit_code != 0) {
             if (!stop.stop_requested()) {
@@ -202,15 +226,7 @@ void Updater::run(std::stop_token stop) {
             }
             return;
         }
-        const auto log = git({"log", "--oneline", "--no-decorate", "HEAD..@{upstream}"});
-        const auto commits = last_lines(log.output, static_cast<std::size_t>(-1));
-        notice_(std::format("{} new commit{}:", commits.size(), commits.size() == 1 ? "" : "s"));
-        for (std::size_t i = 0; i < commits.size() && i < shown_commits; ++i) {
-            notice_(std::format("  {}", commits[i]));
-        }
-        if (commits.size() > shown_commits) {
-            notice_(std::format("  ... and {} more", commits.size() - shown_commits));
-        }
+        list_news();
         if (const auto merge = git({"merge", "--ff-only", "--quiet", "@{upstream}"}); merge.exit_code != 0) {
             fail("Cannot update: pulling the new commits failed.", merge);
             return;
@@ -221,6 +237,7 @@ void Updater::run(std::stop_token stop) {
     } else {
         // Pulled by hand, or a previous /update pulled but could not build: the sources are ahead of this zchat.
         notice_("The sources are newer than this zchat.");
+        list_news();
     }
 
     notice_("Building the new zchat...");
