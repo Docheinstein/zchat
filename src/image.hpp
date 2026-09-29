@@ -19,14 +19,19 @@ std::filesystem::path parse_path(std::string_view line);
 bool is_dropped_image(std::string_view line);
 
 // Turns an image file into colored ASCII art that fits in max_cols x max_rows characters, keeping its
-// proportions. The rows are separated by '\n', and use only printable ASCII: the characters of the drawing are
-// symbols, and a letter or digit before them sets their color (see render()). On failure, returns why.
+// proportions. The rows are separated by '\n': the characters of the drawing are the ASCII symbols " .:-=+*#%@",
+// from dark to bright, and blocks (▀▄▌▐, eighths like ▁▂▃ and ▏▎▍, quadrants like ▘▚▙) where a character has parts
+// of two colors; codes before them set their look: a letter or digit their color, one of ()[]{}<>^~;? how bright
+// they are, from the dimmest to full ('`' for black), and '&' followed by a color and a brightness code the color
+// behind the blocks ('|' for none). Every row starts without a color, at full brightness and without a background,
+// and a row that would be too long for a packet is drawn more simply. On failure, returns why.
 std::expected<std::string, std::string> to_ascii(const std::filesystem::path& path, std::size_t max_cols,
                                                  std::size_t max_rows);
 
-// Turns ASCII art from to_ascii() into what to print. With colors, each colored character becomes a solid block
-// of its color, darker for the glyphs with less ink; without, the color codes are dropped and the characters are
-// shown as they are. Art without color codes is shown as it is.
+// Turns ASCII art from to_ascii() into what to print. With colors, each colored symbol becomes a solid block of its
+// color, darker for the symbols with less ink and dimmed by the brightness codes, and blocks are shown in their color
+// on their background; without, each character becomes the ASCII symbol as bright as it looks. Art without color
+// codes is shown as it is.
 std::string render(std::string_view art, bool colors);
 
 } // namespace zchat::image

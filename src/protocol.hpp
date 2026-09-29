@@ -30,11 +30,14 @@ struct Packet {
 
 inline constexpr std::size_t max_name_bytes = 48;
 inline constexpr std::size_t max_text_bytes = 1000;
-// The size of an Art drawing, in characters. With the color codes, a row takes up to twice as many bytes, so a
-// drawing is at most about 4 KB: bigger datagrams are less likely to make it through.
+// The size of an Art drawing, in characters. With the color and brightness codes and Unicode blocks, a row takes up
+// to five times as many bytes, so a drawing is at most about 10 KB (usually much less): bigger datagrams are less
+// likely to make it through.
 inline constexpr std::size_t max_art_cols = 64;
 inline constexpr std::size_t max_art_rows = 32;
-inline constexpr std::size_t max_art_row_bytes = 2 * max_art_cols;
+// A character can take a color code, a brightness code and a 3-byte UTF-8 character (a block): rows that would be
+// longer are drawn with fewer of them, see image::to_ascii().
+inline constexpr std::size_t max_art_row_bytes = 5 * max_art_cols;
 
 std::string encode(const Packet& packet);
 

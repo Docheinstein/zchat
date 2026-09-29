@@ -51,7 +51,7 @@ While chatting:
 | `/tags NAME`       | explain a tag, with an example (`/tag NAME` works too) |
 | `/image FILE`      | send a picture, drawn with blocks of color               |
 | `/image SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
-| drop an image      | drag an image file onto the window, then press Enter: same as `/image` |
+| drop an image      | drag an image file onto the window: the line becomes `/image PATH`, to send with Enter (or add a size first) |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
 | `/update`          | get the latest zchat from git, build it and restart (see below) |
@@ -76,6 +76,7 @@ closed or the message ends:
 | `<italic>`, `<i>`  | italic text (not shown by the old Windows console)       |
 | `<underscore>`, `<u>` | underlined text                                       |
 | `<strikethrough>`, `<s>` | struck through text (not shown by the old Windows console) |
+| `<size=...>`       | `tiny` (or `1`), `small` (`2`), `normal` (`3`) or `large` (`4`) text, drawn with Unicode letters: ᵗⁱⁿʸ, ꜱᴍᴀʟʟ, Ｌａｒｇｅ |
 
 ```
 this is a <color=red>test</color>, <color=#ff8800>orange <color=0,200,255>blue</color> orange again</color>
@@ -89,9 +90,21 @@ zchat versions show them as plain text.
 Pictures are sent as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
 with more ink, in the color of the picture. They are shown as solid blocks of color, as dark or bright as the
 picture there, so they look the same in every terminal and font (it looks best on a dark terminal; without colors,
-they are shown as the black and white ASCII art). PNG, JPEG, GIF, BMP, TGA, PSD and PNM files can be sent. Dropping a file on a terminal types its path, so a
-line holding nothing but the path of an image file sends the picture, however the terminal writes it: plain, in
-quotes, with `\ ` escapes, or as a `file://` URL. Older zchat versions don't show pictures.
+they are shown as the black and white ASCII art). PNG, JPEG, GIF, BMP, TGA, PSD and PNM files can be sent. Dropping
+a file on a terminal types its path, so as soon as the input line holds nothing but the path of an image file,
+however the terminal writes it (plain, in quotes, with `\ ` escapes, or as a `file://` URL), it turns into the
+`/image` command for it. A line like that sent anyway (e.g. piped in) also sends the picture. Older zchat versions
+don't show pictures.
+
+To be closer to the picture, the art also carries a brightness for its characters (`()[]{}<>^~;?`, from the dimmest
+to full, 12 levels, and `` ` `` for black: dark parts stay dark instead of being drawn in full-strength colors), and
+characters can have two colors: a background (`&` then a color and a brightness code, `|` for none) and the color of
+a block drawn over it. Each character is looked at as 8 x 8 points, and gets the block, among the halves (`▀▄▌▐`),
+the eighths (`▁▂▃▅▆▇ ▔`, `▏▎▍▋▊▉ ▕`) and the quadrants (`▘▝▖▗▚▞▛▜▙▟`), and the two colors that look the most
+like it: edges fall where they are to an eighth of a character, and thin dark outlines (eyes, teeth, the lines of
+a drawing) are kept instead of being averaged away. These blocks are drawn by Windows Terminal itself, and by most
+fonts, to fill exactly their part of the character. A line that would be too long for a packet is drawn with one
+color per character, or as the plain ASCII art. Versions from before this show the codes as they are.
 
 Images are decoded with [stb_image](https://github.com/nothings/stb) (public domain / MIT), in `third_party/stb`.
 

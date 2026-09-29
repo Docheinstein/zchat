@@ -49,6 +49,11 @@ public:
     // locked, so it must not print.
     void set_mentions(std::function<std::vector<Mention>()> source);
 
+    // Sets what may rewrite the input line once the keys typed so far are handled and no more are waiting, as after
+    // a paste or a file dropped on the window: it gets the line and returns its replacement, or nullopt to keep it.
+    // It is called with the terminal locked, so it must not print.
+    void set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter);
+
     // Plays the notification sound. Thread-safe.
     void bell();
 
@@ -72,6 +77,8 @@ private:
     bool on_char(char32_t cp, bool& quit);
     // Hands out the completed line, remembering it in the history.
     std::string take_line();
+    // Lets the rewriter change the input line, when no more keys are waiting.
+    void rewrite_locked();
     // Replaces the input with an older (step -1) or newer (step +1) line from the history.
     void recall_locked(int step);
     void write(std::string_view data);
@@ -100,6 +107,7 @@ private:
     std::string draft_;
 
     std::function<std::vector<Mention>()> mention_source_;
+    std::function<std::optional<std::string>(std::string_view)> rewriter_;
     // Byte offset in buffer_ of the '@' the list is open for, and the highlighted entry of the list.
     std::optional<std::size_t> mention_start_;
     std::size_t mention_selected_ = 0;

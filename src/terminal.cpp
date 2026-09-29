@@ -193,6 +193,12 @@ void Terminal::bell() {
 std::optional<std::string> Terminal::read_line_interactive() {
     auto& p = *platform_;
     while (true) {
+        // A paste (or a dropped file) arrives as many keys at once: before waiting for more, the rewriter sees the
+        // line with all of them in.
+        if (DWORD pending = 0; GetNumberOfConsoleInputEvents(p.in, &pending) && pending == 0) {
+            std::scoped_lock lock(mutex_);
+            rewrite_locked();
+        }
         if (p.wake) {
             const HANDLE waits[] = {p.wake, p.in};
             if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0 + 1) {
@@ -413,6 +419,12 @@ namespace {
 std::optional<std::string> Terminal::read_line_interactive() {
     const int wake_fd = platform_->wake[0];
     while (true) {
+        // A paste (or a dropped file) arrives as many keys at once: before waiting for more, the rewriter sees the
+        // line with all of them in.
+        if (pollfd pending {STDIN_FILENO, POLLIN, 0}; poll(&pending, 1, 0) == 0) {
+            std::scoped_lock lock(mutex_);
+            rewrite_locked();
+        }
         int c = read_byte(wake_fd);
         if (c < 0) {
             return std::nullopt;
@@ -674,6 +686,23 @@ std::string Terminal::take_line() {
     history_pos_ = history_.size();
     redraw_locked();
     return line;
+}
+
+void Terminal::set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter) {
+    std::scoped_lock lock(mutex_);
+    rewriter_ = std::move(rewriter);
+}
+
+void Terminal::rewrite_locked() {
+    if (!rewriter_ || buffer_.empty()) {
+        return;
+    }
+    if (auto line = rewriter_(buffer_); line && *line != buffer_ && line->size() <= max_text_bytes) {
+        buffer_ = std::move(*line);
+        cursor_ = buffer_.size();
+        mention_start_.reset();
+        redraw_locked();
+    }
 }
 
 void Terminal::recall_locked(int step) {
