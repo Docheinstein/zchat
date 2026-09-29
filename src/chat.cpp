@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <ctime>
 #include <format>
@@ -40,6 +41,18 @@ namespace {
         localtime_r(&now, &local);
 #endif
         return std::format("{:02}:{:02}", local.tm_hour, local.tm_min);
+    }
+
+    std::string lowercase(std::string_view s) {
+        std::string out(s);
+        std::ranges::transform(out, out.begin(), [](char c) {
+            return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        });
+        return out;
+    }
+
+    bool is_word_char(char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
     }
 
 } // namespace
@@ -123,10 +136,66 @@ std::string Chat::paint(Color color, std::string_view text) const {
     return std::format("\x1b[{}m{}\x1b[0m", ansi_foreground(color), text);
 }
 
-void Chat::print_message(std::uint64_t id, std::string_view name, std::string_view text) const {
+bool Chat::print_message(std::uint64_t id, std::string_view name, std::string_view text) const {
     const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", timestamp()) : timestamp();
+    bool tags_us = false;
+    const std::string marked = mark_mentions(text, tags_us);
     terminal_.print(
-        std::format("{} {}: {}", time, colored_name(id, name), markup::render(text, terminal_.colors())));
+        std::format("{} {}: {}", time, colored_name(id, name), markup::render(marked, terminal_.colors())));
+    return tags_us;
+}
+
+std::string Chat::mark_mentions(std::string_view text, bool& tags_us) const {
+    struct Person {
+        std::string name;
+        Color color;
+        bool us;
+    };
+    std::vector<Person> people;
+    const std::uint64_t own_id = id_;
+    people.push_back({lowercase(name()), color_of_id(own_id), true});
+    {
+        std::scoped_lock lock(peers_mutex_);
+        for (const auto& [id, peer] : peers_) {
+            people.push_back({lowercase(peer.name), color_of_id(id), false});
+        }
+    }
+    // A name with '<' or '>' would break the markup around it.
+    std::erase_if(people, [](const Person& p) {
+        return p.name.empty() || p.name.find_first_of("<>") != std::string::npos;
+    });
+    // The longest name first, so "@Rex Jr" is not taken for "@Rex".
+    std::ranges::stable_sort(people, std::ranges::greater {}, [](const Person& p) {
+        return p.name.size();
+    });
+
+    const std::string lower = lowercase(text);
+    std::string out;
+    std::size_t done = 0;
+    for (std::size_t at = lower.find('@'); at != std::string::npos; at = lower.find('@', at + 1)) {
+        // Only an '@' starting a word, not one in an email address.
+        if (at > 0 && is_word_char(lower[at - 1])) {
+            continue;
+        }
+        const auto person = std::ranges::find_if(people, [&](const Person& p) {
+            const std::size_t end = at + 1 + p.name.size();
+            return lower.compare(at + 1, p.name.size(), p.name) == 0 &&
+                   (end >= lower.size() || !is_word_char(lower[end]));
+        });
+        if (person == people.end()) {
+            continue;
+        }
+        const std::size_t end = at + 1 + person->name.size();
+        const Color c = person->color;
+        out += text.substr(done, at - done);
+        out += std::format("<b>{}<color=#{:02x}{:02x}{:02x}>{}</color>{}</b>", person->us ? "<u>" : "", c.r, c.g,
+                           c.b, text.substr(at, end - at), person->us ? "</u>" : "");
+        tags_us = tags_us || person->us;
+        done = end;
+        at = end - 1;
+    }
+    out += text.substr(done);
+    return out;
 }
 
 void Chat::print_art(std::uint64_t id, std::string_view name, std::string_view art) const {
@@ -153,6 +222,25 @@ std::vector<std::string> Chat::peers() const {
     }
     std::ranges::sort(names);
     return names;
+}
+
+std::vector<Terminal::Mention> Chat::mentionable() const {
+    std::vector<Terminal::Mention> people;
+    {
+        std::scoped_lock lock(peers_mutex_);
+        for (const auto& [id, peer] : peers_) {
+            people.push_back({peer.name, terminal_.colors() ? ansi_foreground(color_of_id(id)) : std::string()});
+        }
+    }
+    std::ranges::sort(people, {}, [](const Terminal::Mention& m) {
+        return lowercase(m.name);
+    });
+    // Two peers with the same name are tagged the same way.
+    const auto dupes = std::ranges::unique(people, {}, [](const Terminal::Mention& m) {
+        return lowercase(m.name);
+    });
+    people.erase(dupes.begin(), dupes.end());
+    return people;
 }
 
 std::string Chat::colored_name(std::uint64_t id, std::string_view name) const {
@@ -282,7 +370,9 @@ void Chat::handle(const Packet& packet) {
         send(PacketType::Here);
         break;
     case PacketType::Message:
-        print_message(packet.sender, packet.name, packet.text);
+        if (print_message(packet.sender, packet.name, packet.text)) {
+            terminal_.bell();
+        }
         break;
     case PacketType::Art:
         print_art(packet.sender, packet.name, packet.text);

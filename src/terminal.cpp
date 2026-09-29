@@ -4,6 +4,7 @@
 #include "text.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <format>
 #include <iostream>
@@ -30,6 +31,7 @@ namespace {
     constexpr char32_t key_ctrl_u = 0x15;
     constexpr char32_t key_ctrl_w = 0x17;
     constexpr char32_t key_ctrl_z = 0x1A;
+    constexpr char32_t key_escape = 0x1B;
     constexpr char32_t key_delete = 0x7F; // what most terminals send for Backspace
     // Keys without a character, given values past the last Unicode code point.
     constexpr char32_t key_up = 0x110000;
@@ -42,6 +44,16 @@ namespace {
 
     // How many sent lines Up/Down can go back to.
     constexpr std::size_t max_history = 100;
+    // How many names the '@' list shows at once; it scrolls to keep the highlighted one in view.
+    constexpr std::size_t max_mention_rows = 6;
+
+    std::string lowercase(std::string_view s) {
+        std::string out(s);
+        std::ranges::transform(out, out.begin(), [](char c) {
+            return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        });
+        return out;
+    }
 
     bool is_continuation(char c) {
         return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
@@ -160,6 +172,11 @@ std::size_t Terminal::width() const {
     return 80;
 }
 
+void Terminal::bell() {
+    // The system sound: the console bell is silent in some hosts.
+    MessageBeep(MB_OK);
+}
+
 std::optional<std::string> Terminal::read_line_interactive() {
     auto& p = *platform_;
     while (true) {
@@ -271,6 +288,11 @@ std::size_t Terminal::width() const {
     return 80;
 }
 
+void Terminal::bell() {
+    std::scoped_lock lock(mutex_);
+    write("\a");
+}
+
 namespace {
 
     // Reads one byte, waiting at most timeout_ms (or forever if negative). Returns -1 on EOF/error/timeout.
@@ -298,6 +320,10 @@ namespace {
     // 0 for the keys zchat does not use.
     char32_t read_escape_sequence() {
         int c = read_byte(30);
+        if (c < 0) {
+            // Nothing follows: the Escape key itself.
+            return key_escape;
+        }
         if (c != '[' && c != 'O') {
             return 0;
         }
@@ -430,8 +456,81 @@ std::optional<std::string> Terminal::read_line_plain() {
     return line;
 }
 
+void Terminal::set_mentions(std::function<std::vector<Mention>()> source) {
+    std::scoped_lock lock(mutex_);
+    mention_source_ = std::move(source);
+}
+
+std::vector<Terminal::Mention> Terminal::mention_matches_locked() const {
+    std::vector<Mention> matches;
+    if (!mention_start_ || !mention_source_) {
+        return matches;
+    }
+    const std::size_t from = *mention_start_ + 1;
+    const std::string typed = lowercase(std::string_view(buffer_).substr(from, cursor_ - from));
+    for (auto& mention : mention_source_()) {
+        if (lowercase(mention.name).starts_with(typed)) {
+            matches.push_back(std::move(mention));
+        }
+    }
+    return matches;
+}
+
+void Terminal::update_mention_locked(char32_t typed) {
+    // The list needs cursor movements to be drawn below the input line.
+    if (!vt_ || !mention_source_) {
+        return;
+    }
+    // An '@' starting a word opens the list; one inside a word, like in an email address, does not.
+    if (typed == '@' && cursor_ > 0 && buffer_[cursor_ - 1] == '@' && (cursor_ == 1 || buffer_[cursor_ - 2] == ' ')) {
+        mention_start_ = cursor_ - 1;
+    } else if (mention_start_ &&
+               (cursor_ <= *mention_start_ || *mention_start_ >= buffer_.size() || buffer_[*mention_start_] != '@')) {
+        // The cursor went back before the '@', or the '@' was deleted.
+        mention_start_.reset();
+    }
+    mention_selected_ = 0;
+}
+
+void Terminal::accept_mention_locked(const Mention& mention) {
+    const std::size_t start = *mention_start_;
+    mention_start_.reset();
+    const std::string inserted = "@" + mention.name + " ";
+    if (buffer_.size() - (cursor_ - start) + inserted.size() > max_text_bytes) {
+        return;
+    }
+    buffer_.replace(start, cursor_ - start, inserted);
+    cursor_ = start + inserted.size();
+}
+
 bool Terminal::on_char(char32_t cp, bool& quit) {
     std::scoped_lock lock(mutex_);
+    // While the '@' list is shown, Up/Down move in it, Enter/Tab pick the name and Escape closes it.
+    if (const auto matches = mention_matches_locked(); !matches.empty()) {
+        const std::size_t n = matches.size();
+        switch (cp) {
+        case key_up:
+            mention_selected_ = (mention_selected_ % n + n - 1) % n;
+            redraw_locked();
+            return false;
+        case key_down:
+            mention_selected_ = (mention_selected_ + 1) % n;
+            redraw_locked();
+            return false;
+        case '\r':
+        case '\n':
+        case '\t':
+            accept_mention_locked(matches[mention_selected_ % n]);
+            redraw_locked();
+            return false;
+        case key_escape:
+            mention_start_.reset();
+            redraw_locked();
+            return false;
+        default:
+            break;
+        }
+    }
     switch (cp) {
     case '\r':
     case '\n':
@@ -508,6 +607,7 @@ bool Terminal::on_char(char32_t cp, bool& quit) {
         }
         break;
     }
+    update_mention_locked(cp);
     redraw_locked();
     return false;
 }
@@ -519,6 +619,7 @@ std::string Terminal::take_line() {
     cursor_ = 0;
     view_start_ = 0;
     draft_.clear();
+    mention_start_.reset();
     // Blank lines and repeats of the previous line are not worth an extra Up press.
     if (line.find_first_not_of(' ') != std::string::npos && (history_.empty() || history_.back() != line)) {
         history_.push_back(line);
@@ -541,11 +642,13 @@ void Terminal::recall_locked(int step) {
     history_pos_ = step < 0 ? history_pos_ - 1 : history_pos_ + 1;
     buffer_ = history_pos_ == history_.size() ? draft_ : history_[history_pos_];
     cursor_ = buffer_.size();
+    mention_start_.reset();
 }
 
 std::string Terminal::clear_line_locked() {
     if (vt_) {
-        return "\r\x1b[2K";
+        // Down to the end of the screen, for the '@' list below the input line.
+        return "\r\x1b[J";
     }
     return "\r" + std::string(width() - 1, ' ') + "\r";
 }
@@ -572,7 +675,25 @@ void Terminal::redraw_locked() {
     out += prompt_;
     out += std::string_view(buffer_).substr(begin, end - begin);
     const std::size_t back = count_chars(std::string_view(buffer_).substr(cursor_, end - cursor_));
-    if (back > 0) {
+    if (const auto matches = mention_matches_locked(); !matches.empty()) {
+        // The '@' list goes below the input line, the highlighted name marked with '>'. At the bottom of the
+        // screen, the line feeds scroll it up to make room.
+        const std::size_t selected = mention_selected_ % matches.size();
+        const std::size_t rows = std::min(matches.size(), max_mention_rows);
+        const std::size_t first = selected >= rows ? selected - rows + 1 : 0;
+        const std::size_t name_room = cols > 5 ? cols - 5 : 1;
+        for (std::size_t i = first; i < first + rows; ++i) {
+            const Mention& m = matches[i];
+            const std::string_view name = std::string_view(m.name).substr(0, char_offset(m.name, name_room));
+            out += i == selected ? "\r\n \x1b[1m>\x1b[0m " : "\r\n   ";
+            out += m.style.empty() ? std::string(name) : std::format("\x1b[{}m{}\x1b[0m", m.style, name);
+        }
+        out += std::format("\x1b[{}A\r", rows);
+        const std::size_t column = prompt_width_ + cursor - view_start_;
+        if (column > 0) {
+            out += std::format("\x1b[{}C", column);
+        }
+    } else if (back > 0) {
         if (vt_) {
             out += std::format("\x1b[{}D", back);
         } else {

@@ -1,11 +1,13 @@
 #pragma once
 
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace zchat {
 
@@ -34,8 +36,29 @@ public:
     // Reads the next line typed by the user, or nullopt on end of input (Ctrl+D, Ctrl+C, closed stdin).
     std::optional<std::string> read_line();
 
+    // Someone who can be tagged by typing '@': the name inserted, and the ANSI SGR parameters it is shown with in
+    // the list (e.g. "38;2;R;G;B"), empty for plain text.
+    struct Mention {
+        std::string name;
+        std::string style;
+    };
+
+    // Sets where the list shown after typing '@' gets its names from. The source is called with the terminal
+    // locked, so it must not print.
+    void set_mentions(std::function<std::vector<Mention>()> source);
+
+    // Plays the notification sound. Thread-safe.
+    void bell();
+
 private:
     struct Platform;
+
+    // The names matching what was typed after the '@', when the list is open.
+    std::vector<Mention> mention_matches_locked() const;
+    // Opens or closes the list after the input changed; typed is the key that changed it.
+    void update_mention_locked(char32_t typed);
+    // Replaces the '@' and what was typed after it with the chosen name.
+    void accept_mention_locked(const Mention& mention);
 
     std::optional<std::string> read_line_plain();
     std::optional<std::string> read_line_interactive();
@@ -68,6 +91,11 @@ private:
     std::deque<std::string> history_;
     std::size_t history_pos_ = 0;
     std::string draft_;
+
+    std::function<std::vector<Mention>()> mention_source_;
+    // Byte offset in buffer_ of the '@' the list is open for, and the highlighted entry of the list.
+    std::optional<std::size_t> mention_start_;
+    std::size_t mention_selected_ = 0;
 };
 
 } // namespace zchat
