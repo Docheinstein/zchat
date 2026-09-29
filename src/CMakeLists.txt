@@ -9,14 +9,38 @@ target_sources(zchat PUBLIC
     markup.cpp
     names.cpp
     net.cpp
+    process.cpp
     protocol.cpp
     terminal.cpp
     text.cpp
+    update.cpp
 )
 
 target_include_directories(zchat PUBLIC .)
 # Third party code: its warnings are not ours to fix.
 target_include_directories(zchat SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/third_party/stb)
+
+# /update rebuilds zchat from these sources, in this build folder, and needs to know which commit it runs.
+find_package(Git QUIET)
+set(zchat_git git)
+if (GIT_EXECUTABLE)
+    set(zchat_git "${GIT_EXECUTABLE}")
+endif()
+set(zchat_generated "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_custom_target(zchat_commit
+    COMMAND "${CMAKE_COMMAND}" "-DGIT=${zchat_git}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+            "-DOUTPUT=${zchat_generated}/commit.hpp" -P "${PROJECT_SOURCE_DIR}/cmake/commit.cmake"
+    BYPRODUCTS "${zchat_generated}/commit.hpp"
+    VERBATIM)
+add_dependencies(zchat zchat_commit)
+target_include_directories(zchat PRIVATE "${zchat_generated}")
+target_compile_definitions(zchat PRIVATE
+    ZCHAT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    ZCHAT_BUILD_DIR="${CMAKE_BINARY_DIR}"
+    ZCHAT_BUILD_CONFIG="$<CONFIG>"
+    ZCHAT_BUILT_EXE="$<TARGET_FILE:zchat>"
+    ZCHAT_CMAKE="${CMAKE_COMMAND}"
+    ZCHAT_GIT="${zchat_git}")
 
 find_package(Threads REQUIRED)
 target_link_libraries(zchat PRIVATE Threads::Threads)

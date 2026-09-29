@@ -51,6 +51,7 @@ While chatting:
 | `/image FILE`      | send a picture, drawn with colored characters (ASCII art) |
 | `/image SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
 | drop an image      | drag an image file onto the window, then press Enter: same as `/image` |
+| `/update`          | get the latest zchat from git, build it and restart (see below) |
 | `/help`            | list commands                                          |
 | `/quit`, Ctrl+C, Ctrl+D | leave                                             |
 | `//text`           | send a message that starts with `/`                    |
@@ -93,6 +94,17 @@ Images are decoded with [stb_image](https://github.com/nothings/stb) (public dom
 The name set with `/nick` is saved in the `zchat` config folder: `%APPDATA%\zchat\config` on Windows,
 `~/.config/zchat/config` on Linux (or `$XDG_CONFIG_HOME/zchat/config`). On start, `--name` wins over the saved
 name, which wins over a random one. The color set with `/color` is saved there too.
+
+### Updating
+
+`/update` works when zchat was built from a git clone (with `just build` or `just install`): it remembers the
+source and build folders it was built from. While you keep chatting, it fetches from the remote of the current
+branch, fast-forwards to the new commits, rebuilds, replaces the zchat you are running (the one in the build
+folder, or the installed copy) and restarts it with the same options. The others see you leave and come back.
+
+It needs git, CMake and the compiler used for the first build. It changes nothing when the clone has local
+commits or uncommitted changes, or when the build fails: the build errors are shown and the running zchat is
+kept. The remote must not ask for a password (use an SSH key or a credential helper).
 
 ## Building
 

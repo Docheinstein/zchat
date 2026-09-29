@@ -13,6 +13,7 @@
 #include <windows.h>
 #else
 #include <cerrno>
+#include <fcntl.h>
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <termios.h>
@@ -112,6 +113,8 @@ struct Terminal::Platform {
     bool console_in = false;
     bool console_out = false;
     char16_t high_surrogate = 0;
+    // Set by interrupt(), to wake up a read waiting for a key.
+    HANDLE wake = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 };
 
 Terminal::Terminal() :
@@ -147,6 +150,16 @@ Terminal::~Terminal() {
     }
     SetConsoleCP(p.in_cp);
     SetConsoleOutputCP(p.out_cp);
+    if (p.wake) {
+        CloseHandle(p.wake);
+    }
+}
+
+void Terminal::interrupt() {
+    interrupted_ = true;
+    if (platform_->wake) {
+        SetEvent(platform_->wake);
+    }
 }
 
 void Terminal::write(std::string_view data) {
@@ -180,6 +193,12 @@ void Terminal::bell() {
 std::optional<std::string> Terminal::read_line_interactive() {
     auto& p = *platform_;
     while (true) {
+        if (p.wake) {
+            const HANDLE waits[] = {p.wake, p.in};
+            if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0 + 1) {
+                return std::nullopt;
+            }
+        }
         INPUT_RECORD record;
         DWORD count = 0;
         if (!ReadConsoleInputW(p.in, &record, 1, &count)) {
@@ -248,6 +267,8 @@ std::optional<std::string> Terminal::read_line_interactive() {
 #else
 struct Terminal::Platform {
     termios original {};
+    // A pipe written by interrupt(), to wake up a read waiting for a key.
+    int wake[2] = {-1, -1};
 };
 
 Terminal::Terminal() :
@@ -262,6 +283,9 @@ Terminal::Terminal() :
         raw.c_cc[VMIN] = 1;
         raw.c_cc[VTIME] = 0;
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+        if (pipe2(platform_->wake, O_CLOEXEC) != 0) {
+            platform_->wake[0] = platform_->wake[1] = -1;
+        }
     }
 }
 
@@ -272,6 +296,19 @@ Terminal::~Terminal() {
             write(clear_line_locked());
         }
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &platform_->original);
+    }
+    for (const int fd : platform_->wake) {
+        if (fd >= 0) {
+            close(fd);
+        }
+    }
+}
+
+void Terminal::interrupt() {
+    interrupted_ = true;
+    if (platform_->wake[1] >= 0) {
+        const char byte = 0;
+        [[maybe_unused]] const auto n = ::write(platform_->wake[1], &byte, 1);
     }
 }
 
@@ -295,14 +332,17 @@ void Terminal::bell() {
 
 namespace {
 
-    // Reads one byte, waiting at most timeout_ms (or forever if negative). Returns -1 on EOF/error/timeout.
-    int read_byte(int timeout_ms = -1) {
+    // Reads one byte, waiting at most timeout_ms (or forever if negative). Returns -1 on EOF/error/timeout, or
+    // when wake_fd (if valid) becomes readable.
+    int read_byte(int wake_fd, int timeout_ms = -1) {
         while (true) {
-            if (timeout_ms >= 0) {
-                pollfd pfd {STDIN_FILENO, POLLIN, 0};
-                if (poll(&pfd, 1, timeout_ms) <= 0) {
-                    return -1;
-                }
+            pollfd fds[] = {{STDIN_FILENO, POLLIN, 0}, {wake_fd, POLLIN, 0}};
+            const int ready = poll(fds, wake_fd >= 0 ? 2 : 1, timeout_ms);
+            if (ready < 0 && errno == EINTR) {
+                continue;
+            }
+            if (ready <= 0 || fds[1].revents != 0) {
+                return -1;
             }
             unsigned char c;
             const auto n = ::read(STDIN_FILENO, &c, 1);
@@ -318,8 +358,8 @@ namespace {
 
     // Reads the rest of an escape sequence (arrow keys, function keys, ...). Returns one of the key_* values, or
     // 0 for the keys zchat does not use.
-    char32_t read_escape_sequence() {
-        int c = read_byte(30);
+    char32_t read_escape_sequence(int wake_fd) {
+        int c = read_byte(wake_fd, 30);
         if (c < 0) {
             // Nothing follows: the Escape key itself.
             return key_escape;
@@ -329,7 +369,7 @@ namespace {
         }
         std::string params;
         do {
-            c = read_byte(30);
+            c = read_byte(wake_fd, 30);
             if (c >= 0 && !(c >= 0x40 && c <= 0x7E)) {
                 params += static_cast<char>(c);
             }
@@ -371,14 +411,15 @@ namespace {
 } // namespace
 
 std::optional<std::string> Terminal::read_line_interactive() {
+    const int wake_fd = platform_->wake[0];
     while (true) {
-        int c = read_byte();
+        int c = read_byte(wake_fd);
         if (c < 0) {
             return std::nullopt;
         }
         char32_t cp = static_cast<char32_t>(c);
         if (c == 0x1B) {
-            cp = read_escape_sequence();
+            cp = read_escape_sequence(wake_fd);
             if (cp == 0) {
                 continue;
             }
@@ -387,7 +428,7 @@ std::optional<std::string> Terminal::read_line_interactive() {
             std::string bytes(1, static_cast<char>(c));
             const int len = (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 1;
             for (int i = 1; i < len; ++i) {
-                const int cc = read_byte(30);
+                const int cc = read_byte(wake_fd, 30);
                 if (cc < 0) {
                     break;
                 }
@@ -442,6 +483,9 @@ void Terminal::print(std::string_view line) {
 }
 
 std::optional<std::string> Terminal::read_line() {
+    if (interrupted_) {
+        return std::nullopt;
+    }
     return interactive_ ? read_line_interactive() : read_line_plain();
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -33,7 +34,8 @@ public:
     // Prints a full line above the input line; it can span several lines, separated by '\n'. Thread-safe.
     void print(std::string_view line);
 
-    // Reads the next line typed by the user, or nullopt on end of input (Ctrl+D, Ctrl+C, closed stdin).
+    // Reads the next line typed by the user, or nullopt on end of input (Ctrl+D, Ctrl+C, closed stdin) or after
+    // interrupt().
     std::optional<std::string> read_line();
 
     // Someone who can be tagged by typing '@': the name inserted, and the ANSI SGR parameters it is shown with in
@@ -49,6 +51,10 @@ public:
 
     // Plays the notification sound. Thread-safe.
     void bell();
+
+    // Makes read_line() return nullopt right away, now and from then on. Thread-safe. Without a terminal (plain
+    // line-by-line input) it cannot stop a read in progress, only the following ones.
+    void interrupt();
 
 private:
     struct Platform;
@@ -76,6 +82,7 @@ private:
     std::unique_ptr<Platform> platform_;
     bool interactive_ = false;
     bool vt_ = false;
+    std::atomic<bool> interrupted_ {false};
 
     std::mutex mutex_;
     std::string prompt_;
