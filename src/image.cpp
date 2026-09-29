@@ -1,11 +1,16 @@
 #include "image.hpp"
 
+#include "color.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <vector>
 
 // stb_image, built right here: only the decoders zchat needs, reading from memory (the file is read by zchat, so
@@ -80,10 +85,55 @@ namespace {
         return out;
     }
 
-    // The brightness of a pixel, from 0 to 1, as if it were on a black background.
-    double luminance(const unsigned char* rgba) {
-        const double lum = 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2];
-        return lum * rgba[3] / (255.0 * 255.0);
+    // Colors are written as one letter or digit, for 61 hues: the mixes of 5 levels of red, green and blue where
+    // the strongest one is at full level. How dark a character looks is up to its glyph.
+    constexpr std::string_view color_codes = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345678";
+    constexpr int color_levels = 5;
+
+    // The code of each mix, at index (r * 5 + g) * 5 + b, for levels from 0 to 4; 0 for the mixes that are not used.
+    constexpr auto code_table = [] {
+        std::array<char, color_levels * color_levels * color_levels> table {};
+        std::size_t next = 0;
+        for (std::size_t i = 0; i < table.size(); ++i) {
+            const int r = static_cast<int>(i) / 25;
+            const int g = static_cast<int>(i) / 5 % 5;
+            const int b = static_cast<int>(i) % 5;
+            if (std::max({r, g, b}) == color_levels - 1) {
+                table[i] = color_codes[next++];
+            }
+        }
+        return table;
+    }();
+
+    // The code of the hue closest to a color, of any brightness.
+    char color_code(const std::array<double, 3>& rgb) {
+        const double strongest = std::max({rgb[0], rgb[1], rgb[2]});
+        if (strongest <= 0) {
+            return code_table.back();
+        }
+        std::size_t index = 0;
+        for (const double v : rgb) {
+            index = index * color_levels + static_cast<std::size_t>(std::lround(v / strongest * (color_levels - 1)));
+        }
+        return code_table[index];
+    }
+
+    std::optional<Color> color_of_code(char code) {
+        const auto it = std::ranges::find(code_table, code);
+        if (code == 0 || it == code_table.end()) {
+            return std::nullopt;
+        }
+        const auto index = static_cast<int>(it - code_table.begin());
+        auto level = [](int l) {
+            return static_cast<std::uint8_t>(l * 255 / (color_levels - 1));
+        };
+        return Color {level(index / 25), level(index / 5 % 5), level(index % 5)};
+    }
+
+    // The brightness of a pixel, from 0 to 1, as if it were on a black background. It is that of its strongest
+    // channel, the one its color code keeps at full level: a pure red is as bright as a white, just redder.
+    double brightness(const unsigned char* rgba) {
+        return std::max({rgba[0], rgba[1], rgba[2]}) * static_cast<double>(rgba[3]) / (255.0 * 255.0);
     }
 
 } // namespace
@@ -184,8 +234,9 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
         cols = std::clamp<std::size_t>(std::llround(static_cast<double>(width) * rows * 2.0 / height), 1, max_cols);
     }
 
-    // The average brightness of the pixels under each character.
+    // The average brightness and color of the pixels under each character.
     std::vector<double> cells(rows * cols);
+    std::vector<char> codes(rows * cols);
     for (std::size_t r = 0; r < rows; ++r) {
         const std::size_t y0 = r * height / rows;
         const std::size_t y1 = std::max(y0 + 1, (r + 1) * height / rows);
@@ -193,12 +244,18 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
             const std::size_t x0 = c * width / cols;
             const std::size_t x1 = std::max(x0 + 1, (c + 1) * width / cols);
             double sum = 0;
+            std::array<double, 3> rgb {};
             for (std::size_t y = y0; y < y1; ++y) {
                 for (std::size_t x = x0; x < x1; ++x) {
-                    sum += luminance(pixels.get() + (y * width + x) * 4);
+                    const unsigned char* pixel = pixels.get() + (y * width + x) * 4;
+                    sum += brightness(pixel);
+                    for (std::size_t k = 0; k < 3; ++k) {
+                        rgb[k] += static_cast<double>(pixel[k]) * pixel[3];
+                    }
                 }
             }
             cells[r * cols + c] = sum / static_cast<double>((y1 - y0) * (x1 - x0));
+            codes[r * cols + c] = color_code(rgb);
         }
     }
 
@@ -212,9 +269,17 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
 
     std::vector<std::string> lines(rows);
     for (std::size_t r = 0; r < rows; ++r) {
+        // Each row starts over without a color, so it can be read by itself.
+        char color = 0;
         for (std::size_t c = 0; c < cols; ++c) {
             const auto level = static_cast<std::size_t>(cells[r * cols + c] * static_cast<double>(ramp.size()));
-            lines[r] += ramp[std::min(level, ramp.size() - 1)];
+            const char glyph = ramp[std::min(level, ramp.size() - 1)];
+            // A color only when it changes, and never for spaces, which do not show it.
+            if (glyph != ' ' && codes[r * cols + c] != color) {
+                color = codes[r * cols + c];
+                lines[r] += color;
+            }
+            lines[r] += glyph;
         }
         lines[r].erase(lines[r].find_last_not_of(' ') + 1);
     }
@@ -241,6 +306,29 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
         art += line.empty() ? line : line.substr(indent);
     }
     return art;
+}
+
+std::string render(std::string_view art, bool colors) {
+    std::string out;
+    bool colored = false;
+    for (const char c : art) {
+        if (const auto color = color_of_code(c)) {
+            if (colors) {
+                out += std::format("\x1b[{}m", ansi_foreground(*color));
+                colored = true;
+            }
+            continue;
+        }
+        if (c == '\n' && colored) {
+            out += "\x1b[0m";
+            colored = false;
+        }
+        out += c;
+    }
+    if (colored) {
+        out += "\x1b[0m";
+    }
+    return out;
 }
 
 } // namespace zchat::image

@@ -48,7 +48,7 @@ While chatting:
 | `/color random`    | switch to a random color, and forget the saved one     |
 | `/tags`            | list the tags you can use in messages                  |
 | `/tags NAME`       | explain a tag, with an example (`/tag NAME` works too) |
-| `/image FILE`      | send a picture, drawn with characters (ASCII art)      |
+| `/image FILE`      | send a picture, drawn with colored characters (ASCII art) |
 | drop an image      | drag an image file onto the window, then press Enter: same as `/image` |
 | `/help`            | list commands                                          |
 | `/quit`, Ctrl+C, Ctrl+D | leave                                             |
@@ -81,11 +81,11 @@ read <u>this</u> first, the meeting is on <s>Monday</s> Tuesday
 Anything that is not a valid tag is shown as typed. Tags are applied by whoever receives the message, so older
 zchat versions show them as plain text.
 
-Pictures are sent as ASCII art, at most 64 characters wide and 32 lines tall, brighter parts drawn with more ink
-(it looks best on a dark terminal). PNG, JPEG, GIF, BMP, TGA, PSD and PNM files can be sent. Dropping a file on a
-terminal types its path, so a line holding nothing but the path of an image file sends the picture, however the
-terminal writes it: plain, in quotes, with `\ ` escapes, or as a `file://` URL. Older zchat versions don't show
-pictures.
+Pictures are sent as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
+with more ink, in the color of the picture (it looks best on a dark terminal; without colors, it is black and
+white). PNG, JPEG, GIF, BMP, TGA, PSD and PNM files can be sent. Dropping a file on a terminal types its path, so a
+line holding nothing but the path of an image file sends the picture, however the terminal writes it: plain, in
+quotes, with `\ ` escapes, or as a `file://` URL. Older zchat versions don't show pictures.
 
 Images are decoded with [stb_image](https://github.com/nothings/stb) (public domain / MIT), in `third_party/stb`.
 

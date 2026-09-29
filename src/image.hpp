@@ -17,9 +17,14 @@ std::filesystem::path parse_path(std::string_view line);
 // terminal. Only the file name is looked at, not its contents.
 bool is_dropped_image(std::string_view line);
 
-// Turns an image file into ASCII art that fits in max_cols x max_rows characters, keeping its proportions.
-// The rows are separated by '\n', and use only printable ASCII. On failure, returns why.
+// Turns an image file into colored ASCII art that fits in max_cols x max_rows characters, keeping its
+// proportions. The rows are separated by '\n', and use only printable ASCII: the characters of the drawing are
+// symbols, and a letter or digit before them sets their color (see render()). On failure, returns why.
 std::expected<std::string, std::string> to_ascii(const std::filesystem::path& path, std::size_t max_cols,
                                                  std::size_t max_rows);
+
+// Turns ASCII art from to_ascii() into what to print: the color codes become ANSI escape sequences when colors
+// is true, and are dropped otherwise. Art without color codes is shown as it is.
+std::string render(std::string_view art, bool colors);
 
 } // namespace zchat::image
