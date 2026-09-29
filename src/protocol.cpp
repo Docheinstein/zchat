@@ -27,7 +27,7 @@ namespace {
         for (std::size_t row = 0; row < max_art_rows && !text.empty(); ++row) {
             const auto nl = text.find('\n');
             out += row == 0 ? "" : "\n";
-            out += text::sanitize(text.substr(0, nl), max_art_cols);
+            out += text::sanitize(text.substr(0, nl), max_art_row_bytes);
             text.remove_prefix(nl == std::string_view::npos ? text.size() : nl + 1);
         }
         return out;
@@ -70,7 +70,8 @@ std::optional<Packet> decode(std::string_view data) {
     case 'L':
         packet.type = PacketType::Leave;
         break;
-    case 'A':
+    case 'P':
+    case 'A': // black and white, from older versions
         packet.type = PacketType::Art;
         break;
     default:

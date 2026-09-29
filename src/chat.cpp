@@ -1,5 +1,6 @@
 #include "chat.hpp"
 
+#include "image.hpp"
 #include "markup.hpp"
 #include "text.hpp"
 
@@ -132,11 +133,12 @@ void Chat::print_art(std::uint64_t id, std::string_view name, std::string_view a
     const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", timestamp()) : timestamp();
     // All in one print, so lines printed meanwhile by other threads do not end up in the middle of the drawing.
     std::string out = std::format("{} {}:", time, colored_name(id, name));
-    while (!art.empty()) {
-        const auto nl = art.find('\n');
+    const std::string drawing = image::render(art, terminal_.colors());
+    for (std::string_view rest = drawing; !rest.empty();) {
+        const auto nl = rest.find('\n');
         out += "\n      ";
-        out += art.substr(0, nl);
-        art.remove_prefix(nl == std::string_view::npos ? art.size() : nl + 1);
+        out += rest.substr(0, nl);
+        rest.remove_prefix(nl == std::string_view::npos ? rest.size() : nl + 1);
     }
     terminal_.print(out);
 }
