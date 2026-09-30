@@ -22,6 +22,7 @@ target_sources(zchat PUBLIC
     terminal.cpp
     text.cpp
     update.cpp
+    wordle.cpp
 )
 
 target_include_directories(zchat PUBLIC .)
@@ -42,6 +43,16 @@ add_custom_target(zchat_commit
     VERBATIM)
 add_dependencies(zchat zchat_commit)
 target_include_directories(zchat PRIVATE "${zchat_generated}")
+
+# The words /game wordle accepts as guesses, built into the executable.
+set(zchat_words "${PROJECT_SOURCE_DIR}/third_party/enable/words5.txt")
+add_custom_command(
+    OUTPUT "${zchat_generated}/wordle_words.hpp"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${zchat_words}" "-DOUTPUT=${zchat_generated}/wordle_words.hpp"
+            -DNAME=wordle_words -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS "${zchat_words}" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    VERBATIM)
+target_sources(zchat PRIVATE "${zchat_generated}/wordle_words.hpp")
 target_compile_definitions(zchat PRIVATE
     ZCHAT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
     ZCHAT_BUILD_DIR="${CMAKE_BINARY_DIR}"
