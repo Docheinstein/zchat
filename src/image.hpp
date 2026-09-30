@@ -23,11 +23,14 @@ bool is_dropped_image(std::string_view line);
 // from dark to bright, and blocks (▀▄▌▐, eighths like ▁▂▃ and ▏▎▍, quadrants like ▘▚▙) where a character has parts
 // of two colors; codes before them set their look: a letter or digit their color, one of ()[]{}<>^~;? how bright
 // they are, from the dimmest to full ('`' for black), and '&' followed by a color and a brightness code the color
-// behind the blocks ('|' for none). The first row is the palette of the picture, '$' then 3 characters per color,
+// behind the blocks ('|' for none), and '"' makes the symbol after it texture: shown as itself, not as a block.
+// Shade blocks (░▒▓) are texture too. The first row is the palette of the picture, '$' then 3 characters per color,
 // which the color codes refer to. Every row starts without a color, at full brightness and without a background,
-// and a row that would be too long for a packet is drawn more simply. On failure, returns why.
+// and a row that would be too long for a packet is drawn more simply. texture, from 0 to 100, is how much of the
+// picture is drawn with symbols instead of blocks: 0 none, about 15 the dark and mostly black parts, 100 all of it
+// (no blocks at all). On failure, returns why.
 std::expected<std::string, std::string> to_ascii(const std::filesystem::path& path, std::size_t max_cols,
-                                                 std::size_t max_rows);
+                                                 std::size_t max_rows, int texture = 0);
 
 // Turns ASCII art from to_ascii() into what to print. With colors, each colored symbol becomes a solid block of its
 // color, darker for the symbols with less ink and dimmed by the brightness codes, and blocks are shown in their color
