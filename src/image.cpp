@@ -174,6 +174,59 @@ namespace {
     // bytes.
     constexpr double detail_margin = 64 * 0.03;
 
+    // How much texture a picture gets, from 0 (none: blocks only) to 100 (no blocks: symbols only), see to_ascii().
+    // Texture replaces blocks with ASCII symbols and shade blocks shown as themselves, on black: first where a
+    // character is dark and mostly black (like the shadows of a drawing), then, as it grows, brighter characters
+    // and less black ones too. Each gets the symbol with the least ink that reaches its light at texture_level or
+    // less (sparse strokes at full brightness look darker than they should).
+    //
+    // The luminance below which a character gets texture: 0.2 at 15, above any at 100.
+    double texture_below(int texture) {
+        return texture <= 0 ? 0.0 : 1.1 * std::pow(texture / 100.0, 0.9);
+    }
+    // How many of its 64 points must be darker than near_black for a character to get texture: half of them up to
+    // 15, then fewer, none from 50.
+    constexpr double near_black = 0.06;
+    std::ptrdiff_t min_black_points(int texture) {
+        return std::lround(32 * std::clamp(1 - (texture - 15) / 35.0, 0.0, 1.0));
+    }
+    // A picture whose bright parts are at least this bright gets texture below texture_below(); darker ones get it
+    // lower, less so as the texture grows.
+    constexpr double bright_luminance = 0.7;
+    constexpr double texture_level = 0.6;
+    // Shows the symbol after it as itself instead of as a block (see render()).
+    constexpr char literal_code = '"';
+    // How much of its character each one inks, measured in Cascadia Mono, and for the strokes a bit less, as thin
+    // strokes look darker than the ink they cover.
+    struct Texture {
+        std::string_view glyph;
+        double ink;
+    };
+    constexpr double stroke_seen = 0.6;
+    constexpr std::array textures = std::to_array<Texture>({
+        {".", 0.03 * stroke_seen},
+        {":", 0.059 * stroke_seen},
+        {"-", 0.073 * stroke_seen},
+        {"+", 0.141 * stroke_seen},
+        {"=", 0.146 * stroke_seen},
+        {"*", 0.163 * stroke_seen},
+        {"░", 0.18},
+        {"%", 0.29 * stroke_seen},
+        {"#", 0.296 * stroke_seen},
+        {"▒", 0.36},
+        {"@", 0.369 * stroke_seen},
+        {"▓", 0.65},
+    });
+
+    // Light adds up, values (like those of pixels) do not: a character that inks half of it in a color looks like
+    // the whole of it in a color with half the light, which is not half the value (the gamma of screens).
+    double to_light(double value) {
+        return std::pow(value, 2.2);
+    }
+    double to_value(double light) {
+        return std::pow(light, 1 / 2.2);
+    }
+
     // Contrast is stretched only for washed out pictures, whose brightness spans less than this, and brightened at
     // most so much: a dark picture stays darker than a bright one, and a picture with good contrast as it is.
     constexpr double washed_out_range = 0.6;
@@ -435,7 +488,8 @@ bool is_dropped_image(std::string_view line) {
 }
 
 std::expected<std::string, std::string> to_ascii(const std::filesystem::path& path, std::size_t max_cols,
-                                                 std::size_t max_rows) {
+                                                 std::size_t max_rows, int texture) {
+    texture = std::clamp(texture, 0, 100);
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
     if (ec) {
@@ -629,6 +683,27 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
         }
     }
 
+    // Texture is for the parts that are dark for this picture: in a picture that is dark all over, sparse symbols
+    // would make it darker still, so the bar is lowered with how bright its brightest parts are (the 95th percentile
+    // of the luminance of its characters, so a few bright spots do not count).
+    double texture_threshold = texture_below(texture);
+    {
+        std::vector<double> luminances;
+        for (const Points& points : cell_points) {
+            double sum = 0;
+            for (const Rgb& p : points) {
+                sum += 0.3 * p[0] + 0.59 * p[1] + 0.11 * p[2];
+            }
+            luminances.push_back(sum / 64);
+        }
+        if (!luminances.empty()) {
+            const auto nth = luminances.begin() + static_cast<std::ptrdiff_t>(luminances.size() * 95 / 100);
+            std::ranges::nth_element(luminances, nth);
+            const double dark_picture = std::clamp(*nth / bright_luminance, 0.0, 1.0);
+            texture_threshold *= dark_picture + (1 - dark_picture) * texture / 100.0;
+        }
+    }
+
     const auto distance = [](const Rgb& a, const Rgb& b) {
         return (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]);
     };
@@ -754,6 +829,42 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
             if ((!best && !fg.dim) || (best && !fg.dim && !bg.dim)) {
                 glyph = " ";
             }
+            // A dark character gets texture instead of dim blocks: a symbol with just enough ink, on black, in the
+            // color that keeps the light of the character the same. Dark means that on average it looks dark (its
+            // luminance), even with a bright sliver: characters with a good part of them bright keep their blocks, and
+            // their sharp edges.
+            const double luminance = (0.3 * total[0] + 0.59 * total[1] + 0.11 * total[2]) / 64;
+            // And only if it is mostly black, with a few lit bits, which is what symbols on black look like: the
+            // smooth dim parts of a photo (a face in the shade) are no darker than dim, and look right as blocks.
+            const auto black_points = std::ranges::count_if(points, [](const Rgb& p) {
+                return 0.3 * p[0] + 0.59 * p[1] + 0.11 * p[2] < near_black;
+            });
+            bool textured = false;
+            if (glyph != " " && luminance < texture_threshold && black_points >= min_black_points(texture)) {
+                const Rgb light {to_light(total[0] / 64), to_light(total[1] / 64), to_light(total[2] / 64)};
+                const double needed = std::max({light[0], light[1], light[2]});
+                // At 100 no blocks at all, not even the shade blocks.
+                const Texture* symbol = nullptr;
+                for (const Texture& t : textures) {
+                    if (texture >= 100 && t.glyph.size() > 1) {
+                        continue;
+                    }
+                    symbol = &t;
+                    if (t.ink * to_light(texture_level) >= needed) {
+                        break;
+                    }
+                }
+                // When even the densest symbol cannot give that much light, the color is as bright as it gets with
+                // its hue kept (all channels scaled together, not each capped, which would whiten it).
+                const double over = std::max(1.0, needed / symbol->ink);
+                const Rgb color {to_value(light[0] / symbol->ink / over), to_value(light[1] / symbol->ink / over),
+                                 to_value(light[2] / symbol->ink / over)};
+                if (const Paint paint = paint_of(color).first; paint.dim) {
+                    fg = paint;
+                    glyph = symbol->glyph;
+                    textured = true;
+                }
+            }
 
             if (glyph == " ") {
                 // Spaces show the background: none, like the terminal's.
@@ -779,6 +890,18 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
                     black = false;
                     line += dim_levels[dim].code;
                 }
+            }
+            if (textured) {
+                // Texture is drawn on black; a symbol after the literal code is shown as itself, not as a block.
+                if (background) {
+                    line += no_background_code;
+                    background.reset();
+                }
+                if (glyph.size() == 1) {
+                    line += literal_code;
+                }
+                line += glyph;
+                continue;
             }
             // A full character hides its background, which then stays as it is.
             if (best) {
@@ -988,6 +1111,15 @@ std::string render(std::string_view art, bool colors) {
         }
         if (c == no_background_code) {
             background.reset();
+            continue;
+        }
+        if (c == literal_code && i + 1 < art.size() && art[i + 1] != '\n') {
+            // Texture: the symbol as itself, in its color, on black.
+            ++i;
+            if (colors) {
+                show(level, false);
+            }
+            out += art[i];
             continue;
         }
         if (c == '\n') {

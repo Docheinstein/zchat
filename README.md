@@ -51,6 +51,7 @@ While chatting:
 | `/tags NAME`       | explain a tag, with an example (`/tag NAME` works too) |
 | `/image FILE`      | send a picture, drawn with blocks of color               |
 | `/image SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
+| `/image 30% FILE`  | the same with texture: from `0%`, blocks only (the default), to `100%`, symbols only; with a size too, in any order (`/image small 30% FILE`) |
 | drop an image      | drag an image file onto the window: the line becomes `/image PATH`, to send with Enter (or add a size first) |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
@@ -111,6 +112,15 @@ a drawing) are kept instead of being averaged away. These blocks are drawn by Wi
 fonts, to fill exactly their part of the character. To keep lines crisp, each character also tries its two main
 colors (so a white stays white next to a black outline instead of both turning grey), and candidates are compared
 by the absolute difference of their colors, which does not favor averaging over sharpness.
+
+A picture can also get texture, with `/image N% FILE`: some characters are then drawn with a symbol shown as
+itself, on black, among `. : - + = * ░ % # ▒ @ ▓`, the one with enough ink for their light, in the color that keeps
+it, instead of with blocks. At `0%`, the default, there is none. At about `15%`, the dark parts get it: characters
+that look dark on average (below a luminance of 0.2, or less in a picture that is dark all over) and are mostly
+black, with a few lit bits, like the shadows of a drawing; the smooth dim parts of a photo, like a face in the
+shade, stay blocks. Higher, brighter and less black characters get it too, and at `100%` all of them do, with
+ASCII symbols only: no blocks at all (the brightest parts are then a bit dimmer, as symbols have less ink than a
+block). In the art sent, `"` before a symbol makes it texture (shown as itself, not as a block).
 
 Each picture comes with its own palette, the 61 colors that represent it best (found with k-means), in a first
 row: `$` followed by 3 characters per color (one per channel, 64 levels each). The color codes of the drawing

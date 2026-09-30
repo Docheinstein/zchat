@@ -139,8 +139,9 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /color random  pick a random color (not kept)");
     chat.notice("  /tags        list the tags for messages, like <color=red>text</color>");
     chat.notice("  /tags NAME   explain a tag, with an example");
-    chat.notice("  /image [SIZE] FILE  send a picture, drawn with blocks of color");
-    chat.notice("               (SIZE: small, medium, large, a width like 40, or 40x20)");
+    chat.notice("  /image [SIZE] [TEXTURE%] FILE  send a picture, drawn with blocks of color");
+    chat.notice("               (SIZE: small, medium, large, a width like 40, or 40x20;");
+    chat.notice("                TEXTURE%: 0% blocks only, the default, to 100% symbols only)");
     chat.notice("               (or drop an image file on the window, then press Enter)");
     chat.notice("  @NAME        tag someone in a message: they hear a sound");
     chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
@@ -293,27 +294,63 @@ std::optional<ArtSize> parse_art_size(std::string_view s) {
     return ArtSize {*cols, *rows};
 }
 
+// Reads a percentage from 0% to 100%, like the texture of /image.
+std::optional<int> parse_percent(std::string_view s) {
+    if (!s.ends_with('%')) {
+        return std::nullopt;
+    }
+    s.remove_suffix(1);
+    int value = 0;
+    const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
+    if (s.empty() || ec != std::errc {} || ptr != s.data() + s.size() || value < 0 || value > 100) {
+        return std::nullopt;
+    }
+    return value;
+}
+
 void send_image(zchat::Chat& chat, std::string_view arg) {
     if (arg.empty()) {
-        chat.notice("Use /image [SIZE] FILE to send a picture, or drop an image file on the window and press Enter.");
+        chat.notice("Use /image [SIZE] [TEXTURE%] FILE to send a picture, or drop an image file on the window and press "
+                    "Enter.");
         chat.notice(std::format("SIZE is small, medium, large (the default), a width like 40, or a width and height "
                                 "like 40x20, up to {}x{}.",
                                 zchat::max_art_cols, zchat::max_art_rows));
+        chat.notice("TEXTURE% is how much is drawn with symbols instead of blocks: 0% none (the default), about 15% the "
+                    "dark parts, 100% no blocks at all.");
         return;
     }
-    // A size first, when there is something after it: "/image 40" alone still sends a file named 40.
+    // A size and a texture first, in any order, when there is something after them: "/image 40" alone still sends
+    // a file named 40.
     ArtSize size;
-    if (const auto space = arg.find(' '); space != std::string_view::npos) {
+    std::optional<int> texture;
+    bool sized = false;
+    while (true) {
+        const auto space = arg.find(' ');
+        if (space == std::string_view::npos) {
+            break;
+        }
         std::string_view rest = arg.substr(space + 1);
         while (!rest.empty() && rest.front() == ' ') {
             rest.remove_prefix(1);
         }
-        if (const auto parsed = parse_art_size(arg.substr(0, space)); parsed && !rest.empty()) {
-            size = *parsed;
-            arg = rest;
+        const std::string_view word = arg.substr(0, space);
+        if (rest.empty()) {
+            break;
         }
+        if (const auto percent = parse_percent(word); percent && !texture) {
+            texture = *percent;
+        } else if (word.ends_with('%') && !percent) {
+            chat.notice(std::format("The texture is from 0% to 100%, not {}.", zchat::text::sanitize(word, 20)));
+            return;
+        } else if (const auto parsed = parse_art_size(word); parsed && !sized) {
+            size = *parsed;
+            sized = true;
+        } else {
+            break;
+        }
+        arg = rest;
     }
-    const auto art = zchat::image::to_ascii(zchat::image::parse_path(arg), size.cols, size.rows);
+    const auto art = zchat::image::to_ascii(zchat::image::parse_path(arg), size.cols, size.rows, texture.value_or(0));
     if (!art) {
         chat.notice(std::format("Cannot send {}: {}", zchat::text::sanitize(arg, 200), art.error()));
         return;
