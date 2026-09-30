@@ -1,6 +1,9 @@
 #include "chat.hpp"
 #include "config.hpp"
 #include "game.hpp"
+#ifdef ZCHAT_GUI
+#include "gui.hpp"
+#endif
 #include "history.hpp"
 #include "image.hpp"
 #include "markup.hpp"
@@ -39,6 +42,8 @@ constexpr std::uint16_t default_port = 47474;
 struct Options {
     std::uint16_t port = default_port;
     std::optional<std::string> name;
+    // In the terminal instead of a window.
+    bool terminal = false;
 };
 
 void print_usage() {
@@ -50,6 +55,7 @@ void print_usage() {
                 "Options:\n"
                 "  -p, --port PORT   UDP port shared by the chat room (default %u)\n"
                 "  -n, --name NAME   use NAME for this session, instead of the saved or a random one\n"
+                "  -t, --terminal    chat in the terminal instead of a window\n"
                 "  -h, --help        show this help\n"
                 "  -v, --version     show the version\n",
                 static_cast<unsigned>(default_port));
@@ -110,6 +116,8 @@ std::optional<Options> parse_args(int argc, char** argv, int& exit_code) {
                 return std::nullopt;
             }
             options.name = name;
+        } else if (arg == "-t" || arg == "--terminal") {
+            options.terminal = true;
         } else {
             std::fprintf(stderr, "zchat: unknown option '%s' (try --help)\n", argv[i]);
             exit_code = 2;
@@ -536,7 +544,7 @@ void print_who(zchat::Chat& chat) {
 }
 
 // Returns the exit code; restart is set when zchat was updated and should start again.
-int run(const Options& options, bool& restart) {
+int run(const Options& options, zchat::Screen& terminal, bool& restart) {
     zchat::net::NetworkInit network;
 
     // --name wins over the nickname saved with /nick, which wins over a random name.
@@ -550,7 +558,6 @@ int run(const Options& options, bool& restart) {
         name = zchat::random_name(rng);
     }
 
-    zchat::Terminal terminal;
     const auto saved_color = zchat::config::get("color");
     zchat::Chat chat(options.port, name, saved_color ? zchat::parse_color(*saved_color) : std::nullopt, terminal);
 #ifdef _WIN32
@@ -687,8 +694,39 @@ int main(int argc, char** argv) {
         return exit_code;
     }
     bool restart = false;
+#ifdef ZCHAT_GUI
+    // A window, unless asked for the terminal, or where there is no display (e.g. over ssh).
+    if (!options->terminal && zchat::Gui::available()) {
+#ifdef _WIN32
+        // Started from Explorer, zchat gets a console window of its own: not needed with a window. (Started from a
+        // console, it is not ours alone, and stays.)
+        DWORD processes[2];
+        if (GetConsoleProcessList(processes, 2) == 1) {
+            FreeConsole();
+        }
+#endif
+        zchat::Gui gui;
+        gui.set_info(options->port);
+        // The chat runs on its own thread; the window needs the main one (macOS requires it).
+        std::jthread session([&] {
+            try {
+                exit_code = run(*options, gui, restart);
+                gui.close();
+            } catch (const std::exception& e) {
+                // Left open, so the reason can be read.
+                gui.print(std::format("zchat: {}", e.what()));
+                exit_code = 1;
+            }
+        });
+        gui.run();
+        gui.interrupt();
+        session.join();
+        return restart ? zchat::update::restart(argv) : exit_code;
+    }
+#endif
     try {
-        exit_code = run(*options, restart);
+        zchat::Terminal terminal;
+        exit_code = run(*options, terminal, restart);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "zchat: %s\n", e.what());
         return 1;

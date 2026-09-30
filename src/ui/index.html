@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>zchat</title>
+<style>
+  :root {
+    --bg: #111317;
+    --panel: #181b21;
+    --border: #262a33;
+    --text: #d6d9df;
+    --muted: #7d8491;
+    --accent: #6ea8ff;
+    --input: #1e222a;
+    --size: 14px;
+    --font: "Cascadia Mono", "Cascadia Code", Consolas, Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: grid; grid-template-columns: 210px 1fr; grid-template-rows: 44px 1fr; overflow: hidden;
+  }
+  header {
+    grid-column: 1 / 3; display: flex; align-items: center; gap: 10px; padding: 0 12px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header .title { font-weight: 600; font-size: 15px; letter-spacing: .3px; }
+  header .channel { color: var(--muted); }
+  header .spacer { flex: 1; }
+  header button, header select {
+    background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    height: 28px; padding: 0 8px; font: inherit; cursor: pointer;
+  }
+  header button:hover, header select:hover { border-color: var(--accent); }
+  aside {
+    background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; padding: 10px 0;
+  }
+  aside h2 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--muted);
+    margin: 10px 14px 6px;
+  }
+  aside .item {
+    display: flex; align-items: center; gap: 8px; padding: 4px 14px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  aside .item.active { background: #232833; }
+  .avatar {
+    flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+    font-size: 11px; font-weight: 700; color: #111;
+  }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #log {
+    flex: 1; overflow-y: auto; padding: 10px 14px; font-family: var(--font); font-size: var(--size);
+    line-height: 1.35;
+  }
+  #log .line { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* Pictures and the paint canvas: characters touching, like in a terminal. */
+  #log .block { white-space: pre; line-height: 1; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+  #inputbar { position: relative; padding: 10px 14px 14px; border-top: 1px solid var(--border); }
+  #input {
+    width: 100%; background: var(--input); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; font-family: var(--font); font-size: var(--size); outline: none;
+  }
+  #input:focus { border-color: var(--accent); }
+  #mentions {
+    position: absolute; left: 14px; bottom: 58px; min-width: 220px; max-height: 240px; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px 0;
+    box-shadow: 0 6px 20px #0008; display: none; font-family: var(--font); font-size: var(--size);
+  }
+  #mentions div { padding: 4px 12px; cursor: pointer; }
+  #mentions div.selected { background: #2a3140; }
+  #drop {
+    position: fixed; inset: 0; display: none; place-items: center; background: #0b0d10cc;
+    border: 3px dashed var(--accent); font-size: 20px; color: var(--accent); z-index: 10;
+  }
+  body.dragging #drop { display: grid; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">zchat</span>
+  <span class="channel" id="channel"></span>
+  <span class="spacer"></span>
+  <select id="font" title="Font"></select>
+  <button id="smaller" title="Smaller text">A−</button>
+  <button id="bigger" title="Bigger text">A+</button>
+</header>
+<aside>
+  <h2>Channels</h2>
+  <div class="item active" id="channel-item"># general</div>
+  <h2>People</h2>
+  <div id="people"></div>
+</aside>
+<main>
+  <div id="log"></div>
+  <div id="inputbar">
+    <div id="mentions"></div>
+    <input id="input" autocomplete="off" spellcheck="false" placeholder="Type a message, or /help for commands">
+  </div>
+</main>
+<div id="drop">Drop an image to send it</div>
+<script>
+"use strict";
+// The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
+// zchatReady(), zchatSend(line), zchatMentions(), zchatRewrite(line), zchatDrop(name, base64), zchatSettings()
+// and zchatSaveSettings(size, font).
+const log = document.getElementById("log");
+const input = document.getElementById("input");
+const mentionsBox = document.getElementById("mentions");
+
+// --- Settings: text size and font, remembered in zchat's config file (zchatSettings / zchatSaveSettings).
+const fonts = [
+  ["Default", "var(--font)"], ["Cascadia Mono", '"Cascadia Mono"'], ["Consolas", "Consolas"], ["Menlo", "Menlo"],
+  ["DejaVu Sans Mono", '"DejaVu Sans Mono"'], ["Courier New", '"Courier New"'],
+];
+const settings = {};
+function saveSettings() {
+  try { window.zchatSaveSettings(String(settings.size || ""), settings.font || ""); } catch {}
+}
+function applySettings() {
+  document.documentElement.style.setProperty("--size", (settings.size || 14) + "px");
+  const font = fonts.find(f => f[0] === settings.font) || fonts[0];
+  log.style.fontFamily = input.style.fontFamily = mentionsBox.style.fontFamily =
+    font[1] === "var(--font)" ? "" : font[1] + ", var(--font)";
+}
+const fontSelect = document.getElementById("font");
+for (const [name] of fonts) {
+  const o = document.createElement("option");
+  o.textContent = name;
+  fontSelect.appendChild(o);
+}
+fontSelect.value = settings.font || "Default";
+fontSelect.onchange = () => { settings.font = fontSelect.value; saveSettings(); applySettings(); };
+document.getElementById("smaller").onclick = () => {
+  settings.size = Math.max(9, (settings.size || 14) - 1); saveSettings(); applySettings();
+};
+document.getElementById("bigger").onclick = () => {
+  settings.size = Math.min(32, (settings.size || 14) + 1); saveSettings(); applySettings();
+};
+applySettings();
+
+// --- ANSI (SGR) to HTML: the chat core writes lines as a terminal shows them.
+function rgb(parts, i) { return `rgb(${parts[i]},${parts[i + 1]},${parts[i + 2]})`; }
+const basic = ["#000", "#c33", "#3a3", "#cc3", "#36c", "#c3c", "#3cc", "#ccc"];
+const bright = ["#7d8491", "#f66", "#6d6", "#ee6", "#69f", "#f6f", "#6ee", "#fff"];
+function ansiToNodes(text, into) {
+  let st = {};
+  const parts = text.split(/\x1b\[([0-9;]*)m/);
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) {
+      const p = parts[i] === "" ? [0] : parts[i].split(";").map(Number);
+      for (let j = 0; j < p.length; j++) {
+        const c = p[j];
+        if (c === 0) st = {};
+        else if (c === 1) st.bold = true;
+        else if (c === 22) st.bold = false;
+        else if (c === 3) st.italic = true;
+        else if (c === 23) st.italic = false;
+        else if (c === 4) st.underline = true;
+        else if (c === 24) st.underline = false;
+        else if (c === 9) st.strike = true;
+        else if (c === 29) st.strike = false;
+        else if (c === 38 && p[j + 1] === 2) { st.fg = rgb(p, j + 2); j += 4; }
+        else if (c === 48 && p[j + 1] === 2) { st.bg = rgb(p, j + 2); j += 4; }
+        else if (c === 39) delete st.fg;
+        else if (c === 49) delete st.bg;
+        else if (c >= 30 && c <= 37) st.fg = basic[c - 30];
+        else if (c >= 90 && c <= 97) st.fg = bright[c - 90];
+        else if (c >= 40 && c <= 47) st.bg = basic[c - 40];
+      }
+      continue;
+    }
+    if (!parts[i]) continue;
+    const span = document.createElement("span");
+    span.textContent = parts[i];
+    if (st.fg) span.style.color = st.fg;
+    if (st.bg) span.style.background = st.bg;
+    if (st.bold) span.style.fontWeight = "bold";
+    if (st.italic) span.style.fontStyle = "italic";
+    const deco = [st.underline && "underline", st.strike && "line-through"].filter(Boolean).join(" ");
+    if (deco) span.style.textDecoration = deco;
+    into.appendChild(span);
+  }
+}
+
+function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 40; }
+
+const maxLines = 3000;
+window.zchat = {
+  print(text) {
+    const stick = atBottom();
+    const div = document.createElement("div");
+    // Several lines in one print are a picture (or the paint canvas): its characters touch.
+    div.className = text.includes("\n") ? "block" : "line";
+    ansiToNodes(text, div);
+    log.appendChild(div);
+    while (log.childElementCount > maxLines) log.firstElementChild.remove();
+    if (stick) log.scrollTop = log.scrollHeight;
+  },
+  bell() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + 0.25);
+    } catch {}
+    if (!document.hasFocus()) {
+      document.title = "(!) zchat";
+      window.addEventListener("focus", () => { document.title = "zchat"; }, { once: true });
+    }
+  },
+  info(i) {
+    document.getElementById("channel").textContent = i.port ? `UDP port ${i.port}` : "";
+    document.getElementById("channel-item").textContent = "# " + (i.channel || "general");
+  },
+};
+
+// --- People: the names that can be tagged, which are the people in the chat.
+function styleColor(style) {
+  const m = /38;2;(\d+);(\d+);(\d+)/.exec(style || "");
+  return m ? `rgb(${m[1]},${m[2]},${m[3]})` : "";
+}
+async function mentions() {
+  try { return await window.zchatMentions(); } catch { return []; }
+}
+async function refreshPeople() {
+  const people = await mentions();
+  const box = document.getElementById("people");
+  box.textContent = "";
+  for (const [name, style] of people) {
+    if (name === "everyone") continue;
+    const item = document.createElement("div");
+    item.className = "item";
+    const avatar = document.createElement("span");
+    avatar.className = "avatar";
+    avatar.style.background = styleColor(style) || "#888";
+    avatar.textContent = name.trim().charAt(0).toUpperCase();
+    const label = document.createElement("span");
+    label.textContent = name;
+    label.style.color = styleColor(style);
+    item.append(avatar, label);
+    box.appendChild(item);
+  }
+}
+setInterval(refreshPeople, 2000);
+
+// --- Input: Enter sends, Up/Down go through what was sent, '@' opens the list of people.
+const sent = [];
+let sentPos = 0, draft = "";
+let list = [], selected = 0, atStart = -1;
+
+function closeMentions() { mentionsBox.style.display = "none"; atStart = -1; list = []; }
+async function updateMentions() {
+  const caret = input.selectionStart;
+  const before = input.value.slice(0, caret);
+  const at = before.lastIndexOf("@");
+  if (at < 0 || (at > 0 && /\w/.test(before[at - 1])) || /\s/.test(before.slice(at + 1))) {
+    closeMentions();
+    return;
+  }
+  const typed = before.slice(at + 1).toLowerCase();
+  const people = await mentions();
+  list = people.filter(([name]) => name.toLowerCase().startsWith(typed));
+  if (!list.length) { closeMentions(); return; }
+  atStart = at;
+  selected = Math.min(selected, list.length - 1);
+  mentionsBox.textContent = "";
+  list.forEach(([name, style], i) => {
+    const d = document.createElement("div");
+    d.textContent = "@" + name;
+    d.style.color = styleColor(style);
+    if (i === selected) d.className = "selected";
+    d.onmousedown = e => { e.preventDefault(); acceptMention(i); };
+    mentionsBox.appendChild(d);
+  });
+  mentionsBox.style.display = "block";
+}
+function acceptMention(i) {
+  const [name] = list[i];
+  const caret = input.selectionStart;
+  input.value = input.value.slice(0, atStart) + "@" + name + " " + input.value.slice(caret);
+  const pos = atStart + name.length + 2;
+  input.setSelectionRange(pos, pos);
+  closeMentions();
+}
+
+input.addEventListener("keydown", e => {
+  if (mentionsBox.style.display === "block") {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      selected = (selected + (e.key === "ArrowDown" ? 1 : list.length - 1)) % list.length;
+      updateMentions();
+      e.preventDefault();
+      return;
+    }
+    if (e.key === "Tab" || e.key === "Enter") { acceptMention(selected); e.preventDefault(); return; }
+    if (e.key === "Escape") { closeMentions(); e.preventDefault(); return; }
+  }
+  if (e.key === "Enter") {
+    const line = input.value;
+    input.value = "";
+    if (line.trim() && sent[sent.length - 1] !== line) sent.push(line);
+    sentPos = sent.length;
+    draft = "";
+    window.zchatSend(line);
+    e.preventDefault();
+  } else if (e.key === "ArrowUp" && sentPos > 0) {
+    if (sentPos === sent.length) draft = input.value;
+    input.value = sent[--sentPos];
+    e.preventDefault();
+  } else if (e.key === "ArrowDown" && sentPos < sent.length) {
+    input.value = ++sentPos === sent.length ? draft : sent[sentPos];
+    e.preventDefault();
+  }
+});
+input.addEventListener("input", async e => {
+  selected = 0;
+  updateMentions();
+  // A pasted path of an image becomes the /image command for it, like a file dropped on a terminal.
+  if (e.inputType === "insertFromPaste") {
+    try {
+      const rewritten = await window.zchatRewrite(input.value);
+      if (rewritten) input.value = rewritten;
+    } catch {}
+  }
+});
+input.addEventListener("blur", () => setTimeout(closeMentions, 150));
+document.addEventListener("keydown", e => {
+  if (document.activeElement !== input && !e.ctrlKey && !e.metaKey && e.key.length === 1) input.focus();
+});
+
+// --- Dropping an image file: saved where zchat can read it, then the /image command for it is typed.
+let dragDepth = 0;
+window.addEventListener("dragenter", e => { e.preventDefault(); dragDepth++; document.body.classList.add("dragging"); });
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("dragging");
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  if (file.size > 32 * 1024 * 1024) { zchat.print("That file is too big to send."); return; }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const base64 = String(reader.result).replace(/^data:[^,]*,/, "");
+    try {
+      const path = await window.zchatDrop(file.name, base64);
+      if (path) {
+        input.value = "/image " + (/\s/.test(path) ? '"' + path + '"' : path);
+        input.focus();
+      }
+    } catch {}
+  };
+  reader.readAsDataURL(file);
+});
+
+input.focus();
+(async () => {
+  try {
+    const [size, font] = await window.zchatSettings();
+    if (+size) settings.size = +size;
+    if (font) { settings.font = font; fontSelect.value = font; }
+    applySettings();
+  } catch {}
+  window.zchatReady();
+  refreshPeople();
+})();
+</script>
+</body>
+</html>

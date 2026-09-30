@@ -59,7 +59,7 @@ namespace {
 
     class Dice final : public Game {
     public:
-        Dice(Chat& chat, Terminal& terminal, Games& games) :
+        Dice(Chat& chat, Screen& terminal, Games& games) :
             chat_(chat),
             terminal_(terminal),
             games_(games),
@@ -330,7 +330,7 @@ namespace {
         }
 
         Chat& chat_;
-        Terminal& terminal_;
+        Screen& terminal_;
         Games& games_;
         std::mt19937_64 rng_;
 
@@ -345,7 +345,7 @@ namespace {
 
 } // namespace
 
-std::unique_ptr<Game> make_dice(Chat& chat, Terminal& terminal, Games& games) {
+std::unique_ptr<Game> make_dice(Chat& chat, Screen& terminal, Games& games) {
     return std::make_unique<Dice>(chat, terminal, games);
 }
 

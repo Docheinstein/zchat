@@ -51,6 +51,50 @@ target_compile_definitions(zchat PRIVATE
 find_package(Threads REQUIRED)
 target_link_libraries(zchat PRIVATE Threads::Threads)
 
+# The window (see gui.hpp): the system's web view, through the webview library, which CMake downloads. On Windows
+# and macOS it needs nothing more; on Linux, GTK and WebKitGTK (e.g. sudo apt install libgtk-3-dev
+# libwebkit2gtk-4.1-dev). Without them, zchat is built for the terminal only.
+option(ZCHAT_GUI "Build the zchat window (zchat --terminal still works without it)" ON)
+if (ZCHAT_GUI AND UNIX AND NOT APPLE)
+    find_package(PkgConfig QUIET)
+    if (PkgConfig_FOUND)
+        pkg_check_modules(zchat_webkit QUIET webkit2gtk-4.1)
+        if (NOT zchat_webkit_FOUND)
+            pkg_check_modules(zchat_webkit QUIET webkit2gtk-4.0)
+        endif()
+    endif()
+    if (NOT zchat_webkit_FOUND)
+        message(WARNING "WebKitGTK was not found: zchat is built for the terminal only. For the window, install "
+                        "GTK and WebKitGTK (e.g. sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev) and run "
+                        "cmake again.")
+        set(ZCHAT_GUI OFF)
+    endif()
+endif()
+if (ZCHAT_GUI)
+    include(FetchContent)
+    set(WEBVIEW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(WEBVIEW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(WEBVIEW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(WEBVIEW_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(WEBVIEW_INSTALL_TARGETS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(webview
+        GIT_REPOSITORY https://github.com/webview/webview
+        GIT_TAG 0.12.0
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(webview)
+
+    # The page of the window, built into the executable.
+    add_custom_command(
+        OUTPUT "${zchat_generated}/ui_html.hpp"
+        COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/ui/index.html"
+                "-DOUTPUT=${zchat_generated}/ui_html.hpp" -DNAME=ui_html -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ui/index.html" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+        VERBATIM)
+    target_sources(zchat PRIVATE gui.cpp "${zchat_generated}/ui_html.hpp")
+    target_link_libraries(zchat PRIVATE webview::core_static)
+    target_compile_definitions(zchat PRIVATE ZCHAT_GUI=1)
+endif()
+
 if (MSVC)
     target_compile_options(zchat PRIVATE /W4)
 else()

@@ -20,7 +20,7 @@ namespace {
 
 } // namespace
 
-Games::Games(Chat& chat, Terminal& terminal) :
+Games::Games(Chat& chat, Screen& terminal) :
     chat_(chat) {
     games_.push_back(make_race(chat, terminal, *this));
     games_.push_back(make_dice(chat, terminal, *this));

@@ -8,9 +8,9 @@
 
 ## What it is
 
-A tiny command line chat for everyone on the same local network, for Linux and Windows.
+A tiny chat for everyone on the same local network, in a window on Windows, macOS and Linux, or in the terminal.
 Type `zchat`, get a random cool name (like *Sneaky Velociraptor*), and start chatting with whoever else is running
-it. No server, no accounts, no setup.
+it. No server, no accounts, no setup. Windows and terminals chat together: they are the same zchat.
 
 ```
 23:40 * Welcome to zchat! You are Mystic Iguanodon.
@@ -24,15 +24,27 @@ it. No server, no accounts, no setup.
 ## Usage
 
 ```
-zchat [-p PORT] [-n NAME]
+zchat [-p PORT] [-n NAME] [--terminal]
 ```
 
 | Option             | Meaning                                                |
 |--------------------|--------------------------------------------------------|
 | `-p`, `--port`     | UDP port of the chat room (default `47474`)            |
 | `-n`, `--name`     | pick a name for this session only (not saved)          |
+| `-t`, `--terminal` | chat in the terminal instead of a window               |
 | `-h`, `--help`     | show help                                              |
 | `-v`, `--version`  | show the version                                       |
+
+`zchat` opens a window; `zchat --terminal`, or where there is no display (e.g. over ssh on Linux), chats in the
+terminal like before. Everything works the same in both: messages, commands, pictures, emoji, games, `/update`.
+
+The window has the channel (the UDP port) and the people in the chat on the left, with an avatar in their color,
+the messages in the middle, and the input box at the bottom: Enter sends, Up and Down go through what was sent,
+typing `@` lists the people to tag, pasting the path of an image turns it into `/image`, and dropping an image file
+on the window types the `/image` command for it (a size or texture can still be added before Enter). The text size
+(A− / A+) and font are at the top right, and are saved with the other settings. It is the system's own web view
+(WebView2 on Windows, WebKit on macOS and Linux) showing `src/ui/index.html`, built into zchat, so it is ready for
+more to come: real images and emoji, more channels, avatars, fonts.
 
 While chatting:
 
@@ -167,13 +179,24 @@ kept. The remote must not ask for a password (use an SSH key or a credential hel
 
 ## Building
 
-Needs CMake 3.16+ and a C++23 compiler (GCC 13+, Clang 17+, or Visual Studio 2022).
+Needs CMake 3.16+ and a C++23 compiler (GCC 13+, Clang 17+, or Visual Studio 2022), and an internet connection the
+first time: CMake downloads the [webview](https://github.com/webview/webview) library for the window (and, on
+Windows, Microsoft's WebView2 SDK).
+
+For the window:
+
+* **Windows** (10 and 11): nothing more, WebView2 comes with Windows.
+* **macOS**: nothing more, WebKit comes with macOS.
+* **Linux**: GTK and WebKitGTK, e.g. `sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev` (Debian, Ubuntu) or
+  `sudo dnf install gtk3-devel webkit2gtk4.1-devel` (Fedora). Without them, CMake says so and builds zchat for the
+  terminal only. `-DZCHAT_GUI=OFF` does the same on purpose.
 
 With [just](https://github.com/casey/just) installed, the shortest way is:
 
 ```sh
 just build          # configure + build (Release)
 just run            # build and start zchat, extra args are passed on: just run -n Rex
+just run-terminal   # the same, in the terminal
 just install        # install into ~/.local/bin (or: just install /some/prefix)
 just clean          # remove the build directory
 ```
@@ -199,6 +222,9 @@ To cross-compile the Windows version from Linux, e.g. with [llvm-mingw](https://
 cmake -S . -B build-win -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-clang++
 cmake --build build-win
 ```
+
+(The window has only been built with Visual Studio so far: if a MinGW build of it fails, add `-DZCHAT_GUI=OFF` for
+the terminal version.)
 
 ## How it works
 

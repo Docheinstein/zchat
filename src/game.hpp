@@ -1,7 +1,7 @@
 #pragma once
 
 #include "chat.hpp"
-#include "terminal.hpp"
+#include "screen.hpp"
 
 #include <cstdint>
 #include <map>
@@ -46,7 +46,7 @@ public:
 // The games that can be played with /game NAME. All calls are safe from any thread.
 class Games {
 public:
-    Games(Chat& chat, Terminal& terminal);
+    Games(Chat& chat, Screen& terminal);
     ~Games();
     Games(const Games&) = delete;
     Games& operator=(const Games&) = delete;
@@ -78,8 +78,8 @@ private:
 };
 
 // The games, each in its own file.
-std::unique_ptr<Game> make_race(Chat& chat, Terminal& terminal, Games& games);
-std::unique_ptr<Game> make_dice(Chat& chat, Terminal& terminal, Games& games);
-std::unique_ptr<Game> make_paint(Chat& chat, Terminal& terminal, Games& games);
+std::unique_ptr<Game> make_race(Chat& chat, Screen& terminal, Games& games);
+std::unique_ptr<Game> make_dice(Chat& chat, Screen& terminal, Games& games);
+std::unique_ptr<Game> make_paint(Chat& chat, Screen& terminal, Games& games);
 
 } // namespace zchat::game

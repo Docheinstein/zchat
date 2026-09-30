@@ -70,7 +70,7 @@ namespace {
 
 } // namespace
 
-Chat::Chat(std::uint16_t port, std::string name, std::optional<Color> color, Terminal& terminal) :
+Chat::Chat(std::uint16_t port, std::string name, std::optional<Color> color, Screen& terminal) :
     id_(make_id(color)),
     name_(std::move(name)),
     terminal_(terminal),
@@ -269,24 +269,24 @@ std::vector<std::string> Chat::peers() const {
     return names;
 }
 
-std::vector<Terminal::Mention> Chat::mentionable() const {
-    std::vector<Terminal::Mention> people;
+std::vector<Screen::Mention> Chat::mentionable() const {
+    std::vector<Screen::Mention> people;
     {
         std::scoped_lock lock(peers_mutex_);
         for (const auto& [id, peer] : peers_) {
             people.push_back({peer.name, terminal_.colors() ? ansi_foreground(color_of_id(id)) : std::string()});
         }
     }
-    std::ranges::sort(people, {}, [](const Terminal::Mention& m) {
+    std::ranges::sort(people, {}, [](const Screen::Mention& m) {
         return lowercase(m.name);
     });
     // Two peers with the same name are tagged the same way.
-    const auto dupes = std::ranges::unique(people, {}, [](const Terminal::Mention& m) {
+    const auto dupes = std::ranges::unique(people, {}, [](const Screen::Mention& m) {
         return lowercase(m.name);
     });
     people.erase(dupes.begin(), dupes.end());
     // Tagging everyone is offered first, when there is somebody to tag, and only once if someone is named so.
-    std::erase_if(people, [](const Terminal::Mention& m) {
+    std::erase_if(people, [](const Screen::Mention& m) {
         return lowercase(m.name) == everyone_tag;
     });
     if (!people.empty()) {
