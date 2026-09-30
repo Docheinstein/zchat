@@ -38,8 +38,8 @@ zchat [-p PORT] [-n NAME] [--terminal]
 `zchat` opens a window; `zchat --terminal`, or where there is no display (e.g. over ssh on Linux), chats in the
 terminal like before. Everything works the same in both: messages, commands, pictures, emoji, games, `/update`.
 
-The window has your avatar and name at the top left (click them to change your name, and your color with a color
-picker; `/nick` and `/color` change them too), then the channel (the
+The window has your avatar and name at the top left (click them to change your name, your color with a color
+picker, and your avatar by uploading an image; `/nick`, `/color` and `/avatar` change them too), then the channel (the
 UDP port) and the people in the chat, each with an avatar in their color,
 the messages in the middle, and the input box at the bottom: Enter sends, Up and Down go through what was sent,
 typing `@` lists the people to tag, pasting the path of an image turns it into `/image`, and dropping an image file
@@ -58,6 +58,7 @@ While chatting:
 | `/whoami`          | show your name                                         |
 | `/nick NAME`       | change your name; it is saved and used next time too   |
 | `/forget`          | forget the saved name and get a new random one         |
+| `/avatar FILE`     | set your avatar, which everybody sees (a GIF plays); it is saved and used next time too; `/avatar none` removes it |
 | `/color`           | show your name color and the ones to pick from         |
 | `/color NAME`      | change your name color (e.g. `gold`); it is saved      |
 | `/color #ff8800`   | any color as a hex code (`#f80` works too), or as RGB values: `/color 255,136,0` |
@@ -289,6 +290,11 @@ the terminal version.)
   square carries a clock and a tag from the painter's id, and a square keeps the newest change, so changes lost or
   heard out of order do not matter. Every 15 seconds each zchat sends a hash of its canvas, and whoever has a
   different one sends the changes it has, so newcomers and whoever missed a packet catch up. Older versions ignore `GAME` packets, so they just see people typing funny words.
+* **Avatars** are square pictures (a still image cropped to its middle, 256 pixels; a GIF as it is up to 2 MB, or
+  else as 128-pixel frames), saved in the config folder as `avatar`. Heartbeats (`JOIN` and `HERE`) carry
+  `avatar <hash> <bytes> <TCP port>`, and whoever does not have that avatar yet downloads it from the sender with
+  `AVATAR <hash>`, as for big pictures; so newcomers get everyone's within a heartbeat, and a new one shows right
+  away. Terminals do not show avatars.
 * **Pictures** bigger than a packet are offered with an `OFFER` packet (`<picture id> <bytes> <pieces> <TCP port>`).
   Every zchat listens on a TCP port the system picks; whoever gets an offer connects to the address it came from,
   sends `GET <picture id>`, and reads the picture (scrambled like packets) until the sender closes the connection.

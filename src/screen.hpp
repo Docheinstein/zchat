@@ -36,6 +36,8 @@ public:
     struct Mention {
         std::string name;
         std::string style;
+        // Their avatar's hash (see Chat::set_avatar()), in hex; empty for none.
+        std::string avatar = {};
     };
 
     // Sets where the list shown after typing '@' gets its names from. The source is called with the screen
@@ -45,6 +47,10 @@ public:
     // Sets where our own name and its style come from, for screens that show them (the window, above the channels).
     // Called with the screen locked, so it must not print.
     virtual void set_self(std::function<Mention()> /*source*/) {}
+
+    // Sets where the avatars come from, for screens that show them: by hash, the picture (see
+    // image::encode_avatar()), or nullopt when it is not here (yet). Thread-safe.
+    virtual void set_avatars(std::function<std::optional<std::string>(std::string_view hash)> /*source*/) {}
 
     // Sets what may rewrite the input line once the keys typed so far are handled and no more are waiting, as after
     // a paste or a file dropped on the window: it gets the line and returns its replacement, or nullopt to keep it.

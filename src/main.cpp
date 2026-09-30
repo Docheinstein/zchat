@@ -148,6 +148,7 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /whoami      show your name");
     chat.notice("  /nick NAME   change your name, and keep it for next time");
     chat.notice("  /forget      forget the saved name and get a new random one");
+    chat.notice("  /avatar FILE set your avatar, which everybody sees (a GIF plays); /avatar none removes it");
     chat.notice("  /color NAME  change the color of your name, and keep it for next time");
     chat.notice("               (a name from /color, #rrggbb, or r,g,b)");
     chat.notice("  /color random  pick a random color (not kept)");
@@ -175,6 +176,58 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /update      get the latest zchat, build it and restart");
     chat.notice("  /help        show this help");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
+}
+
+// The avatar: the picture as it is sent (see image::encode_avatar()), in the config folder, so it is back next time.
+std::filesystem::path avatar_file() {
+    const auto dir = zchat::config::dir();
+    return dir.empty() ? dir : dir / "avatar";
+}
+
+std::optional<std::string> load_avatar() {
+    const auto file = avatar_file();
+    std::error_code ec;
+    if (file.empty() || std::filesystem::file_size(file, ec) > zchat::max_avatar_bytes || ec) {
+        return std::nullopt;
+    }
+    std::ifstream in(file, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (!in.good() && !in.eof()) {
+        return std::nullopt;
+    }
+    return zchat::image::parse_picture(text) ? std::optional<std::string>(std::move(text)) : std::nullopt;
+}
+
+void change_avatar(zchat::Chat& chat, std::string_view arg) {
+    while (!arg.empty() && arg.front() == ' ') {
+        arg.remove_prefix(1);
+    }
+    if (arg.empty()) {
+        chat.notice(chat.own_avatar_hash().empty()
+                        ? "You have no avatar. Use /avatar FILE to set one (a GIF plays), /avatar none to remove it."
+                        : "You have an avatar. Use /avatar FILE to change it, /avatar none to remove it.");
+        return;
+    }
+    const auto file = avatar_file();
+    if (arg == "none" || arg == "remove") {
+        std::error_code ec;
+        std::filesystem::remove(file, ec);
+        chat.set_avatar(std::nullopt);
+        chat.notice("Your avatar is removed.");
+        return;
+    }
+    const auto avatar = zchat::image::encode_avatar(zchat::image::parse_path(arg));
+    if (!avatar) {
+        chat.notice(std::format("Cannot use {} as your avatar: {}", zchat::text::sanitize(arg, 200), avatar.error()));
+        return;
+    }
+    chat.set_avatar(*avatar);
+    chat.notice("Your avatar is set: everybody sees it in a moment.");
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(avatar->data(), static_cast<std::streamsize>(avatar->size()));
+    if (file.empty() || !out.flush()) {
+        chat.notice("Could not save your avatar for next time.");
+    }
 }
 
 void change_nick(zchat::Chat& chat, std::string_view arg) {
@@ -692,7 +745,10 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
         return chat.mentionable();
     });
     terminal.set_self([&chat] {
-        return zchat::Screen::Mention {chat.name(), zchat::ansi_foreground(chat.color())};
+        return zchat::Screen::Mention {chat.name(), zchat::ansi_foreground(chat.color()), chat.own_avatar_hash()};
+    });
+    terminal.set_avatars([&chat](std::string_view hash) {
+        return chat.avatar(hash);
     });
     // Dropping a file on the window types its path: show it as the /image command it becomes, which can still be
     // changed (e.g. given a size) before pressing Enter; or /file, for other kinds of file.
@@ -711,6 +767,10 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
     });
     zchat::game::Games games(chat, terminal);
     chat.start();
+    // After the Join, which must come first: the others learn about it from the heartbeat it sends.
+    if (auto avatar = load_avatar()) {
+        chat.set_avatar(std::move(*avatar));
+    }
 
     // Declared after the chat and the terminal it uses, so that an update in progress is cancelled first.
     std::atomic<bool> updated {false};
@@ -745,6 +805,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             print_who(chat);
         } else if (input == "/whoami") {
             chat.notice(std::format("You are {}.", chat.colored_own_name()));
+        } else if (input == "/avatar" || input.starts_with("/avatar ")) {
+            change_avatar(chat, input.substr(std::min(input.size(), std::string_view("/avatar").size())));
         } else if (input == "/nick" || input.starts_with("/nick ")) {
             change_nick(chat, input.substr(std::min(input.size(), std::string_view("/nick ").size())));
         } else if (input == "/color" || input.starts_with("/color ")) {
