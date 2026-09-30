@@ -1,6 +1,7 @@
 #include "chat.hpp"
 #include "config.hpp"
 #include "game.hpp"
+#include "history.hpp"
 #include "image.hpp"
 #include "markup.hpp"
 #include "names.hpp"
@@ -557,6 +558,11 @@ int run(const Options& options, bool& restart) {
     SetConsoleCtrlHandler(on_console_event, TRUE);
 #endif
 
+    // The last messages from before, like the scrollback of a chat, then the welcome.
+    if (const auto earlier = zchat::history::load(); !earlier.empty()) {
+        chat.notice(std::format("The last {} message{} from before:", earlier.size(), earlier.size() == 1 ? "" : "s"));
+        chat.print_history(earlier);
+    }
     chat.notice(std::format("Welcome to zchat! You are {}.", chat.colored_own_name()));
     chat.notice(
         std::format("Chatting on UDP port {}. Type a message and press Enter, /help for commands.", options.port));

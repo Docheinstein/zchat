@@ -141,6 +141,11 @@ The name set with `/nick` is saved in the `zchat` config folder: `%APPDATA%\zcha
 `~/.config/zchat/config` on Linux (or `$XDG_CONFIG_HOME/zchat/config`). On start, `--name` wins over the saved
 name, which wins over a random one. The color set with `/color` is saved there too.
 
+The last 50 chat messages, sent and received, are kept in the `history` file of the config folder, with the time
+they were sent at, and shown again when zchat starts, before the welcome (with their date when they are not from
+today). Pictures, joins and other notices are not kept. The file is plain text, one message per line: delete it to
+forget them.
+
 Emoji are saved in the `emoji` folder of the config folder (`%APPDATA%\zchat\emoji` on Windows), one `NAME.art`
 file each: the picture already drawn, as it is sent, so `/emoji NAME` sends it right away and the same every time,
 even if the image file is gone. Names are letters, digits, `-` and `_`, up to 32, and are not case-sensitive.

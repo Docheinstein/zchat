@@ -35,14 +35,24 @@ namespace {
         return id;
     }
 
-    std::string timestamp() {
-        const std::time_t now = std::time(nullptr);
+    std::tm local_time(std::time_t t) {
         std::tm local {};
 #ifdef _WIN32
-        localtime_s(&local, &now);
+        localtime_s(&local, &t);
 #else
-        localtime_r(&now, &local);
+        localtime_r(&t, &local);
 #endif
+        return local;
+    }
+
+    // The time of day, now or at t; with the date too when that is not today.
+    std::string timestamp(std::time_t t = std::time(nullptr)) {
+        const std::tm local = local_time(t);
+        const std::tm today = local_time(std::time(nullptr));
+        if (local.tm_year != today.tm_year || local.tm_yday != today.tm_yday) {
+            return std::format("{}-{:02}-{:02} {:02}:{:02}", local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
+                               local.tm_hour, local.tm_min);
+        }
         return std::format("{:02}:{:02}", local.tm_hour, local.tm_min);
     }
 
@@ -94,6 +104,7 @@ void Chat::say(std::string_view text) {
     const std::string clean = text::sanitize(text, max_text_bytes);
     send(PacketType::Message, clean);
     print_message(id_, name(), clean);
+    history::add({std::time(nullptr), id_, name(), clean});
     std::scoped_lock lock(hooks_mutex_);
     if (hooks_.message) {
         hooks_.message(id_, name(), clean);
@@ -153,8 +164,17 @@ std::string Chat::paint(Color color, std::string_view text) const {
     return std::format("\x1b[{}m{}\x1b[0m", ansi_foreground(color), text);
 }
 
-bool Chat::print_message(std::uint64_t id, std::string_view name, std::string_view text) const {
-    const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", timestamp()) : timestamp();
+void Chat::print_history(const std::vector<history::Entry>& entries) const {
+    for (const auto& entry : entries) {
+        // Tags are shown, but ring no bell: they were heard back then.
+        print_message(entry.sender, entry.name, entry.text, entry.time);
+    }
+}
+
+bool Chat::print_message(std::uint64_t id, std::string_view name, std::string_view text,
+                         std::optional<std::time_t> when) const {
+    const std::string stamp = when ? timestamp(*when) : timestamp();
+    const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", stamp) : stamp;
     bool tags_us = false;
     const std::string marked = mark_mentions(text, tags_us);
     terminal_.print(
@@ -411,6 +431,7 @@ void Chat::handle(const Packet& packet) {
         if (print_message(packet.sender, packet.name, packet.text)) {
             terminal_.bell();
         }
+        history::add({std::time(nullptr), packet.sender, packet.name, packet.text});
         std::scoped_lock lock(hooks_mutex_);
         if (hooks_.message) {
             hooks_.message(packet.sender, packet.name, packet.text);
