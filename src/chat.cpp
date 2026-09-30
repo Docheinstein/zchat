@@ -5,6 +5,7 @@
 #include "file.hpp"
 #include "image.hpp"
 #include "markup.hpp"
+#include "sound.hpp"
 #include "text.hpp"
 
 #include <algorithm>
@@ -259,7 +260,7 @@ void Chat::send_picture(std::string_view picture) {
 }
 
 void Chat::send_file(std::string_view file) {
-    // Files travel like pictures: print_picture() tells them apart.
+    // Files and trills travel like pictures: receive_picture() tells them apart.
     send_picture(file);
 }
 
@@ -1285,7 +1286,12 @@ void Chat::receive_picture(std::uint64_t id, std::string_view name, std::string_
         }
     }
     Entry entry {Entry::Kind::Picture, std::time(nullptr), id, std::string(name), nullptr};
-    if (file::is_file(text)) {
+    if (file::is_trill(text)) {
+        // Heard as it arrives, in whatever channel is shown: all its members hear it at once.
+        if (!play_trill(text, entry)) {
+            return;
+        }
+    } else if (file::is_file(text)) {
         if (!keep_file(id, name, text, entry)) {
             return;
         }
@@ -1365,6 +1371,40 @@ void Chat::print_file(const Entry& entry, std::optional<std::time_t> when) const
                                 terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", hint) : hint));
 }
 
+bool Chat::play_trill(std::string_view text, Entry& entry) {
+    auto received = file::parse(text, file::Kind::Trill);
+    if (!received) {
+        return false;
+    }
+    entry.kind = Entry::Kind::Trill;
+    entry.file_name = received->name;
+    entry.file_size = file::format_size(received->data.size());
+    // (parse() checked that the base64 after the first line is the MP3.)
+    if (terminal_.play_sound("audio/mpeg", text.substr(text.find('\n') + 1))) {
+        return true;
+    }
+    const auto path = files_dir_ / std::format("trill-{}.mp3", next_trill_++);
+    auto data = std::make_shared<const std::string>(std::move(received->data));
+    // Too many transfers and sounds at once: this one is not heard.
+    start_transfer([path, data](std::stop_token stop) {
+        std::error_code ec;
+        std::filesystem::create_directories(path.parent_path(), ec);
+        if (std::ofstream out(path, std::ios::binary | std::ios::trunc);
+            !out.write(data->data(), static_cast<std::streamsize>(data->size())).flush()) {
+            return;
+        }
+        sound::play(path, stop);
+        std::filesystem::remove(path, ec);
+    });
+    return true;
+}
+
+void Chat::print_trill(const Entry& entry, std::optional<std::time_t> when) const {
+    const std::string stamp = when ? timestamp(*when) : timestamp();
+    const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", stamp) : stamp;
+    terminal_.print(std::format("{} {}: 🔊 {}", time, colored_name(entry.id, entry.name), entry.file_name));
+}
+
 void Chat::show(const Entry& entry, bool live) {
     const std::optional<std::time_t> when = live ? std::nullopt : std::optional<std::time_t>(entry.time);
     switch (entry.kind) {
@@ -1382,6 +1422,9 @@ void Chat::show(const Entry& entry, bool live) {
         break;
     case Entry::Kind::File:
         print_file(entry, when);
+        break;
+    case Entry::Kind::Trill:
+        print_trill(entry, when);
         break;
     }
 }

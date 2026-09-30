@@ -67,7 +67,8 @@ public:
     // Sends a real picture to everybody (see image::encode_picture()): windows show it, terminals draw it.
     void send_picture(std::string_view picture);
 
-    // Sends a file of any kind to everybody (see file::encode()), for them to download.
+    // Sends a file of any kind to everybody (see file::encode()), for them to download; or a trill, a sound they all
+    // play once (see file::Kind::Trill).
     void send_file(std::string_view file);
 
     // A file received (or sent) in this session: where it is kept until zchat quits, and its name.
@@ -185,14 +186,14 @@ private:
 
     // Something said, drawn or sent in a channel, kept to show it again (see deliver()).
     struct Entry {
-        enum class Kind { Message, Art, Picture, File };
+        enum class Kind { Message, Art, Picture, File, Trill };
         Kind kind = Kind::Message;
         std::time_t time = 0;
         std::uint64_t id = 0;
         std::string name;
         // The message, the drawing or the picture.
         std::shared_ptr<const std::string> data;
-        // A file: see keep_file().
+        // A file: see keep_file(); a trill: see play_trill() (no index, it is not kept).
         std::size_t file_index = 0;
         std::string file_name;
         std::string file_size;
@@ -219,6 +220,10 @@ private:
     void receive_picture(std::uint64_t id, std::string_view name, std::string_view text);
     // Saves a file received for /save, and fills in entry for it.
     bool keep_file(std::uint64_t id, std::string_view name, std::string_view text, Entry& entry);
+    // Plays a trill received (or ours) once, and fills in entry for it: the window plays it, or else it is saved in
+    // the temporary folder, played with the system's player on a thread of its own, and deleted.
+    bool play_trill(std::string_view text, Entry& entry);
+    void print_trill(const Entry& entry, std::optional<std::time_t> when = std::nullopt) const;
     // Shows an entry: live when it just arrived (tags ring), or else again, with the time it came at.
     void show(const Entry& entry, bool live);
     // Something for a channel: kept, and shown if it is the current one, or else told about once.
@@ -326,6 +331,8 @@ private:
     std::filesystem::path files_dir_;
     mutable std::mutex files_mutex_;
     std::vector<ReceivedFile> files_;
+    // Names the trills played, each in files_dir_ only while it plays.
+    std::atomic<std::uint64_t> next_trill_ {1};
 
     // Channels: ours, what we know of the others' (by name), the current one, what was said in each, and those with
     // something new since they were shown.

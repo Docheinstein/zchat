@@ -2,6 +2,7 @@
 
 #include "image.hpp"
 #include "protocol.hpp"
+#include "sound.hpp"
 #include "text.hpp"
 
 #include <algorithm>
@@ -25,11 +26,16 @@ namespace zchat::file {
 
 namespace {
 
-    constexpr std::string_view kind = "file ";
+    constexpr std::string_view file_kind = "file ";
+    constexpr std::string_view trill_kind = "trill ";
     // The name is in base64 too, as the pieces of a big file keep nothing else (see sanitize_text() in protocol.cpp):
-    // with "file" and the size, it fits in the first line of an Image.
+    // with "file" (or "trill") and the size, it fits in the first line of an Image.
     constexpr std::size_t max_name_bytes = 200;
-    static_assert(kind.size() + 21 + (max_name_bytes + 2) / 3 * 4 <= max_image_head_bytes);
+    static_assert(trill_kind.size() + 21 + (max_name_bytes + 2) / 3 * 4 <= max_image_head_bytes);
+
+    constexpr std::string_view prefix(Kind kind) {
+        return kind == Kind::Trill ? trill_kind : file_kind;
+    }
 
     constexpr std::string_view base64_digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -93,8 +99,8 @@ namespace {
 
 } // namespace
 
-std::uintmax_t max_bytes() {
-    return (max_image_bytes - max_image_head_bytes) / 4 * 3;
+std::uintmax_t max_bytes(Kind kind) {
+    return kind == Kind::Trill ? sound::max_bytes : (max_image_bytes - max_image_head_bytes) / 4 * 3;
 }
 
 bool is_dropped_file(std::string_view line) {
@@ -104,7 +110,7 @@ bool is_dropped_file(std::string_view line) {
     return !path.empty() && path.is_absolute() && std::filesystem::is_regular_file(path, ec);
 }
 
-std::expected<std::string, std::string> encode(const std::filesystem::path& path) {
+std::expected<std::string, std::string> encode(const std::filesystem::path& path, Kind kind) {
     std::error_code ec;
     if (std::filesystem::is_directory(path, ec)) {
         return std::unexpected("That is a folder: only files can be sent.");
@@ -113,47 +119,60 @@ std::expected<std::string, std::string> encode(const std::filesystem::path& path
     if (ec) {
         return std::unexpected("There is no such file.");
     }
-    if (size > max_bytes()) {
+    if (size > max_bytes(kind)) {
         return std::unexpected(
-            std::format("That file is too big: files up to {} can be sent.", format_size(max_bytes())));
+            kind == Kind::Trill
+                ? std::format("That sound is too big: trills up to {} can be played.", format_size(max_bytes(kind)))
+                : std::format("That file is too big: files up to {} can be sent.", format_size(max_bytes(kind))));
     }
     std::ifstream in(path, std::ios::binary);
     const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if ((!in && !in.eof()) || data.size() != size) {
         return std::unexpected("Could not read the file.");
     }
+    if (kind == Kind::Trill && !sound::is_mp3(data)) {
+        return std::unexpected("That is not an MP3 file.");
+    }
     const auto u8 = path.filename().u8string();
-    const std::string name = safe_name(std::string_view(reinterpret_cast<const char*>(u8.data()), u8.size()));
-    std::string text = std::format("{}{} {}\n", kind, size, base64_encode(name));
+    return encode(std::string_view(reinterpret_cast<const char*>(u8.data()), u8.size()), data, kind);
+}
+
+std::string encode(std::string_view name, std::string_view data, Kind kind) {
+    std::string text = std::format("{}{} {}\n", prefix(kind), data.size(), base64_encode(safe_name(name)));
     text += base64_encode(data);
     return text;
 }
 
 bool is_file(std::string_view text) {
-    return text.starts_with(kind);
+    return text.starts_with(file_kind);
 }
 
-std::optional<Received> parse(std::string_view text) {
-    if (!is_file(text)) {
+bool is_trill(std::string_view text) {
+    return text.starts_with(trill_kind);
+}
+
+std::optional<Received> parse(std::string_view text, Kind kind) {
+    const std::string_view start = prefix(kind);
+    if (!text.starts_with(start)) {
         return std::nullopt;
     }
     const auto nl = text.find('\n');
     if (nl == std::string_view::npos) {
         return std::nullopt;
     }
-    const std::string_view head = text.substr(kind.size(), nl - kind.size());
+    const std::string_view head = text.substr(start.size(), nl - start.size());
     const auto space = head.find(' ');
     if (space == std::string_view::npos) {
         return std::nullopt;
     }
     std::uintmax_t size = 0;
     const auto [ptr, ec] = std::from_chars(head.data(), head.data() + space, size);
-    if (ec != std::errc {} || ptr != head.data() + space || size > max_bytes()) {
+    if (ec != std::errc {} || ptr != head.data() + space || size > max_bytes(kind)) {
         return std::nullopt;
     }
     Received file {safe_name(base64_decode(head.substr(space + 1))), base64_decode(text.substr(nl + 1))};
-    // A file cut short (or padded) is not the file that was sent.
-    if (file.data.size() != size) {
+    // A file cut short (or padded) is not the file that was sent; and a trill is given to a player only as an MP3.
+    if (file.data.size() != size || (kind == Kind::Trill && !sound::is_mp3(file.data))) {
         return std::nullopt;
     }
     return file;

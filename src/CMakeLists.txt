@@ -19,6 +19,7 @@ target_sources(zchat PUBLIC
     process.cpp
     race.cpp
     protocol.cpp
+    sound.cpp
     terminal.cpp
     text.cpp
     update.cpp
@@ -42,6 +43,15 @@ add_custom_target(zchat_commit
     VERBATIM)
 add_dependencies(zchat zchat_commit)
 target_include_directories(zchat PRIVATE "${zchat_generated}")
+
+# The sound /trill plays when given none, built into the executable.
+add_custom_command(
+    OUTPUT "${zchat_generated}/trill_mp3.hpp"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/sounds/fahhh.mp3"
+            "-DOUTPUT=${zchat_generated}/trill_mp3.hpp" -DNAME=trill_mp3 -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/sounds/fahhh.mp3" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    VERBATIM)
+target_sources(zchat PRIVATE "${zchat_generated}/trill_mp3.hpp")
 target_compile_definitions(zchat PRIVATE
     ZCHAT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
     ZCHAT_BUILD_DIR="${CMAKE_BINARY_DIR}"
@@ -105,7 +115,7 @@ endif()
 
 if (WIN32)
     target_compile_definitions(zchat PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0601)
-    target_link_libraries(zchat PRIVATE ws2_32 iphlpapi shell32 ole32)
+    target_link_libraries(zchat PRIVATE ws2_32 iphlpapi shell32 ole32 winmm)
 endif()
 if (MSVC)
     target_compile_options(zchat PRIVATE /utf-8)
