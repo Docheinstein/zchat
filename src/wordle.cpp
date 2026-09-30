@@ -1,23 +1,25 @@
 // Wordle: the New York Times' puzzle of the day, played by the whole chat. Everyone guesses the same five-letter word
-// on their own, with /game wordle WORD, and sees which letters are in the word; the others only see the colors, as
-// when sharing a Wordle. Whoever finds it in the fewest guesses wins (the fastest, between equals).
+// on their own, with /game wordle WORD, whenever they like during the day, and sees which letters are in the word; the
+// others only see the colors, as when sharing a Wordle. At midnight, when the Times has a new word, whoever found the
+// word in the fewest guesses wins the day (together, between equals).
 //
 // As on the Times, there is one Wordle a day, and it is played once: our guesses are saved in the config file, as
-// "wordle=<date> <word>,<word>..." and then " done" once found or out of guesses. A round of the same day goes on from
-// them, and a done one cannot be played again: /game wordle says to come back tomorrow.
+// "wordle=<date> <word>,<word>...", so that quitting zchat and coming back goes on from them, and once the word is
+// found or the guesses are over it cannot be played again until tomorrow.
 //
 // The word comes from the New York Times: https://www.nytimes.com/svc/wordle/v2/YYYY-MM-DD.json gives the puzzle of
-// that day ({"id":829,"solution":"river","print_date":"2026-09-30",...}), fetched with curl, which Windows 10 and later,
-// macOS and most Linux have. /game wordle plays today's.
+// that day ({"id":829,"solution":"river","print_date":"2026-09-30",...}), fetched with curl, which Windows 10 and
+// later, macOS and most Linux have. Everyone gets it on their own, the first time they play that day. Guesses must be
+// words of the list in third_party/enable (or the Times' word itself).
 //
-// Everyone plays with their own clock after the start. The one who starts a round sends, as a Game packet:
-//   wordle start <round> <puzzle> <date> <code>  a round starts, with the word shifted by the round (not shown as it is)
-// and every player sends:
-//   wordle guess <round> <n> <marks> <ms>        guess n (from 1), its marks (g: right place, y: in the word, b: not in
-//                                                it), ms after the start: "ggggg" found the word
-//   wordle lost <round>                          no guesses left
-// where <round> is a random hex number naming the round. Everybody ends the round on their own clock, when time is up
-// or when all the players are done and nobody has joined for a while, and shows who won from what they heard.
+// There is no referee: the day is the round. Every player sends, as Game packets:
+//   wordle guess <date> <n> <marks>   guess n (from 1) of the Wordle of that date, and its marks (g: right place,
+//                                     y: in the word, b: not in it): "ggggg" found the word
+//   wordle lost <date>                no guesses left
+//   wordle ask <date>                 we just started playing that day: who played it already?
+//   wordle result <date> <n> <state>  answer to ask: n guesses so far, and whether the player is still guessing (g),
+//                                     found the word (s) or lost (l)
+// Everybody ends the day on their own clock, at midnight, and shows who won from what they heard.
 
 #include "game.hpp"
 
@@ -33,7 +35,6 @@
 #include <format>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <thread>
 #include <vector>
 
@@ -42,15 +43,10 @@ namespace zchat::game {
 namespace {
 
     using namespace std::chrono_literals;
-    using clock = std::chrono::steady_clock;
 
     constexpr std::string_view game_name = "wordle";
     constexpr std::size_t letters = 5;
     constexpr std::uint64_t max_guesses = 6;
-    constexpr auto round_time = 5min;
-    // The round is not over before this, even when all the players are done, so that others can still join.
-    constexpr auto join_time = 60s;
-    constexpr auto warning_time = 30s;
     constexpr auto fetch_timeout = 15s;
     constexpr std::string_view saved_key = "wordle";
 
@@ -108,8 +104,8 @@ namespace {
         return words;
     }
 
-    std::string plural(std::uint64_t n, std::string_view word) {
-        return std::format("{} {}{}", n, word, n == 1 ? "" : "s");
+    std::string guesses(std::uint64_t n) {
+        return std::format("{} guess{}", n, n == 1 ? "" : "es");
     }
 
     // The marks of a guess, as Wordle gives them: a letter in the word but in the wrong place is only marked 'y' as
@@ -132,17 +128,6 @@ namespace {
         }
         return out;
     }
-
-    // The word as sent, shifted letter by letter by the round, so that it does not show in the packets as it is.
-    std::string shift(std::string_view word, std::uint64_t round, bool back) {
-        std::string out(word);
-        for (std::size_t i = 0; i < out.size(); ++i) {
-            const int by = static_cast<int>((round >> (i * 5)) % 26);
-            out[i] = static_cast<char>('a' + (out[i] - 'a' + (back ? 26 - by : by)) % 26);
-        }
-        return out;
-    }
-
     std::chrono::year_month_day today() {
         const std::time_t t = std::time(nullptr);
         std::tm local {};
@@ -178,6 +163,16 @@ namespace {
         return json.substr(0, json.find_first_of("\",} "));
     }
 
+    std::string today_date() {
+        return iso_date(today());
+    }
+
+    bool is_date(std::string_view s) {
+        return s.size() == 10 && s[4] == '-' && s[7] == '-' && std::ranges::all_of(s, [](char c) {
+                   return c == '-' || (c >= '0' && c <= '9');
+               });
+    }
+
     struct Puzzle {
         std::uint64_t id = 0;
         std::string date;
@@ -190,7 +185,7 @@ namespace {
             chat_(chat),
             terminal_(terminal),
             games_(games),
-            rng_(std::random_device {}()) {
+            day_(today_date()) {
         }
 
         std::string_view name() const override {
@@ -198,47 +193,60 @@ namespace {
         }
 
         std::string_view summary() const override {
-            return "the New York Times' Wordle of the day: guess the five-letter word in six tries, in the fewest wins";
+            return "the New York Times' Wordle of the day: guess the word in six tries, until midnight; the fewest "
+                   "guesses win the day";
         }
 
+        // /game wordle: gets today's word, or shows how the day is going.
         void start() override {
-            fetch(today());
+            if (puzzle_) {
+                if (!board_.empty()) {
+                    draw();
+                }
+                if (const Player* me = own(); me && me->status != Status::Guessing) {
+                    played_already();
+                } else {
+                    chat_.notice(std::format("{} of Wordle {}: /game wordle WORD to guess.",
+                                             board_.empty() ? "6 guesses"
+                                                            : guesses(max_guesses - board_.size()) + " left",
+                                             puzzle_->id));
+                }
+                standings();
+                return;
+            }
+            fetch();
         }
 
         void receive(std::uint64_t sender, std::string_view name, std::string_view text) override {
             const std::string_view event = next_field(text);
-            const auto round = parse_number(next_field(text), 16);
-            if (!round || *round == 0) {
-                return;
-            }
-            if (event == "start") {
-                const auto puzzle = parse_number(next_field(text));
-                const std::string_view date = next_field(text);
-                const std::string word = shift(next_field(text), *round, true);
-                if (!puzzle || date.empty() || !is_word(word)) {
-                    return;
-                }
-                // Two rounds started at the same time: everybody plays the one with the lowest number, if nobody
-                // has guessed yet.
-                if (!on_ || (*round < round_ && players_.empty())) {
-                    begin(*round, {*puzzle, std::string(date), word}, chat_.colored_name(sender, name));
-                    terminal_.bell();
-                }
-                return;
-            }
-            if (!on_ || *round != round_) {
+            const std::string_view date = next_field(text);
+            // Another day's (another time zone, or a round of an older zchat): not ours.
+            if (!is_date(date) || date != day_) {
                 return;
             }
             if (event == "guess") {
                 const auto n = parse_number(next_field(text));
                 const std::string_view mark = next_field(text);
-                const auto ms = parse_number(next_field(text));
-                if (n && ms && *n >= 1 && *n <= max_guesses && mark.size() == letters &&
+                if (n && *n >= 1 && *n <= max_guesses && mark.size() == letters &&
                     mark.find_first_not_of("gyb") == std::string_view::npos) {
-                    guessed(player(sender, name), *n, mark, std::chrono::milliseconds(*ms));
+                    guessed(player(sender, name), *n, mark);
                 }
             } else if (event == "lost") {
                 lost(player(sender, name));
+            } else if (event == "ask") {
+                if (const Player* me = own()) {
+                    send(std::format("result {} {} {}", day_, me->guesses, state(me->status)));
+                }
+            } else if (event == "result") {
+                const auto n = parse_number(next_field(text));
+                const std::string_view s = next_field(text);
+                if (n && *n <= max_guesses && s.size() == 1 && std::string_view("gsl").find(s[0]) != std::string_view::npos) {
+                    Player& p = player(sender, name);
+                    if (*n >= p.guesses && p.status == Status::Guessing) {
+                        p.guesses = *n;
+                        p.status = s[0] == 's' ? Status::Solved : s[0] == 'l' ? Status::Lost : Status::Guessing;
+                    }
+                }
             }
         }
 
@@ -246,44 +254,30 @@ namespace {
         }
 
         void tick() override {
-            if (const auto puzzle = fetched()) {
-                if (on_) {
-                    // Someone else's round started while the word came.
-                    chat_.notice("A round of Wordle is on already: /game wordle WORD to guess.");
-                } else {
-                    std::uint64_t round = 0;
-                    do {
-                        round = rng_();
-                    } while (round == 0);
-                    begin(round, *puzzle, chat_.colored_own_name());
-                    send(std::format("start {:x} {} {} {}", round_, puzzle_.id, puzzle_.date,
-                                     shift(puzzle_.word, round_, false)));
+            if (const std::string now = today_date(); now != day_) {
+                end_day();
+                day_ = now;
+            }
+            if (auto puzzle = fetched()) {
+                if (puzzle->date == day_) {
+                    begin(std::move(*puzzle));
                 }
-            }
-            if (!on_) {
-                return;
-            }
-            const auto now = clock::now();
-            if (playing() && !warned_ && now >= started_ + round_time - warning_time) {
-                warned_ = true;
-                chat_.notice(std::format("⏳ {} seconds left to find the Wordle!", warning_time.count()));
-                terminal_.bell();
-            }
-            const bool all_done = std::ranges::none_of(players_, [](const Player& p) {
-                return p.status == Status::Guessing;
-            });
-            if (now >= started_ + round_time || (!players_.empty() && all_done && now >= started_ + join_time)) {
-                end();
             }
         }
 
         bool command(std::string_view args) override {
             // Any one word is a guess, so that a wrong one is told why.
-            if (args.find(' ') == std::string_view::npos) {
-                guess(args);
+            if (args.find(' ') != std::string_view::npos) {
+                return false;
+            }
+            if (!puzzle_) {
+                // The first guess of the day: it is made once the word comes.
+                pending_ = std::string(args);
+                fetch();
                 return true;
             }
-            return false;
+            guess(args);
+            return true;
         }
 
         std::string_view commands() const override {
@@ -299,27 +293,25 @@ namespace {
             std::string colored_name;
             Status status = Status::Guessing;
             std::uint64_t guesses = 0;
-            std::chrono::milliseconds time {};
         };
 
-        // Asks the Times for the puzzle of a day, in the background: tick() starts the round when it comes.
-        void fetch(std::chrono::year_month_day day) {
-            if (on_) {
-                chat_.notice(playing() ? "A round of Wordle is on: /game wordle WORD to guess."
-                                       : "A round of Wordle is on: /game wordle WORD to join it!");
-                return;
-            }
-            const std::string date = iso_date(day);
-            if (saved(date).done) {
-                played_already(date);
-                return;
-            }
+        static char state(Status s) {
+            return s == Status::Solved ? 's' : s == Status::Lost ? 'l' : 'g';
+        }
+
+        static int rank(char mark) {
+            return mark == 'g' ? 2 : mark == 'y' ? 1 : 0;
+        }
+
+        // Asks the Times for today's puzzle, in the background: tick() starts playing when it comes.
+        void fetch() {
             std::scoped_lock lock(fetch_mutex_);
             if (fetching_) {
                 chat_.notice("The Wordle is on its way from the New York Times…");
                 return;
             }
             fetching_ = true;
+            const std::string date = day_;
             chat_.notice(std::format("📰 Getting the Wordle of {} from the New York Times…", date));
             if (fetcher_.joinable()) {
                 fetcher_.join();
@@ -329,7 +321,6 @@ namespace {
                     process::run({"curl", "-s", "-f", "-L", "-m", "10",
                                   std::format("https://www.nytimes.com/svc/wordle/v2/{}.json", date)},
                                  stop, fetch_timeout);
-                Puzzle puzzle;
                 std::string word(json_field(result.output, "solution"));
                 std::ranges::transform(word, word.begin(), [](char c) {
                     return static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
@@ -340,8 +331,7 @@ namespace {
                     return;
                 }
                 if (result.exit_code == 0 && is_word(word)) {
-                    puzzle = {id.value_or(0), date, word};
-                    fetched_ = puzzle;
+                    fetched_ = Puzzle {id.value_or(0), date, word};
                 } else {
                     failed_ = true;
                 }
@@ -354,6 +344,7 @@ namespace {
             if (failed_) {
                 failed_ = false;
                 fetching_ = false;
+                pending_.reset();
                 chat_.notice("Could not get the Wordle from the New York Times: is curl installed, and is there "
                              "internet?");
             }
@@ -364,32 +355,90 @@ namespace {
             return std::exchange(fetched_, std::nullopt);
         }
 
-        void begin(std::uint64_t round, Puzzle puzzle, std::string referee_name) {
-            on_ = true;
-            round_ = round;
+        // Today's word came: we play, from our saved guesses if we played earlier.
+        void begin(Puzzle puzzle) {
             puzzle_ = std::move(puzzle);
-            started_ = clock::now();
-            players_.clear();
-            me_.reset();
-            done_ = false;
             board_.clear();
-            warned_ = false;
-            restore();
-            chat_.notice(std::format("🟩 Wordle {} ({}), started by {}! Guess the five-letter word with /game wordle "
-                                     "WORD: you see which letters are in it, the others only see your colors.",
-                                     puzzle_.id, puzzle_.date, referee_name));
-            chat_.notice(std::format("   {} guesses each; whoever finds it in the fewest wins (the fastest, between "
-                                     "equals). {} minutes to play.",
-                                     max_guesses,
-                                     std::chrono::duration_cast<std::chrono::minutes>(round_time).count()));
+            for (const std::string& word : saved()) {
+                if (board_.size() == max_guesses || (!board_.empty() && board_.back().second == "ggggg")) {
+                    break;
+                }
+                board_.push_back({word, marks(word, puzzle_->word)});
+            }
+            if (!board_.empty()) {
+                Player& me = player(chat_.id(), chat_.name());
+                me.guesses = board_.size();
+                me.status = board_.back().second == "ggggg" ? Status::Solved
+                            : board_.size() == max_guesses  ? Status::Lost
+                                                            : Status::Guessing;
+            }
+            send(std::format("ask {}", day_));
+
+            const Player* me = own();
+            if (!me) {
+                chat_.notice(std::format("🟩 Wordle {} ({}): guess the five-letter word with /game wordle WORD, "
+                                         "until midnight. You see which letters are in it, the others only see your "
+                                         "colors; the fewest guesses win the day.",
+                                         puzzle_->id, puzzle_->date));
+            } else if (me->status == Status::Guessing) {
+                chat_.notice(std::format("🟩 Wordle {}: you started it earlier, {} left.", puzzle_->id,
+                                         guesses(max_guesses - board_.size())));
+                // The guess waiting, if any, draws the board anyway.
+                if (!pending_) {
+                    draw();
+                }
+            } else if (!pending_) {
+                draw();
+                played_already();
+            }
+            if (pending_) {
+                guess(*std::exchange(pending_, std::nullopt));
+            }
         }
 
-        bool playing() const {
-            const auto it = me_ ? std::ranges::find(players_, *me_, &Player::id) : players_.end();
-            return it != players_.end() && it->status == Status::Guessing;
+        void played_already() const {
+            chat_.notice("You played today's Wordle already: there is one a day, a new one at midnight!");
         }
 
-        // The player, added if we had not heard of them (they just joined, or it is us).
+        // Our guesses of today's Wordle, as saved; none if they are another day's.
+        std::vector<std::string> saved() const {
+            std::vector<std::string> words;
+            const auto value = config::get(saved_key);
+            if (!value || !value->starts_with(day_) || value->size() <= day_.size() || (*value)[day_.size()] != ' ') {
+                return words;
+            }
+            std::string_view rest = std::string_view(*value).substr(day_.size() + 1);
+            // Older versions marked the end.
+            if (rest.ends_with(" done")) {
+                rest.remove_suffix(5);
+            }
+            while (!rest.empty()) {
+                const auto comma = rest.find(',');
+                if (const std::string_view word = rest.substr(0, comma); is_word(word)) {
+                    words.emplace_back(word);
+                }
+                rest.remove_prefix(comma == std::string_view::npos ? rest.size() : comma + 1);
+            }
+            return words;
+        }
+
+        void save() const {
+            std::string words;
+            for (const auto& [word, mark] : board_) {
+                words += std::format("{}{}", words.empty() ? "" : ",", word);
+            }
+            if (!config::set(saved_key, std::format("{} {}", day_, words))) {
+                chat_.notice(std::format("Could not save your Wordle to {}", config::file().string()));
+            }
+        }
+
+        // Us among the players, once we guessed.
+        const Player* own() const {
+            const auto it = std::ranges::find(players_, chat_.id(), &Player::id);
+            return it == players_.end() ? nullptr : &*it;
+        }
+
+        // The player, added if we had not heard of them.
         Player& player(std::uint64_t id, std::string_view name) {
             auto it = std::ranges::find(players_, id, &Player::id);
             if (it == players_.end()) {
@@ -399,109 +448,35 @@ namespace {
             return *it;
         }
 
-        static int rank(char mark) {
-            return mark == 'g' ? 2 : mark == 'y' ? 1 : 0;
-        }
-
-        struct Saved {
-            std::vector<std::string> words;
-            bool done = false;
-        };
-
-        // Our guesses of the Wordle of a day, as saved; none for another day.
-        static Saved saved(std::string_view date) {
-            Saved out;
-            const auto value = config::get(saved_key);
-            if (!value || !value->starts_with(date) || value->size() <= date.size() || (*value)[date.size()] != ' ') {
-                return out;
-            }
-            std::string_view rest = std::string_view(*value).substr(date.size() + 1);
-            if (rest.ends_with(" done")) {
-                out.done = true;
-                rest.remove_suffix(5);
-            }
-            while (!rest.empty() && out.words.size() < max_guesses) {
-                const auto comma = rest.find(',');
-                if (const std::string_view word = rest.substr(0, comma); is_word(word)) {
-                    out.words.emplace_back(word);
-                }
-                rest.remove_prefix(comma == std::string_view::npos ? rest.size() : comma + 1);
-            }
-            return out;
-        }
-
-        void save(bool done) const {
-            std::string words;
-            for (const auto& [word, mark] : board_) {
-                words += std::format("{}{}", words.empty() ? "" : ",", word);
-            }
-            if (!config::set(saved_key, std::format("{} {}{}", puzzle_.date, words, done ? " done" : ""))) {
-                chat_.notice(std::format("Could not save your Wordle to {}", config::file().string()));
-            }
-        }
-
-        void played_already(std::string_view date) const {
-            chat_.notice(std::format("You played the Wordle of {} already: there is one a day, come back tomorrow!",
-                                     date));
-        }
-
-        // A round of a day we played already: goes on from our saved guesses (or we just watch, when done).
-        void restore() {
-            const Saved s = saved(puzzle_.date);
-            for (const std::string& word : s.words) {
-                board_.push_back({word, marks(word, puzzle_.word)});
-            }
-            if (board_.empty() && !s.done) {
-                return;
-            }
-            // Not among the players, so that the round does not wait for us, nor count us again.
-            me_ = chat_.id();
-            if (s.done || board_.back().second == "ggggg" || board_.size() == max_guesses) {
-                done_ = true;
-                chat_.notice("You played today's Wordle already: you can watch the others.");
-                return;
-            }
-            Player& me = player(*me_, chat_.name());
-            me.guesses = board_.size();
-            chat_.notice(std::format("You started this Wordle earlier: {} left.",
-                                     plural(max_guesses - board_.size(), "guess")));
-            draw();
-        }
-
         void guess(std::string_view word) {
-            if (!on_) {
-                std::scoped_lock lock(fetch_mutex_);
-                chat_.notice(fetching_ ? "The Wordle is on its way from the New York Times…"
-                                       : "No round of Wordle is on: /game wordle starts one.");
-                return;
-            }
             if (!is_word(word)) {
                 chat_.notice("A guess is a word of five letters, from a to z.");
                 return;
             }
+            if (const Player* me = own(); me && me->status != Status::Guessing) {
+                played_already();
+                return;
+            }
             // The Times' word always counts, even if the list does not have it.
-            if (word != puzzle_.word && !std::ranges::binary_search(dictionary(), word)) {
+            if (word != puzzle_->word && !std::ranges::binary_search(dictionary(), word)) {
                 chat_.notice(std::format("{} is not in the word list: it does not count as a guess.", big(word)));
                 return;
             }
-            if (done_ || (me_ && player(*me_, chat_.name()).status != Status::Guessing)) {
-                played_already(puzzle_.date);
-                return;
-            }
-            me_ = chat_.id();
-            Player& me = player(*me_, chat_.name());
-            const std::string mark = marks(word, puzzle_.word);
+            const std::string mark = marks(word, puzzle_->word);
             board_.push_back({std::string(word), mark});
-            const auto time = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - started_);
-            send(std::format("guess {:x} {} {} {}", round_, board_.size(), mark, time.count()));
+            save();
+            send(std::format("guess {} {} {}", day_, board_.size(), mark));
             draw();
-            guessed(me, board_.size(), mark, time);
+            Player& me = player(chat_.id(), chat_.name());
+            guessed(me, board_.size(), mark);
             if (me.status == Status::Guessing && board_.size() == max_guesses) {
-                chat_.notice(std::format("No guesses left! The word was {}.", big(puzzle_.word)));
-                send(std::format("lost {:x}", round_));
+                chat_.notice(std::format("No guesses left! The word was {}. A new Wordle at midnight.",
+                                         big(puzzle_->word)));
+                send(std::format("lost {}", day_));
                 lost(me);
+            } else if (me.status == Status::Solved) {
+                chat_.notice("The winner of the day is told at midnight: /game wordle shows how the others do.");
             }
-            save(me.status != Status::Guessing);
         }
 
         // Our guesses, as the Times shows them, and the letters of the alphabet by what we know of them.
@@ -527,8 +502,9 @@ namespace {
                     }
                 }
             }
-            out += "\n\n     ";
+            out += "\n";
             for (std::string_view row : {"qwertyuiop", "asdfghjkl", "zxcvbnm"}) {
+                out += row.size() == 10 ? "\n     " : row.size() == 9 ? "\n      " : "\n        ";
                 for (const char letter : row) {
                     const char k = known[static_cast<std::size_t>(letter - 'a')];
                     const char upper = static_cast<char>(letter - 'a' + 'A');
@@ -542,7 +518,6 @@ namespace {
                                            upper);
                     }
                 }
-                out += row.size() == 10 ? "\n      " : "\n        ";
             }
             terminal_.print(out);
         }
@@ -563,61 +538,86 @@ namespace {
             return out;
         }
 
-        void guessed(Player& p, std::uint64_t n, std::string_view mark, std::chrono::milliseconds time) {
+        void guessed(Player& p, std::uint64_t n, std::string_view mark) {
             if (p.status != Status::Guessing || n <= p.guesses) {
                 return;
             }
             p.guesses = n;
-            p.time = time;
             if (mark == "ggggg") {
                 p.status = Status::Solved;
-                chat_.notice(std::format("🎉 {} found the Wordle in {} ({}/{})!", p.colored_name,
-                                         plural(n, "guess"), n, max_guesses));
-            } else if (!me_ || p.id != *me_) {
-                chat_.notice(std::format("{} {} ({}/{})", emoji(mark), p.colored_name, n, max_guesses));
+                chat_.notice(std::format("🎉 {} found today's Wordle in {} ({}/{})!", p.colored_name,
+                                         guesses(n), n, max_guesses));
+            } else if (p.id != chat_.id()) {
+                chat_.notice(std::format("{} {} ({}/{}){}", emoji(mark), p.colored_name, n, max_guesses,
+                                         puzzle_ ? "" : ": /game wordle to play today's Wordle too"));
             }
         }
 
         void lost(Player& p) {
-            if (p.status != Status::Guessing) {
+            if (p.status == Status::Lost) {
                 return;
             }
             p.status = Status::Lost;
-            chat_.notice(std::format("💀 {} is out of guesses!", p.colored_name));
+            p.guesses = max_guesses;
+            chat_.notice(std::format("💀 {} is out of guesses for today's Wordle!", p.colored_name));
         }
 
-        void end() {
-            on_ = false;
-            const std::string word = big(puzzle_.word);
+        // How today is going, as far as we heard.
+        void standings() const {
             if (players_.empty()) {
-                chat_.notice(std::format("🟩 Nobody played that Wordle. The word was {}.", word));
+                chat_.notice("Nobody has played today's Wordle yet.");
                 return;
             }
-            std::vector<const Player*> ranking;
+            std::string line;
+            for (const Player& p : players_) {
+                line += std::format("{}{} {}", line.empty() ? "" : ", ", p.colored_name,
+                                    p.status == Status::Solved ? std::format("{}/{}", p.guesses, max_guesses)
+                                    : p.status == Status::Lost ? std::string("X/6")
+                                                               : std::format("playing ({}/{})", p.guesses,
+                                                                             max_guesses));
+            }
+            chat_.notice(std::format("Today's Wordle so far: {}", line));
+        }
+
+        // Midnight: whoever found the word in the fewest guesses wins the day, and a new Wordle starts.
+        void end_day() {
+            std::vector<const Player*> solved;
             for (const Player& p : players_) {
                 if (p.status == Status::Solved) {
-                    ranking.push_back(&p);
+                    solved.push_back(&p);
                 }
             }
-            std::ranges::stable_sort(ranking, [](const Player* a, const Player* b) {
-                return a->guesses != b->guesses ? a->guesses < b->guesses : a->time < b->time;
-            });
-            if (ranking.empty()) {
-                chat_.notice(std::format("🟩 Wordle is over: nobody found {}.", word));
-                return;
+            const std::string word = puzzle_ ? std::format(" The word was {}.", big(puzzle_->word)) : "";
+            const std::string title =
+                puzzle_ ? std::format("Wordle {}", puzzle_->id) : std::format("the Wordle of {}", day_);
+            if (!solved.empty()) {
+                const std::uint64_t best = std::ranges::min(solved, {}, &Player::guesses)->guesses;
+                std::string winners;
+                std::string others;
+                int tied = 0;
+                for (const Player* p : solved) {
+                    if (p->guesses == best) {
+                        winners += std::format("{}{}", winners.empty() ? "" : " and ", p->colored_name);
+                        ++tied;
+                        games_.add_win(game_name, p->id, p->name);
+                    } else {
+                        others += std::format("{}{} {}/{}", others.empty() ? "" : ", ", p->colored_name, p->guesses,
+                                              max_guesses);
+                    }
+                }
+                chat_.notice(std::format("🏆 {} win{} {} in {}!{}{}", winners, tied == 1 ? "s" : "", title,
+                                         guesses(best), word,
+                                         others.empty() ? "" : std::format(" Then: {}.", others)));
+            } else if (!players_.empty()) {
+                chat_.notice(std::format("🟩 Nobody found {}.{}", title, word));
             }
-            const Player& winner = *ranking.front();
-            const int wins = games_.add_win(game_name, winner.id, winner.name);
-            std::string others;
-            for (std::size_t i = 1; i < ranking.size(); ++i) {
-                others += std::format("{}{} {}/{}", others.empty() ? "" : ", ", ranking[i]->colored_name,
-                                      ranking[i]->guesses, max_guesses);
+            if (puzzle_ || !players_.empty()) {
+                chat_.notice("🟩 A new Wordle is out: /game wordle to play it.");
             }
-            chat_.notice(std::format("🏆 {} wins the Wordle {} in {} ({:.1f} seconds)! The word was {}.{}{}",
-                                     winner.colored_name, puzzle_.id, plural(winner.guesses, "guess"),
-                                     static_cast<double>(winner.time.count()) / 1000, word,
-                                     others.empty() ? "" : std::format(" Then: {}.", others),
-                                     wins > 1 ? std::format(" That's {} wins.", wins) : ""));
+            puzzle_.reset();
+            players_.clear();
+            board_.clear();
+            pending_.reset();
         }
 
         void send(std::string_view event) {
@@ -627,20 +627,17 @@ namespace {
         Chat& chat_;
         Screen& terminal_;
         Games& games_;
-        std::mt19937_64 rng_;
 
-        bool on_ = false;
-        std::uint64_t round_ = 0;
-        Puzzle puzzle_;
-        clock::time_point started_;
+        // Today, as a date: when it changes, it is midnight.
+        std::string day_;
+        // Today's word, once it came.
+        std::optional<Puzzle> puzzle_;
+        // Who played today, us included, as far as we heard.
         std::vector<Player> players_;
-        // Our id among the players, once we play the round.
-        std::optional<std::uint64_t> me_;
         // Our guesses and their marks.
         std::vector<std::pair<std::string, std::string>> board_;
-        // We played this day's Wordle to its end before the round: we only watch it.
-        bool done_ = false;
-        bool warned_ = false;
+        // A guess typed before the word came.
+        std::optional<std::string> pending_;
 
         // The word coming from the Times, from the fetcher's thread.
         std::mutex fetch_mutex_;
