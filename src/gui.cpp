@@ -412,6 +412,17 @@ bool Gui::show_image(std::string_view line, int width, int height, const std::ve
     return true;
 }
 
+bool Gui::show_file(std::string_view line, std::size_t index, std::string_view name, std::string_view size) {
+    const std::string js =
+        std::format("zchat.file({},{},{},{})", json_string(line), index, json_string(name), json_string(size));
+    std::scoped_lock lock(impl_->mutex);
+    if (!impl_->ready) {
+        return false;
+    }
+    impl_->eval(js);
+    return true;
+}
+
 void Gui::interrupt() {
     {
         std::scoped_lock lock(impl_->mutex);

@@ -26,7 +26,7 @@ namespace {
             // a chunk, what its piece has of those).
             const std::size_t max = type == PacketType::Image ? max_image_bytes : max_chunk_bytes;
             const auto nl = text.find('\n');
-            std::string out = text::sanitize(text.substr(0, nl), 64);
+            std::string out = text::sanitize(text.substr(0, nl), max_image_head_bytes);
             if (nl == std::string_view::npos) {
                 return out;
             }

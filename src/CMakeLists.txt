@@ -6,6 +6,7 @@ target_sources(zchat PUBLIC
     color.cpp
     config.cpp
     dice.cpp
+    file.cpp
     game.cpp
     history.cpp
     image.cpp

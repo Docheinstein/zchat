@@ -1,5 +1,6 @@
 #include "chat.hpp"
 #include "config.hpp"
+#include "file.hpp"
 #include "game.hpp"
 #ifdef ZCHAT_GUI
 #include "gui.hpp"
@@ -160,6 +161,9 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /emoji NAME  send a saved emoji (/emoji alone lists yours)");
     chat.notice("  /removeemoji NAME  delete a saved emoji");
     chat.notice("               (or drop an image file on the window, then press Enter)");
+    chat.notice("  /file FILE   send a file of any kind, for everyone to download");
+    chat.notice("               (or drop any other file on the window, then press Enter)");
+    chat.notice("  /save N      save file N from the chat in your downloads folder (/save alone lists them)");
     chat.notice("  @NAME        tag someone in a message: they hear a sound");
     chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
     chat.notice("  @everyone    tag all the people in the chat: they all hear a sound");
@@ -439,6 +443,58 @@ void send_image(zchat::Chat& chat, std::string_view arg) {
     chat.send_picture(*picture);
 }
 
+void send_file(zchat::Chat& chat, std::string_view arg) {
+    if (arg.empty()) {
+        chat.notice(std::format("Use /file FILE to send a file of any kind (up to {}), or drop it on the window and "
+                                "press Enter. Everyone can then save it with /save.",
+                                zchat::file::format_size(zchat::file::max_bytes())));
+        return;
+    }
+    const auto text = zchat::file::encode(zchat::image::parse_path(arg));
+    if (!text) {
+        chat.notice(std::format("Cannot send {}: {}", zchat::text::sanitize(arg, 200), text.error()));
+        return;
+    }
+    chat.send_file(*text);
+}
+
+void save_file(zchat::Chat& chat, std::string_view arg) {
+    const std::size_t count = chat.received_files();
+    if (arg.empty()) {
+        if (count == 0) {
+            chat.notice("No files in the chat yet. When somebody sends one, /save N saves it in your downloads "
+                        "folder.");
+            return;
+        }
+        chat.notice("The files in the chat (/save N saves one in your downloads folder):");
+        for (std::size_t i = 1; i <= count; ++i) {
+            if (const auto f = chat.received_file(i)) {
+                std::error_code ec;
+                const auto size = std::filesystem::file_size(f->path, ec);
+                chat.notice(std::format("  {}  {} ({})", i, f->name, zchat::file::format_size(ec ? 0 : size)));
+            }
+        }
+        return;
+    }
+    std::size_t index = 0;
+    const auto [ptr, ec] = std::from_chars(arg.data(), arg.data() + arg.size(), index);
+    const auto f = ec == std::errc {} && ptr == arg.data() + arg.size() ? chat.received_file(index) : std::nullopt;
+    if (!f) {
+        chat.notice(count == 0 ? std::string("No files in the chat yet.")
+                               : std::format("There is no file {}: use a number from 1 to {} (/save lists them).",
+                                             zchat::text::sanitize(arg, 32), count));
+        return;
+    }
+    const auto saved = zchat::file::copy_into(f->path, zchat::file::downloads_dir(), f->name);
+    if (!saved) {
+        chat.notice(std::format("Cannot save {}: {}", f->name, saved.error()));
+        return;
+    }
+    const auto u8 = saved->u8string();
+    const std::string where(reinterpret_cast<const char*>(u8.data()), u8.size());
+    chat.notice(std::format("Saved {} to {}", f->name, zchat::text::sanitize(where, 500)));
+}
+
 // Emoji: pictures saved under a name, already drawn, in the emoji folder of the config folder, one NAME.art file
 // each (the drawing as it is sent), so /emoji NAME sends them without the image file.
 constexpr std::size_t max_emoji_name = 32;
@@ -638,10 +694,11 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
     terminal.set_self([&chat] {
         return zchat::Screen::Mention {chat.name(), zchat::ansi_foreground(chat.color())};
     });
-    // Dropping an image file on the window types its path: show it as the /image command it becomes, which can
-    // still be changed (e.g. given a size) before pressing Enter.
+    // Dropping a file on the window types its path: show it as the /image command it becomes, which can still be
+    // changed (e.g. given a size) before pressing Enter; or /file, for other kinds of file.
     terminal.set_rewriter([](std::string_view line) -> std::optional<std::string> {
-        if (!zchat::image::is_dropped_image(line)) {
+        const bool picture = zchat::image::is_dropped_image(line);
+        if (!picture && !zchat::file::is_dropped_file(line)) {
             return std::nullopt;
         }
         while (!line.empty() && line.front() == ' ') {
@@ -650,7 +707,7 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
         while (!line.empty() && line.back() == ' ') {
             line.remove_suffix(1);
         }
-        return std::format("/image {}", line);
+        return std::format("{} {}", picture ? "/image" : "/file", line);
     });
     zchat::game::Games games(chat, terminal);
     chat.start();
@@ -704,6 +761,10 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             forget_nick(chat, rng);
         } else if (input == "/image" || input.starts_with("/image ")) {
             send_image(chat, input.substr(std::min(input.size(), std::string_view("/image ").size())));
+        } else if (input == "/file" || input.starts_with("/file ")) {
+            send_file(chat, input.substr(std::min(input.size(), std::string_view("/file ").size())));
+        } else if (input == "/save" || input.starts_with("/save ")) {
+            save_file(chat, input.substr(std::min(input.size(), std::string_view("/save ").size())));
         } else if (input == "/ascii" || input.starts_with("/ascii ")) {
             send_ascii(chat, input.substr(std::min(input.size(), std::string_view("/ascii ").size())));
         } else if (input == "/addemoji" || input.starts_with("/addemoji ")) {
@@ -728,6 +789,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             // Dropping a file on a terminal types its path: send the picture instead of the path. Checked before
             // the unknown commands, as a path can start with '/' too.
             send_image(chat, input);
+        } else if (zchat::file::is_dropped_file(input)) {
+            send_file(chat, input);
         } else if (input.starts_with('/') && !input.starts_with("//")) {
             chat.notice(std::format("Unknown command {} (try /help)", zchat::text::sanitize(input, 64)));
         } else {

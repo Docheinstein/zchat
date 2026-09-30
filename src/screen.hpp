@@ -72,6 +72,16 @@ public:
         return false;
     }
 
+    // Shows a received file, after a line (e.g. who sent it), with a way to download it: typing "/save INDEX". Returns
+    // false where that cannot be offered but by printing the command (a terminal). Thread-safe.
+    virtual bool show_file(std::string_view line, std::size_t index, std::string_view name, std::string_view size) {
+        (void)line;
+        (void)index;
+        (void)name;
+        (void)size;
+        return false;
+    }
+
     // Makes read_line() return nullopt right away, now and from then on. Thread-safe.
     virtual void interrupt() = 0;
 };

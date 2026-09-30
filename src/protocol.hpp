@@ -25,6 +25,7 @@ enum class PacketType : char {
     // and the GIF, or "anim W H" and a line per frame, see image::encode_picture().
     // Windows show it as it is; terminals draw it with characters. Older versions do not know 'I' and ignore it.
     // Also "png W H" and "bmp W H", with the file: pictures are sent as they are whenever they can be.
+    // Or a file of any kind, to download: "file SIZE NAME", see file::encode(). Older versions ignore it.
     Image = 'I',
     // An Image too big for one datagram, offered for download: "ID BYTES COUNT PORT", its id, the size of its text,
     // the number of Chunks it makes, and the TCP port of the sender to download it from, see Chat::send_picture().
@@ -57,6 +58,8 @@ inline constexpr std::size_t max_art_rows = 32;
 inline constexpr std::size_t max_art_row_bytes = 5 * max_art_cols;
 // The size of an Image's text: files up to about 36 MB. Bigger than max_packet_image_bytes, it is offered instead.
 inline constexpr std::size_t max_image_bytes = 48'000'000;
+// The size of the first line of an Image's text (e.g. "jpeg W H").
+inline constexpr std::size_t max_image_head_bytes = 320;
 // An Image that fits in one datagram (at most 64 KB) with the rest of the packet.
 inline constexpr std::size_t max_packet_image_bytes = 48'000;
 // The size of a Chunk's piece: small, since a datagram is lost when any of the frames it is sent in is (about six

@@ -1,6 +1,7 @@
 #include "chat.hpp"
 
 #include "cipher.hpp"
+#include "file.hpp"
 #include "image.hpp"
 #include "markup.hpp"
 #include "text.hpp"
@@ -11,6 +12,7 @@
 #include <charconv>
 #include <ctime>
 #include <format>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -116,10 +118,14 @@ Chat::Chat(std::uint16_t port, std::string name, std::optional<Color> color, Scr
         listener_.emplace();
     } catch (const std::exception&) {
     }
+    std::error_code ec;
+    files_dir_ = std::filesystem::temp_directory_path(ec) / "zchat-files" / std::format("{:x}", id_.load());
 }
 
 Chat::~Chat() {
     stop();
+    std::error_code ec;
+    std::filesystem::remove_all(files_dir_, ec);
 }
 
 void Chat::start() {
@@ -213,6 +219,24 @@ void Chat::send_picture(std::string_view picture) {
     }
     send(PacketType::Offer,
          std::format("{} {} {} {}", picture_id, clean.size(), count, listener_ ? listener_->port() : 0));
+}
+
+void Chat::send_file(std::string_view file) {
+    // Files travel like pictures: print_picture() tells them apart.
+    send_picture(file);
+}
+
+std::optional<Chat::ReceivedFile> Chat::received_file(std::size_t index) const {
+    std::scoped_lock lock(files_mutex_);
+    if (index == 0 || index > files_.size()) {
+        return std::nullopt;
+    }
+    return files_[index - 1];
+}
+
+std::size_t Chat::received_files() const {
+    std::scoped_lock lock(files_mutex_);
+    return files_.size();
 }
 
 void Chat::send_chunk(std::uint64_t picture, std::size_t index, std::size_t count, std::string_view piece) {
@@ -418,7 +442,8 @@ void Chat::request_missing_chunks() {
             continue;
         }
         if (now - in.last_piece > chunk_give_up) {
-            notice(std::format("A picture from {} did not arrive whole.", colored_name(it->first.first, in.name)));
+            notice(
+                std::format("A picture or file from {} did not arrive whole.", colored_name(it->first.first, in.name)));
             it = incoming_.erase(it);
             continue;
         }
@@ -594,7 +619,11 @@ void Chat::print_art(std::uint64_t id, std::string_view name, std::string_view a
     terminal_.print(out);
 }
 
-void Chat::print_picture(std::uint64_t id, std::string_view name, std::string_view text) const {
+void Chat::print_picture(std::uint64_t id, std::string_view name, std::string_view text) {
+    if (file::is_file(text)) {
+        print_file(id, name, text);
+        return;
+    }
     const auto picture = image::parse_picture(text);
     if (!picture) {
         return;
@@ -614,6 +643,41 @@ void Chat::print_picture(std::uint64_t id, std::string_view name, std::string_vi
     if (const auto art = image::to_ascii_data(picture->first, cols, max_art_rows)) {
         print_art(id, name, *art);
     }
+}
+
+void Chat::print_file(std::uint64_t id, std::string_view name, std::string_view text) {
+    const auto received = file::parse(text);
+    if (!received) {
+        return;
+    }
+    const std::string who = colored_name(id, name);
+    std::size_t index = 0;
+    {
+        std::scoped_lock lock(files_mutex_);
+        // A folder for each, so it keeps its name even when another has the same.
+        const auto dir = files_dir_ / std::to_string(files_.size() + 1);
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        const auto path = dir / std::filesystem::path(std::u8string(received->name.begin(), received->name.end()));
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out.write(received->data.data(), static_cast<std::streamsize>(received->data.size()));
+        if (out.flush()) {
+            files_.push_back({path, received->name});
+            index = files_.size();
+        }
+    }
+    if (index == 0) {
+        notice(std::format("A file from {} could not be kept: {}", who, received->name));
+        return;
+    }
+    const std::string time = terminal_.colors() ? std::format("[90m{}[0m", timestamp()) : timestamp();
+    const std::string size = file::format_size(received->data.size());
+    if (terminal_.show_file(std::format("{} {}:", time, who), index, received->name, size)) {
+        return;
+    }
+    const std::string hint = std::format("/save {} to download", index);
+    terminal_.print(std::format("{} {}: file {} ({}), {}", time, who, received->name, size,
+                                terminal_.colors() ? std::format("[90m{}[0m", hint) : hint));
 }
 
 std::vector<std::string> Chat::peers() const {
