@@ -1,6 +1,7 @@
 #include "gui.hpp"
 
 #include "config.hpp"
+#include "image.hpp"
 #include "ui_html.hpp"
 
 #include <cctype>
@@ -195,6 +196,7 @@ struct Gui::Impl {
 
     std::function<std::vector<Mention>()> mention_source;
     std::function<Mention()> self_source;
+    std::function<std::optional<std::string>(std::string_view)> avatar_source;
     std::function<std::optional<std::string>(std::string_view)> rewriter;
 
     // Runs JavaScript in the page, from any thread.
@@ -263,7 +265,7 @@ Gui::Gui() {
         std::string out = "[";
         for (const auto& m : people) {
             out += out.size() > 1 ? "," : "";
-            out += "[" + json_string(m.name) + "," + json_string(m.style) + "]";
+            out += "[" + json_string(m.name) + "," + json_string(m.style) + "," + json_string(m.avatar) + "]";
         }
         return out + "]";
     });
@@ -273,7 +275,30 @@ Gui::Gui() {
             return "null";
         }
         const Mention self = impl_->self_source();
-        return "[" + json_string(self.name) + "," + json_string(self.style) + "]";
+        return "[" + json_string(self.name) + "," + json_string(self.style) + "," + json_string(self.avatar) + "]";
+    });
+    // An avatar, by hash: [[src, delay], ...] as for zchat.image(), or null when it is not here (yet).
+    view.bind("zchatAvatar", [this](const std::string& args) -> std::string {
+        const auto strings = json_strings(args);
+        std::function<std::optional<std::string>(std::string_view)> source;
+        {
+            std::scoped_lock lock(impl_->mutex);
+            source = impl_->avatar_source;
+        }
+        if (strings.empty() || !source) {
+            return "null";
+        }
+        const auto text = source(strings.front());
+        const auto picture = text ? image::parse_picture(*text) : std::nullopt;
+        if (!picture) {
+            return "null";
+        }
+        std::string list = "[";
+        for (const auto& frame : picture->frames) {
+            list += list.size() > 1 ? "," : "";
+            list += std::format("[\"data:{};base64,{}\",{}]", frame.mime, frame.base64, frame.delay_ms);
+        }
+        return list + "]";
     });
     view.bind("zchatRewrite", [this](const std::string& args) -> std::string {
         const auto strings = json_strings(args);
@@ -380,6 +405,11 @@ void Gui::set_mentions(std::function<std::vector<Mention>()> source) {
 void Gui::set_self(std::function<Mention()> source) {
     std::scoped_lock lock(impl_->mutex);
     impl_->self_source = std::move(source);
+}
+
+void Gui::set_avatars(std::function<std::optional<std::string>(std::string_view hash)> source) {
+    std::scoped_lock lock(impl_->mutex);
+    impl_->avatar_source = std::move(source);
 }
 
 void Gui::set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter) {

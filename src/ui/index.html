@@ -63,6 +63,14 @@
   #me .status { color: var(--muted); font-size: 11px; }
   #me .status::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     background: #3fb950; margin-right: 5px; vertical-align: 1px; }
+  /* An avatar picture fills its circle, cropped to it. */
+  .avatar { overflow: hidden; }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #mentions div { display: flex; align-items: center; gap: 8px; }
+  #mentions .avatar { width: 18px; height: 18px; font-size: 10px; }
+  #profile .preview .avatar { width: 48px; height: 48px; font-size: 20px; }
+  #profile .avatar-row { display: flex; gap: 8px; margin-bottom: 4px; }
+  #profile .note { color: var(--muted); font-size: 11px; margin-bottom: 12px; min-height: 14px; }
   main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   #log {
     flex: 1; overflow-y: auto; padding: 10px 14px; font-family: var(--font); font-size: var(--size);
@@ -174,6 +182,13 @@
     <button id="profile-random" title="Pick a random bright color">Random</button>
   </div>
   <div class="swatches" id="profile-swatches"></div>
+  <label>Avatar</label>
+  <div class="avatar-row">
+    <button id="profile-upload">Upload image…</button>
+    <button id="profile-remove">Remove</button>
+    <input type="file" id="profile-file" accept="image/*" hidden>
+  </div>
+  <div class="note" id="profile-note">Everybody sees it; a GIF plays. It changes right away.</div>
   <div class="buttons"><button id="profile-cancel">Cancel</button><button class="primary" id="profile-save">Save</button></div>
 </div>
 <div id="drop">Drop a picture or a file to send it</div>
@@ -181,7 +196,7 @@
 <script>
 "use strict";
 // The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
-// zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatRewrite(line), zchatDrop(name, base64), zchatSettings()
+// zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatRewrite(line), zchatDrop(name, base64), zchatSettings()
 // and zchatSaveSettings(size, font).
 const log = document.getElementById("log");
 const input = document.getElementById("input");
@@ -383,18 +398,51 @@ function styleColor(style) {
 async function mentions() {
   try { return await window.zchatMentions(); } catch { return []; }
 }
-function setAvatar(avatar, name, style) {
-  avatar.style.background = styleColor(style) || "#888";
-  avatar.textContent = name.trim().charAt(0).toUpperCase();
+// Avatars: the picture of a hash, from zchatAvatar(), kept once it is here (until then, asked for again).
+const avatarFrames = new Map();
+async function framesOf(hash) {
+  if (avatarFrames.has(hash)) return avatarFrames.get(hash);
+  let frames = null;
+  try { frames = await window.zchatAvatar(hash); } catch {}
+  if (frames) avatarFrames.set(hash, frames);
+  return frames;
 }
+// A circle in the color, with the initial; or the avatar picture, when there is one.
+function paintAvatar(avatar, name, color, hash) {
+  avatar.style.background = color;
+  const key = name + "\n" + color + "\n" + (hash || "");
+  if (avatar._key === key && (!hash || avatar._img)) return;
+  avatar._key = key;
+  if (!avatar._img || avatar._hash !== hash) {
+    avatar._img = null;
+    avatar._hash = hash;
+    avatar.textContent = name.trim().charAt(0).toUpperCase();
+  }
+  if (!hash) return;
+  framesOf(hash).then(frames => {
+    if (!frames || avatar._key !== key || avatar._img) return;
+    const img = document.createElement("img");
+    img.alt = "";
+    animate(img, frames);
+    avatar.textContent = "";
+    avatar.append(img);
+    avatar._img = img;
+  });
+}
+function setAvatar(avatar, name, style, hash) {
+  paintAvatar(avatar, name, styleColor(style) || "#888", hash);
+}
+let selfAvatar = "";
 // Our own name and avatar, above the channels.
 async function refreshSelf() {
   let self = null;
   try { self = await window.zchatSelf(); } catch {}
   if (!self) return;
-  const [name, style] = self;
+  const [name, style, avatar] = self;
+  selfAvatar = avatar || "";
   const me = document.getElementById("me");
-  setAvatar(me.querySelector(".avatar"), name, style);
+  setAvatar(me.querySelector(".avatar"), name, style, selfAvatar);
+  if (profile.classList.contains("open")) showProfilePreview();
   const label = me.querySelector(".name");
   label.textContent = name;
   label.title = name;
@@ -411,9 +459,7 @@ function toHex(rgb) {
 }
 function showProfilePreview() {
   const name = profileName.value.trim() || current.name;
-  const avatar = profile.querySelector(".preview .avatar");
-  avatar.style.background = profileColor.value;
-  avatar.textContent = name.charAt(0).toUpperCase();
+  paintAvatar(profile.querySelector(".preview .avatar"), name, profileColor.value, selfAvatar);
   const label = profile.querySelector(".preview .name");
   label.textContent = name;
   label.style.color = profileColor.value;
@@ -459,6 +505,34 @@ document.getElementById("profile-random").onclick = () => {
   profileColor.value = "#" + [f(0), f(8), f(4)].map(v => v.toString(16).padStart(2, "0")).join("");
   showProfilePreview();
 };
+// A file chosen is saved where zchat can read it (like a dropped one), then set with /avatar.
+const profileNote = document.getElementById("profile-note");
+function afterAvatarChange() {
+  // Made into an avatar by zchat, which takes a moment for a big GIF.
+  for (const ms of [200, 700, 1500, 3000]) setTimeout(refreshSelf, ms);
+}
+document.getElementById("profile-upload").onclick = () => document.getElementById("profile-file").click();
+document.getElementById("profile-file").onchange = e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  profileNote.textContent = "Setting " + file.name + "…";
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const base64 = String(reader.result).replace(/^data:[^,]*,/, "");
+    let path = null;
+    try { path = await window.zchatDrop(file.name, base64); } catch {}
+    if (!path) { profileNote.textContent = "Could not read " + file.name + "."; return; }
+    window.zchatSend('/avatar "' + path + '"');
+    profileNote.textContent = "Everybody sees it; a GIF plays. It changes right away.";
+    afterAvatarChange();
+  };
+  reader.readAsDataURL(file);
+};
+document.getElementById("profile-remove").onclick = () => {
+  window.zchatSend("/avatar none");
+  afterAvatarChange();
+};
 document.getElementById("profile-save").onclick = saveProfile;
 document.getElementById("profile-cancel").onclick = closeProfile;
 profile.addEventListener("keydown", e => {
@@ -471,18 +545,26 @@ document.addEventListener("mousedown", e => {
   }
 });
 
+let peopleShown = "";
 async function refreshPeople() {
   refreshSelf();
-  const people = await mentions();
+  const people = (await mentions()).filter(([name]) => name !== "everyone");
   const box = document.getElementById("people");
+  // Rebuilt only when it changes, so avatars that play keep playing.
+  const shown = JSON.stringify(people);
+  if (shown === peopleShown) {
+    // Avatars that were not here yet.
+    [...box.children].forEach((item, i) => setAvatar(item.firstChild, ...people[i]));
+    return;
+  }
+  peopleShown = shown;
   box.textContent = "";
-  for (const [name, style] of people) {
-    if (name === "everyone") continue;
+  for (const [name, style, hash] of people) {
     const item = document.createElement("div");
     item.className = "item";
     const avatar = document.createElement("span");
     avatar.className = "avatar";
-    setAvatar(avatar, name, style);
+    setAvatar(avatar, name, style, hash);
     const label = document.createElement("span");
     label.textContent = name;
     label.style.color = styleColor(style);
@@ -513,9 +595,14 @@ async function updateMentions() {
   atStart = at;
   selected = Math.min(selected, list.length - 1);
   mentionsBox.textContent = "";
-  list.forEach(([name, style], i) => {
+  list.forEach(([name, style, hash], i) => {
     const d = document.createElement("div");
-    d.textContent = "@" + name;
+    const avatar = document.createElement("span");
+    avatar.className = "avatar";
+    setAvatar(avatar, name, style, hash);
+    const label = document.createElement("span");
+    label.textContent = "@" + name;
+    d.append(avatar, label);
     d.style.color = styleColor(style);
     if (i === selected) d.className = "selected";
     d.onmousedown = e => { e.preventDefault(); acceptMention(i); };
@@ -574,8 +661,11 @@ input.addEventListener("input", async e => {
   }
 });
 input.addEventListener("blur", () => setTimeout(closeMentions, 150));
+// Typing anywhere types in the input box, except in another field (like the name in the profile panel).
 document.addEventListener("keydown", e => {
-  if (document.activeElement !== input && !e.ctrlKey && !e.metaKey && e.key.length === 1) input.focus();
+  const el = document.activeElement;
+  const field = el && el !== input && (el.matches("input, textarea, select") || el.isContentEditable);
+  if (el !== input && !field && !e.ctrlKey && !e.metaKey && e.key.length === 1) input.focus();
 });
 
 // --- Dropping a file: saved where zchat can read it, then the command sending it is typed: /image for a picture,

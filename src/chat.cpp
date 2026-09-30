@@ -45,6 +45,18 @@ namespace {
     constexpr auto connect_timeout = 3s;
     constexpr auto transfer_timeout = 15s;
     constexpr std::size_t max_outgoing_pictures = 4;
+    // Avatars kept, and how long before trying again to download one that failed.
+    constexpr std::size_t max_avatars = 64;
+    constexpr auto avatar_retry = 30s;
+
+    // FNV-1a: tells avatars apart, so each is downloaded once.
+    std::uint64_t avatar_hash(std::string_view s) {
+        std::uint64_t h = 0xcbf29ce484222325ull;
+        for (const char c : s) {
+            h = (h ^ static_cast<unsigned char>(c)) * 0x100000001b3ull;
+        }
+        return h ? h : 1;
+    }
     constexpr auto outgoing_picture_lifetime = 2min;
     constexpr std::size_t max_incoming_pictures = 8;
     constexpr std::size_t max_received_pictures = 64;
@@ -275,9 +287,22 @@ void Chat::serve_pictures(std::stop_token stop) {
 }
 
 void Chat::serve_picture(net::TcpStream& stream, std::stop_token stop) {
-    // "GET ID": the picture, scrambled like packets, and the connection closed.
+    // "GET ID": the picture, scrambled like packets, and the connection closed. "AVATAR HASH": our avatar.
     const auto request = stream.read_line(64, 5s, stop);
     std::uint64_t picture = 0;
+    if (request && request->starts_with("AVATAR ")) {
+        std::shared_ptr<const std::string> avatar;
+        {
+            std::scoped_lock lock(avatars_mutex_);
+            if (own_avatar_ && *request == std::format("AVATAR {:016x}", own_avatar_hash_)) {
+                avatar = own_avatar_;
+            }
+        }
+        if (avatar) {
+            stream.send_all(cipher::scramble(*avatar), transfer_timeout, stop);
+        }
+        return;
+    }
     if (!request || !request->starts_with("GET ")) {
         return;
     }
@@ -493,6 +518,135 @@ void Chat::resend_chunks(std::string_view request) {
     }
 }
 
+void Chat::set_avatar(std::optional<std::string> picture) {
+    {
+        std::scoped_lock lock(avatars_mutex_);
+        if (picture) {
+            own_avatar_hash_ = avatar_hash(*picture);
+            own_avatar_ = std::make_shared<const std::string>(std::move(*picture));
+            avatars_[own_avatar_hash_] = own_avatar_;
+        } else {
+            own_avatar_hash_ = 0;
+            own_avatar_.reset();
+        }
+    }
+    // The others see it on our next heartbeat: this one.
+    send(PacketType::Here);
+}
+
+std::string Chat::own_avatar_hash() const {
+    std::scoped_lock lock(avatars_mutex_);
+    return own_avatar_hash_ ? std::format("{:016x}", own_avatar_hash_) : std::string();
+}
+
+std::optional<std::string> Chat::avatar(std::string_view hash) const {
+    std::uint64_t h = 0;
+    if (const auto [ptr, ec] = std::from_chars(hash.data(), hash.data() + hash.size(), h, 16);
+        ec != std::errc {} || ptr != hash.data() + hash.size()) {
+        return std::nullopt;
+    }
+    std::scoped_lock lock(avatars_mutex_);
+    const auto it = avatars_.find(h);
+    return it != avatars_.end() ? std::optional<std::string>(*it->second) : std::nullopt;
+}
+
+std::string Chat::presence_text() const {
+    std::scoped_lock lock(avatars_mutex_);
+    if (!own_avatar_ || !listener_) {
+        return {};
+    }
+    return std::format("avatar {:016x} {} {}", own_avatar_hash_, own_avatar_->size(), listener_->port());
+}
+
+void Chat::receive_presence(std::uint64_t sender, std::string_view text, std::uint32_t from) {
+    // "avatar HASH BYTES PORT", or nothing for no avatar (and from older versions).
+    std::uint64_t hash = 0;
+    std::optional<std::vector<std::uint64_t>> numbers;
+    if (text.starts_with("avatar ")) {
+        text.remove_prefix(7);
+        const auto space = text.find(' ');
+        const std::string_view hex = text.substr(0, space);
+        if (const auto [ptr, ec] = std::from_chars(hex.data(), hex.data() + hex.size(), hash, 16);
+            ec != std::errc {} || ptr != hex.data() + hex.size() || space == std::string_view::npos) {
+            return;
+        }
+        numbers = parse_numbers(text.substr(space + 1));
+        if (!numbers || numbers->size() != 2 || (*numbers)[0] > max_avatar_bytes || (*numbers)[1] == 0 ||
+            (*numbers)[1] > 65535) {
+            return;
+        }
+    }
+    {
+        std::scoped_lock lock(peers_mutex_);
+        if (const auto it = peers_.find(sender); it != peers_.end()) {
+            it->second.avatar = hash;
+        }
+    }
+    if (!hash || from == 0) {
+        return;
+    }
+    {
+        std::scoped_lock lock(avatars_mutex_);
+        if (avatars_.contains(hash) || avatars_fetching_.contains(hash)) {
+            return;
+        }
+        if (const auto failed = avatars_failed_.find(hash);
+            failed != avatars_failed_.end() && clock::now() - failed->second < avatar_retry) {
+            return;
+        }
+        avatars_fetching_.insert(hash);
+    }
+    const auto bytes = static_cast<std::size_t>((*numbers)[0]);
+    const auto port = static_cast<std::uint16_t>((*numbers)[1]);
+    if (!start_transfer([this, hash, from, port, bytes](std::stop_token stop) {
+            download_avatar(hash, from, port, bytes, stop);
+        })) {
+        std::scoped_lock lock(avatars_mutex_);
+        avatars_fetching_.erase(hash);
+    }
+}
+
+void Chat::download_avatar(std::uint64_t hash, std::uint32_t from, std::uint16_t port, std::size_t bytes,
+                           std::stop_token stop) {
+    std::optional<std::string> text;
+    if (auto stream = net::TcpStream::connect(from, port, connect_timeout);
+        stream && stream->send_all(std::format("AVATAR {:016x}\n", hash), connect_timeout, stop)) {
+        if (const auto data = stream->read_all(bytes + 64, transfer_timeout, stop)) {
+            text = cipher::unscramble(*data);
+        }
+    }
+    // Only a picture, and the one announced.
+    if (text) {
+        Packet packet;
+        packet.type = PacketType::Image;
+        packet.name = "avatar";
+        packet.text = *text;
+        const auto clean = decode(encode(packet));
+        if (text->size() != bytes || avatar_hash(*text) != hash || !clean || clean->text != *text ||
+            !image::parse_picture(*text)) {
+            text.reset();
+        }
+    }
+    std::scoped_lock lock(avatars_mutex_);
+    avatars_fetching_.erase(hash);
+    if (!text) {
+        avatars_failed_[hash] = clock::now();
+        return;
+    }
+    // A few kept, not every one ever seen.
+    while (avatars_.size() >= max_avatars) {
+        auto victim = avatars_.begin();
+        if (victim->first == own_avatar_hash_) {
+            ++victim;
+        }
+        if (victim == avatars_.end()) {
+            break;
+        }
+        avatars_.erase(victim);
+    }
+    avatars_[hash] = std::make_shared<const std::string>(std::move(*text));
+}
+
 void Chat::set_name(std::string name) {
     {
         std::scoped_lock lock(name_mutex_);
@@ -697,7 +851,8 @@ std::vector<Screen::Mention> Chat::mentionable() const {
     {
         std::scoped_lock lock(peers_mutex_);
         for (const auto& [id, peer] : peers_) {
-            people.push_back({peer.name, terminal_.colors() ? ansi_foreground(color_of_id(id)) : std::string()});
+            people.push_back({peer.name, terminal_.colors() ? ansi_foreground(color_of_id(id)) : std::string(),
+                              peer.avatar ? std::format("{:016x}", peer.avatar) : std::string()});
         }
     }
     std::ranges::sort(people, {}, [](const Screen::Mention& m) {
@@ -740,7 +895,9 @@ void Chat::send(PacketType type, std::string_view text, bool once) {
     packet.sender = id_;
     packet.seq = ++seq_;
     packet.name = name();
-    packet.text = std::string(text);
+    // Heartbeats tell about our avatar.
+    packet.text = text.empty() && (type == PacketType::Here || type == PacketType::Join) ? presence_text()
+                                                                                        : std::string(text);
     socket_.broadcast(cipher::scramble(encode(packet)), once);
 }
 
@@ -847,6 +1004,9 @@ void Chat::handle(const Packet& packet, std::uint32_t from) {
         break;
     }
 
+    if (packet.type == PacketType::Join || packet.type == PacketType::Here) {
+        receive_presence(packet.sender, packet.text, from);
+    }
     switch (packet.type) {
     case PacketType::Join:
         // Let the newcomer know we are here.

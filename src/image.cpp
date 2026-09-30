@@ -1366,6 +1366,75 @@ std::expected<std::string, std::string> encode_picture(const std::filesystem::pa
     }
 }
 
+namespace {
+
+    // The middle square of an RGBA image.
+    std::vector<unsigned char> crop_square(const unsigned char* rgba, int w, int h) {
+        const int side = std::min(w, h);
+        const int x0 = (w - side) / 2;
+        const int y0 = (h - side) / 2;
+        std::vector<unsigned char> out(static_cast<std::size_t>(side) * side * 4);
+        for (int y = 0; y < side; ++y) {
+            std::copy_n(rgba + (static_cast<std::size_t>(y0 + y) * w + x0) * 4, static_cast<std::size_t>(side) * 4,
+                        out.data() + static_cast<std::size_t>(y) * side * 4);
+        }
+        return out;
+    }
+
+    constexpr std::size_t max_avatar_gif_bytes = 2 * 1024 * 1024;
+
+} // namespace
+
+std::expected<std::string, std::string> encode_avatar(const std::filesystem::path& path) {
+    const auto data = read_image_file(path);
+    if (!data) {
+        return std::unexpected(data.error());
+    }
+    const auto image = decode_image(*data);
+    if (!image) {
+        return std::unexpected(image.error());
+    }
+    const int frames = gif_frames(*data);
+    if (frames > 1) {
+        // As it is: it plays by itself, at its best.
+        if (data->size() <= max_avatar_gif_bytes) {
+            std::string text = "gif 128 128\n";
+            text += base64_encode(*data);
+            if (text.size() <= max_avatar_bytes) {
+                return text;
+            }
+        }
+        // Or square JPEG frames, all of them, smaller until they fit.
+        const bool too_long = static_cast<long long>(image->width) * image->height * frames > max_pixels;
+        if (const auto a = too_long ? std::nullopt : decode_animation(*data); a && a->frames > 1) {
+            const int side = std::min(a->width, a->height);
+            const std::size_t frame_bytes = static_cast<std::size_t>(a->width) * a->height * 4;
+            std::vector<std::vector<unsigned char>> squares;
+            for (int i = 0; i < a->frames; ++i) {
+                squares.push_back(crop_square(a->pixels.get() + frame_bytes * i, a->width, a->height));
+            }
+            for (const int size : {128, 96, 64}) {
+                const int s = std::min(size, side);
+                std::string text = std::format("anim {} {}", s, s);
+                for (int i = 0; i < a->frames && text.size() <= max_avatar_bytes; ++i) {
+                    text += std::format("\n{} ", a->delays[i]);
+                    text += base64_encode(jpeg_of(shrink(squares[i].data(), side, side, s, s), s, s, 80));
+                }
+                if (text.size() <= max_avatar_bytes) {
+                    return text;
+                }
+            }
+        }
+        // Too much to animate: its first frame, as below.
+    }
+    const int side = std::min(image->width, image->height);
+    const int s = std::min(256, side);
+    const auto square = crop_square(image->pixels.get(), image->width, image->height);
+    std::string text = std::format("jpeg {} {}\n", s, s);
+    text += base64_encode(jpeg_of(shrink(square.data(), side, side, s, s), s, s, 90));
+    return text;
+}
+
 std::optional<Picture> parse_picture(std::string_view text) {
     auto nl = text.find('\n');
     if (nl == std::string_view::npos) {

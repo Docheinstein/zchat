@@ -58,6 +58,11 @@ std::expected<DecodedImage, std::string> decode_image(std::string_view encoded);
 std::expected<std::string, std::string> encode_picture(const std::filesystem::path& path, int max_size,
                                                        bool* still_of_animation = nullptr);
 
+// An avatar, as a picture like encode_picture()'s, square: a still image cropped to its middle, 256 pixels; an
+// animated GIF as it is when it is small enough (shown cropped), or else as square JPEG frames. At most
+// max_avatar_bytes. On failure, returns why.
+std::expected<std::string, std::string> encode_avatar(const std::filesystem::path& path);
+
 // A received picture: its size, and its frames (one, or more for an animation), each an image file in base64 (as
 // data: URLs want it) shown for its delay in milliseconds; and the bytes of the first, to draw it with characters.
 struct Picture {

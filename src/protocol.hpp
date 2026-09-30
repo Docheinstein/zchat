@@ -10,7 +10,10 @@ namespace zchat {
 // Wire format (one UDP datagram, fields separated by '\n'):
 //   ZCHAT1 \n <type> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
 enum class PacketType : char {
-    Join = 'J',    // a peer just started; everyone answers with Here
+    // A peer just started; everyone answers with Here. Its text, like Here's, tells about its avatar:
+    // "avatar HASH BYTES PORT" (the hash in hex, the size of the picture, and the TCP port to download it from with
+    // "AVATAR HASH"), or nothing for none; older versions send nothing, and ignore it.
+    Join = 'J',
     Here = 'H',    // periodic heartbeat, also the answer to Join
     Message = 'M', // a chat line
     Leave = 'L',   // a peer is quitting, or, when the text is a new sender id, changing color
@@ -67,6 +70,8 @@ inline constexpr std::size_t max_packet_image_bytes = 48'000;
 inline constexpr std::size_t max_chunk_bytes = 8'000;
 inline constexpr std::size_t max_chunks = (max_image_bytes + max_chunk_bytes - 1) / max_chunk_bytes;
 inline constexpr std::size_t max_resend_bytes = 4000;
+// The size of an avatar's text (a picture, see image::encode_avatar()), downloaded like an offered Image.
+inline constexpr std::size_t max_avatar_bytes = 4'000'000;
 
 std::string encode(const Packet& packet);
 

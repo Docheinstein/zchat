@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -77,6 +78,15 @@ public:
     std::optional<ReceivedFile> received_file(std::size_t index) const;
     std::size_t received_files() const;
 
+    // Sets our avatar (see image::encode_avatar()), or none; the others download it from us, see presence_text().
+    void set_avatar(std::optional<std::string> picture);
+
+    // Our avatar's hash, in hex; empty for none.
+    std::string own_avatar_hash() const;
+
+    // An avatar downloaded (or ours), by hash in hex. Thread-safe.
+    std::optional<std::string> avatar(std::string_view hash) const;
+
     // Tells the others this peer is leaving and stops listening. Safe to call more than once.
     void stop();
 
@@ -129,6 +139,8 @@ private:
         std::string name;
         clock::time_point last_seen;
         std::deque<std::uint64_t> recent_seqs;
+        // Their avatar's hash, 0 for none.
+        std::uint64_t avatar = 0;
     };
 
     void run(std::stop_token stop);
@@ -163,6 +175,11 @@ private:
     void receive_chunk(const Packet& packet);
     void request_missing_chunks();
     void resend_chunks(std::string_view request);
+    // Avatars: what our heartbeats say about ours ("avatar HASH BYTES PORT"), and downloading the others'.
+    std::string presence_text() const;
+    void receive_presence(std::uint64_t sender, std::string_view text, std::uint32_t from);
+    void download_avatar(std::uint64_t hash, std::uint32_t from, std::uint16_t port, std::size_t bytes,
+                         std::stop_token stop);
 
     // Changes with the color, see set_color().
     std::atomic<std::uint64_t> id_;
@@ -220,6 +237,14 @@ private:
     std::mutex transfers_mutex_;
     std::vector<Transfer> transfers_;
     std::optional<net::TcpListener> listener_;
+
+    // Avatars, by hash: ours, the ones downloaded, and the ones being downloaded or that failed lately.
+    mutable std::mutex avatars_mutex_;
+    std::uint64_t own_avatar_hash_ = 0;
+    std::shared_ptr<const std::string> own_avatar_;
+    std::map<std::uint64_t, std::shared_ptr<const std::string>> avatars_;
+    std::set<std::uint64_t> avatars_fetching_;
+    std::map<std::uint64_t, clock::time_point> avatars_failed_;
     std::jthread server_;
     // The files received, kept in files_dir_ (a temporary folder of this session's own, deleted when it ends).
     std::filesystem::path files_dir_;
