@@ -48,7 +48,6 @@ public:
     void bell() override;
     bool show_image(std::string_view line, int width, int height, const std::vector<Frame>& frames) override;
     bool show_file(std::string_view line, std::size_t index, std::string_view name, std::string_view size) override;
-    bool play_sound(std::string_view mime, std::string_view base64) override;
     void interrupt() override;
 
 private:
