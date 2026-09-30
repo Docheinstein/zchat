@@ -92,6 +92,7 @@ While chatting:
 | `/game race`       | typing race: some words show up for everyone in 3 seconds, the first to type them exactly wins |
 | `/game dice`       | push your luck: `/game dice roll` a die as often as you dare, each roll adds to points only you see, but a 1 loses them all; `/game dice stop` keeps them (the others see only that you stopped: the points are shown when the round ends). The highest points kept in 60 seconds win; not stopped in time, and they are lost. In the window a round opens a dice window, with Roll and Stop buttons, the players and the time left (🎲 at the top opens it again) |
 | `/game paint`      | a shared canvas of 16×16 squares: `/game paint c7 red` colors a square, `/game paint c7-f9 blue` a rectangle, `/game paint c7 none` empties it and `/game paint undo` takes back your last change. Without a color, squares get your brush's: `/game paint color red` picks it, and it starts as the canvas color closest to your name color. Each square painted takes a second before the next change, so the chat has to draw together |
+| `/game wordle`     | the New York Times' Wordle of the day, for the whole chat: `/game wordle WORD` guesses the five-letter word, showing you which letters are in it (green: right place, yellow: elsewhere) while the others only see your colors. Six guesses each, five minutes; the fewest guesses win, the fastest between equals. As on the Times, one a day: your guesses are saved, a round later that day goes on from them, and once done it is done until tomorrow. Guesses must be words of the built-in list (the five-letter words of ENABLE, public domain, in `third_party/enable`); the day's word always counts. The word comes from `nytimes.com/svc/wordle/v2/DATE.json`, fetched with `curl` |
 | `/game scores`     | who won what in this session                           |
 | `/update`          | get the latest zchat from git, build it and restart (see below) |
 | `/help`            | list commands                                          |
@@ -189,6 +190,8 @@ at worst is drawn with one color per character, or as the plain ASCII art. Versi
 as they are, and may not receive the biggest pictures at all (they took at most 8 KB).
 
 Images are decoded with [stb_image](https://github.com/nothings/stb) (public domain / MIT), in `third_party/stb`.
+
+The words `/game wordle` accepts are those of five letters of ENABLE (public domain), in `third_party/enable`.
 
 The name set with `/nick` is saved in the `zchat` config folder: `%APPDATA%\zchat\config` on Windows,
 `~/.config/zchat/config` on Linux (or `$XDG_CONFIG_HOME/zchat/config`). On start, `--name` wins over the saved
