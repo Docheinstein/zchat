@@ -1,6 +1,7 @@
 #pragma once
 
 #include "color.hpp"
+#include "history.hpp"
 #include "net.hpp"
 #include "protocol.hpp"
 #include "terminal.hpp"
@@ -8,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <ctime>
 #include <deque>
 #include <functional>
 #include <map>
@@ -77,6 +79,9 @@ public:
     // Prints an informational line (joins, leaves, command output).
     void notice(std::string_view text) const;
 
+    // Prints messages from the history (see history.hpp), each with the time it was sent at.
+    void print_history(const std::vector<history::Entry>& entries) const;
+
     // Our id, which changes with the color.
     std::uint64_t id() const {
         return id_;
@@ -111,8 +116,9 @@ private:
     void run(std::stop_token stop);
     void handle(const Packet& packet);
     void send(PacketType type, std::string_view text = {});
-    // Returns whether the message tags us.
-    bool print_message(std::uint64_t id, std::string_view name, std::string_view text) const;
+    // Returns whether the message tags us. when is the time it was sent at, for messages from the history.
+    bool print_message(std::uint64_t id, std::string_view name, std::string_view text,
+                       std::optional<std::time_t> when = std::nullopt) const;
     // Turns the "@Name" tags of the people in the chat into markup showing them bold in their color, ours also
     // underlined. Sets tags_us when we are tagged.
     std::string mark_mentions(std::string_view text, bool& tags_us) const;
