@@ -16,11 +16,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <filesystem>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <random>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -142,6 +146,9 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /image [SIZE] [TEXTURE%] FILE  send a picture, drawn with blocks of color");
     chat.notice("               (SIZE: small, medium, large, a width like 40, or 40x20;");
     chat.notice("                TEXTURE%: 0% blocks only, the default, to 100% symbols only)");
+    chat.notice("  /addemoji NAME [SIZE] [TEXTURE%] FILE  save a picture as an emoji");
+    chat.notice("  /emoji NAME  send a saved emoji (/emoji alone lists yours)");
+    chat.notice("  /removeemoji NAME  delete a saved emoji");
     chat.notice("               (or drop an image file on the window, then press Enter)");
     chat.notice("  @NAME        tag someone in a message: they hear a sound");
     chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
@@ -308,17 +315,8 @@ std::optional<int> parse_percent(std::string_view s) {
     return value;
 }
 
-void send_image(zchat::Chat& chat, std::string_view arg) {
-    if (arg.empty()) {
-        chat.notice("Use /image [SIZE] [TEXTURE%] FILE to send a picture, or drop an image file on the window and press "
-                    "Enter.");
-        chat.notice(std::format("SIZE is small, medium, large (the default), a width like 40, or a width and height "
-                                "like 40x20, up to {}x{}.",
-                                zchat::max_art_cols, zchat::max_art_rows));
-        chat.notice("TEXTURE% is how much is drawn with symbols instead of blocks: 0% none (the default), about 15% the "
-                    "dark parts, 100% no blocks at all.");
-        return;
-    }
+// Turns "[SIZE] [TEXTURE%] FILE" into a drawing, or says why it cannot ("Cannot <what> FILE: ...").
+std::optional<std::string> draw_image(zchat::Chat& chat, std::string_view arg, std::string_view what) {
     // A size and a texture first, in any order, when there is something after them: "/image 40" alone still sends
     // a file named 40.
     ArtSize size;
@@ -341,7 +339,7 @@ void send_image(zchat::Chat& chat, std::string_view arg) {
             texture = *percent;
         } else if (word.ends_with('%') && !percent) {
             chat.notice(std::format("The texture is from 0% to 100%, not {}.", zchat::text::sanitize(word, 20)));
-            return;
+            return std::nullopt;
         } else if (const auto parsed = parse_art_size(word); parsed && !sized) {
             size = *parsed;
             sized = true;
@@ -350,12 +348,176 @@ void send_image(zchat::Chat& chat, std::string_view arg) {
         }
         arg = rest;
     }
-    const auto art = zchat::image::to_ascii(zchat::image::parse_path(arg), size.cols, size.rows, texture.value_or(0));
+    auto art = zchat::image::to_ascii(zchat::image::parse_path(arg), size.cols, size.rows, texture.value_or(0));
     if (!art) {
-        chat.notice(std::format("Cannot send {}: {}", zchat::text::sanitize(arg, 200), art.error()));
+        chat.notice(std::format("Cannot {} {}: {}", what, zchat::text::sanitize(arg, 200), art.error()));
+        return std::nullopt;
+    }
+    return std::move(*art);
+}
+
+void send_image(zchat::Chat& chat, std::string_view arg) {
+    if (arg.empty()) {
+        chat.notice("Use /image [SIZE] [TEXTURE%] FILE to send a picture, or drop an image file on the window and press "
+                    "Enter.");
+        chat.notice(std::format("SIZE is small, medium, large (the default), a width like 40, or a width and height "
+                                "like 40x20, up to {}x{}.",
+                                zchat::max_art_cols, zchat::max_art_rows));
+        chat.notice("TEXTURE% is how much is drawn with symbols instead of blocks: 0% none (the default), about 15% the "
+                    "dark parts, 100% no blocks at all.");
         return;
     }
-    chat.draw(*art);
+    if (const auto art = draw_image(chat, arg, "send")) {
+        chat.draw(*art);
+    }
+}
+
+// Emoji: pictures saved under a name, already drawn, in the emoji folder of the config folder, one NAME.art file
+// each (the drawing as it is sent), so /emoji NAME sends them without the image file.
+constexpr std::size_t max_emoji_name = 32;
+constexpr std::uintmax_t max_emoji_bytes = 64 * 1024;
+
+std::filesystem::path emoji_dir() {
+    const auto dir = zchat::config::dir();
+    return dir.empty() ? dir : dir / "emoji";
+}
+
+// The name of an emoji, lowercase: letters, digits, '-' and '_'. Empty when it is not one.
+std::string emoji_name(std::string_view s) {
+    while (!s.empty() && s.front() == ' ') {
+        s.remove_prefix(1);
+    }
+    while (!s.empty() && s.back() == ' ') {
+        s.remove_suffix(1);
+    }
+    if (s.empty() || s.size() > max_emoji_name) {
+        return {};
+    }
+    std::string name;
+    for (const char c : s) {
+        const auto u = static_cast<unsigned char>(c);
+        if (u >= 0x80 || (!std::isalnum(u) && c != '-' && c != '_')) {
+            return {};
+        }
+        name += static_cast<char>(std::tolower(u));
+    }
+    return name;
+}
+
+std::filesystem::path emoji_file(const std::string& name) {
+    return emoji_dir() / (name + ".art");
+}
+
+std::vector<std::string> emoji_names() {
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(emoji_dir(), ec)) {
+        if (entry.path().extension() == ".art") {
+            if (const std::string name = emoji_name(entry.path().stem().string()); !name.empty()) {
+                names.push_back(name);
+            }
+        }
+    }
+    std::ranges::sort(names);
+    return names;
+}
+
+void emoji_name_help(zchat::Chat& chat, std::string_view given) {
+    chat.notice(std::format("{} is not an emoji name: use up to {} letters, digits, - and _.",
+                            zchat::text::sanitize(given, 40), max_emoji_name));
+}
+
+void add_emoji(zchat::Chat& chat, std::string_view arg) {
+    const auto space = arg.find(' ');
+    std::string_view rest = space == std::string_view::npos ? std::string_view() : arg.substr(space + 1);
+    while (!rest.empty() && rest.front() == ' ') {
+        rest.remove_prefix(1);
+    }
+    if (arg.empty() || rest.empty()) {
+        chat.notice("Use /addemoji NAME [SIZE] [TEXTURE%] FILE to save a picture as an emoji, then /emoji NAME to send "
+                    "it (SIZE and TEXTURE% as for /image).");
+        return;
+    }
+    const std::string name = emoji_name(arg.substr(0, space));
+    if (name.empty()) {
+        emoji_name_help(chat, arg.substr(0, space));
+        return;
+    }
+    const auto art = draw_image(chat, rest, "add");
+    if (!art) {
+        return;
+    }
+    if (emoji_dir().empty()) {
+        chat.notice("Could not find a folder to save emoji in.");
+        return;
+    }
+    std::error_code ec;
+    const bool existed = std::filesystem::exists(emoji_file(name), ec);
+    std::filesystem::create_directories(emoji_dir(), ec);
+    std::ofstream out(emoji_file(name), std::ios::binary | std::ios::trunc);
+    out << *art;
+    if (!out.flush()) {
+        chat.notice(std::format("Could not save the emoji in {}", emoji_dir().string()));
+        return;
+    }
+    chat.notice(std::format("{} emoji {}: send it with /emoji {}", existed ? "Replaced" : "Saved", name, name));
+}
+
+void send_emoji(zchat::Chat& chat, std::string_view arg) {
+    const std::string name = emoji_name(arg);
+    if (name.empty()) {
+        if (arg.find_first_not_of(' ') != std::string_view::npos) {
+            emoji_name_help(chat, arg);
+            return;
+        }
+        const auto names = emoji_names();
+        if (names.empty()) {
+            chat.notice("No emoji yet: save one with /addemoji NAME [SIZE] [TEXTURE%] FILE.");
+            return;
+        }
+        std::string list;
+        for (const auto& n : names) {
+            list += list.empty() ? "" : ", ";
+            list += n;
+        }
+        chat.notice(std::format("Your emoji: {}. Send one with /emoji NAME.", list));
+        return;
+    }
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(emoji_file(name), ec);
+    if (ec) {
+        chat.notice(std::format("There is no emoji {} (try /emoji).", name));
+        return;
+    }
+    if (bytes > max_emoji_bytes) {
+        chat.notice(std::format("The emoji {} is too big to send: add it again with /addemoji.", name));
+        return;
+    }
+    std::ifstream in(emoji_file(name), std::ios::binary);
+    const std::string art((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (art.empty()) {
+        chat.notice(std::format("Could not read the emoji {}.", name));
+        return;
+    }
+    chat.draw(art);
+}
+
+void remove_emoji(zchat::Chat& chat, std::string_view arg) {
+    const std::string name = emoji_name(arg);
+    if (name.empty()) {
+        if (arg.find_first_not_of(' ') == std::string_view::npos) {
+            chat.notice("Use /removeemoji NAME to delete an emoji (/emoji lists them).");
+        } else {
+            emoji_name_help(chat, arg);
+        }
+        return;
+    }
+    std::error_code ec;
+    if (!std::filesystem::remove(emoji_file(name), ec)) {
+        chat.notice(std::format("There is no emoji {} (try /emoji).", name));
+        return;
+    }
+    chat.notice(std::format("Removed emoji {}.", name));
 }
 
 void print_who(zchat::Chat& chat) {
@@ -468,6 +630,12 @@ int run(const Options& options, bool& restart) {
             forget_nick(chat, rng);
         } else if (input == "/image" || input.starts_with("/image ")) {
             send_image(chat, input.substr(std::min(input.size(), std::string_view("/image ").size())));
+        } else if (input == "/addemoji" || input.starts_with("/addemoji ")) {
+            add_emoji(chat, input.substr(std::min(input.size(), std::string_view("/addemoji ").size())));
+        } else if (input == "/removeemoji" || input.starts_with("/removeemoji ")) {
+            remove_emoji(chat, input.substr(std::min(input.size(), std::string_view("/removeemoji ").size())));
+        } else if (input == "/emoji" || input.starts_with("/emoji ")) {
+            send_emoji(chat, input.substr(std::min(input.size(), std::string_view("/emoji ").size())));
         } else if (input == "/game" || input.starts_with("/game ")) {
             std::string_view arg = input.substr(std::min(input.size(), std::string_view("/game ").size()));
             while (!arg.empty() && arg.front() == ' ') {
