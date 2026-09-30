@@ -11,6 +11,8 @@
 #include <charconv>
 #include <ctime>
 #include <format>
+#include <memory>
+#include <stdexcept>
 #include <utility>
 
 namespace zchat {
@@ -35,8 +37,12 @@ namespace {
         return id;
     }
 
-    // Pictures in Chunks, see Chat::send_picture().
-    constexpr std::size_t max_outgoing_pictures = 8;
+    // Pictures too big for a packet, see Chat::send_picture(): at most this many downloads and uploads at once, and
+    // how long they wait for the other end.
+    constexpr std::size_t max_transfers = 16;
+    constexpr auto connect_timeout = 3s;
+    constexpr auto transfer_timeout = 15s;
+    constexpr std::size_t max_outgoing_pictures = 4;
     constexpr auto outgoing_picture_lifetime = 2min;
     constexpr std::size_t max_incoming_pictures = 8;
     constexpr std::size_t max_received_pictures = 64;
@@ -48,22 +54,21 @@ namespace {
     constexpr auto chunk_give_up = 20s;
     constexpr auto chunk_resend_interval = 250ms;
 
-    // "A B C": three numbers.
-    bool parse_numbers(std::string_view s, std::uint64_t& a, std::size_t& b, std::size_t& c) {
+    // "A B C ...": numbers, one space between them.
+    std::optional<std::vector<std::uint64_t>> parse_numbers(std::string_view s) {
+        std::vector<std::uint64_t> numbers;
         const char* p = s.data();
         const char* end = s.data() + s.size();
-        std::uint64_t values[3] {};
-        for (int i = 0; i < 3; ++i) {
-            const auto [ptr, ec] = std::from_chars(p, end, values[i]);
-            if (ec != std::errc {} || (i < 2 ? ptr == end || *ptr != ' ' : ptr != end)) {
-                return false;
+        while (p != end) {
+            std::uint64_t n = 0;
+            const auto [ptr, ec] = std::from_chars(p, end, n);
+            if (ec != std::errc {} || (ptr != end && (*ptr != ' ' || ptr + 1 == end))) {
+                return std::nullopt;
             }
-            p = ptr + (i < 2 ? 1 : 0);
+            numbers.push_back(n);
+            p = ptr == end ? end : ptr + 1;
         }
-        a = values[0];
-        b = static_cast<std::size_t>(values[1]);
-        c = static_cast<std::size_t>(values[2]);
-        return true;
+        return numbers;
     }
 
     std::tm local_time(std::time_t t) {
@@ -106,6 +111,11 @@ Chat::Chat(std::uint16_t port, std::string name, std::optional<Color> color, Scr
     name_(std::move(name)),
     terminal_(terminal),
     socket_(port) {
+    // Without it, pictures too big for a packet can still be sent in Chunks.
+    try {
+        listener_.emplace();
+    } catch (const std::exception&) {
+    }
 }
 
 Chat::~Chat() {
@@ -116,6 +126,11 @@ void Chat::start() {
     thread_ = std::jthread([this](std::stop_token stop) {
         run(stop);
     });
+    if (listener_) {
+        server_ = std::jthread([this](std::stop_token stop) {
+            serve_pictures(stop);
+        });
+    }
     send(PacketType::Join);
 }
 
@@ -128,6 +143,14 @@ void Chat::stop() {
     if (thread_.joinable()) {
         thread_.join();
     }
+    server_ = {};
+    std::vector<Transfer> transfers;
+    {
+        std::scoped_lock lock(transfers_mutex_);
+        transfers.swap(transfers_);
+    }
+    // Their threads are asked to stop and joined.
+    transfers.clear();
     send(PacketType::Leave);
 }
 
@@ -169,26 +192,27 @@ void Chat::send_picture(std::string_view picture) {
     packet.text = std::string(picture);
     const std::string clean = decode(encode(packet)).value_or(Packet {}).text;
     print_picture(id_, name(), clean);
-    if (clean.size() <= max_chunk_bytes) {
+    if (clean.size() <= max_packet_image_bytes) {
         send(PacketType::Image, clean);
         return;
     }
-    // In pieces; the others ask again for the ones they miss, from the ones kept in outgoing_. They can be asked for
-    // only once all were sent: until then, the others are just waiting for them.
-    Outgoing out {id_, next_picture_++, {}, {}, clock::now()};
-    for (std::size_t i = 0; i < clean.size(); i += max_chunk_bytes) {
-        out.pieces.emplace_back(std::string_view(clean).substr(i, max_chunk_bytes));
+    // Too big to broadcast well (Wi-Fi sends broadcasts slowly, and never again when they are lost): offered, and
+    // downloaded by each of the others straight from us, see serve_picture(). Whoever cannot download it asks for
+    // it in Chunks instead, see request_missing_chunks().
+    Outgoing out {id_, next_picture_++, std::make_shared<const std::string>(clean), {}, clock::now()};
+    const std::size_t count = (clean.size() + max_chunk_bytes - 1) / max_chunk_bytes;
+    out.resent.resize(count);
+    const std::uint64_t picture_id = out.picture;
+    {
+        std::scoped_lock lock(outgoing_mutex_);
+        while (!outgoing_.empty() && (outgoing_.size() >= max_outgoing_pictures ||
+                                      clock::now() - outgoing_.front().sent > outgoing_picture_lifetime)) {
+            outgoing_.pop_front();
+        }
+        outgoing_.push_back(std::move(out));
     }
-    out.resent.resize(out.pieces.size());
-    for (std::size_t i = 0; i < out.pieces.size(); ++i) {
-        send_chunk(out.picture, i, out.pieces.size(), out.pieces[i]);
-    }
-    std::scoped_lock lock(outgoing_mutex_);
-    while (!outgoing_.empty() && (outgoing_.size() >= max_outgoing_pictures ||
-                                  clock::now() - outgoing_.front().sent > outgoing_picture_lifetime)) {
-        outgoing_.pop_front();
-    }
-    outgoing_.push_back(std::move(out));
+    send(PacketType::Offer,
+         std::format("{} {} {} {}", picture_id, clean.size(), count, listener_ ? listener_->port() : 0));
 }
 
 void Chat::send_chunk(std::uint64_t picture, std::size_t index, std::size_t count, std::string_view piece) {
@@ -197,16 +221,159 @@ void Chat::send_chunk(std::uint64_t picture, std::size_t index, std::size_t coun
     send(PacketType::Chunk, text, true);
 }
 
+bool Chat::start_transfer(std::function<void(std::stop_token)> work) {
+    std::scoped_lock lock(transfers_mutex_);
+    std::erase_if(transfers_, [](const Transfer& t) {
+        return t.done->load();
+    });
+    if (transfers_.size() >= max_transfers) {
+        return false;
+    }
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    transfers_.push_back({done, std::jthread([work = std::move(work), done](std::stop_token stop) {
+                              work(stop);
+                              *done = true;
+                          })});
+    return true;
+}
+
+void Chat::serve_pictures(std::stop_token stop) {
+    while (!stop.stop_requested()) {
+        auto stream = listener_->accept(200ms);
+        if (!stream) {
+            continue;
+        }
+        auto shared = std::make_shared<net::TcpStream>(std::move(*stream));
+        start_transfer([this, shared](std::stop_token transfer_stop) {
+            serve_picture(*shared, transfer_stop);
+        });
+    }
+}
+
+void Chat::serve_picture(net::TcpStream& stream, std::stop_token stop) {
+    // "GET ID": the picture, scrambled like packets, and the connection closed.
+    const auto request = stream.read_line(64, 5s, stop);
+    std::uint64_t picture = 0;
+    if (!request || !request->starts_with("GET ")) {
+        return;
+    }
+    const std::string_view number = std::string_view(*request).substr(4);
+    if (const auto [ptr, ec] = std::from_chars(number.data(), number.data() + number.size(), picture);
+        ec != std::errc {} || ptr != number.data() + number.size()) {
+        return;
+    }
+    std::shared_ptr<const std::string> text;
+    {
+        std::scoped_lock lock(outgoing_mutex_);
+        const auto it = std::ranges::find_if(outgoing_, [&](const Outgoing& out) {
+            return out.picture == picture;
+        });
+        if (it == outgoing_.end()) {
+            return;
+        }
+        text = it->text;
+    }
+    stream.send_all(cipher::scramble(*text), transfer_timeout, stop);
+}
+
+void Chat::receive_offer(const Packet& packet, std::uint32_t from) {
+    const auto numbers = parse_numbers(packet.text);
+    if (!numbers || numbers->size() != 4) {
+        return;
+    }
+    const std::uint64_t picture = (*numbers)[0];
+    const std::uint64_t bytes = (*numbers)[1];
+    const std::uint64_t count = (*numbers)[2];
+    const std::uint64_t port = (*numbers)[3];
+    if (bytes <= max_packet_image_bytes || bytes > max_image_bytes ||
+        count != (bytes + max_chunk_bytes - 1) / max_chunk_bytes || port > 65535) {
+        return;
+    }
+    const std::pair key {packet.sender, picture};
+    if (std::ranges::find(received_pictures_, key) != received_pictures_.end() || incoming_.contains(key) ||
+        incoming_.size() >= max_incoming_pictures) {
+        return;
+    }
+    const auto c = static_cast<std::size_t>(count);
+    Incoming& in = incoming_
+                       .emplace(key, Incoming {packet.name, std::vector<std::string>(c), std::vector<bool>(c), 0,
+                                               clock::now(), clock::now(), chunk_wait, false})
+                       .first->second;
+    in.downloading = port != 0 && from != 0 &&
+                     start_transfer([this, key, from, port, bytes](std::stop_token stop) {
+                         download_picture(key, from, static_cast<std::uint16_t>(port),
+                                          static_cast<std::size_t>(bytes), stop);
+                     });
+    if (!in.downloading) {
+        // Asked for in Chunks right away.
+        in.last_piece = in.last_request = clock::now() - chunk_wait;
+    }
+}
+
+void Chat::download_picture(std::pair<std::uint64_t, std::uint64_t> key, std::uint32_t from, std::uint16_t port,
+                            std::size_t bytes, std::stop_token stop) {
+    std::optional<std::string> text;
+    if (auto stream = net::TcpStream::connect(from, port, connect_timeout);
+        stream && stream->send_all(std::format("GET {}\n", key.second), connect_timeout, stop)) {
+        // Scrambled: a few bytes more than the picture.
+        if (const auto data = stream->read_all(bytes + 64, transfer_timeout, stop)) {
+            text = cipher::unscramble(*data);
+            if (text && text->size() != bytes) {
+                text.reset();
+            }
+        }
+    }
+    std::scoped_lock lock(downloads_mutex_);
+    downloads_.push_back({key, std::move(text)});
+}
+
+void Chat::finish_downloads() {
+    std::vector<Download> done;
+    {
+        std::scoped_lock lock(downloads_mutex_);
+        done.swap(downloads_);
+    }
+    for (auto& download : done) {
+        const auto it = incoming_.find(download.key);
+        if (it == incoming_.end()) {
+            continue;
+        }
+        if (download.text) {
+            finish_picture(it, *download.text);
+        } else {
+            // Could not be downloaded (e.g. a firewall): asked for in Chunks instead.
+            it->second.downloading = false;
+            it->second.last_piece = it->second.last_request = clock::now() - chunk_wait;
+            it->second.wait = chunk_wait;
+        }
+    }
+}
+
+void Chat::finish_picture(std::map<std::pair<std::uint64_t, std::uint64_t>, Incoming>::iterator it,
+                          std::string_view text) {
+    const auto key = it->first;
+    const std::string name = std::move(it->second.name);
+    incoming_.erase(it);
+    received_pictures_.push_back(key);
+    if (received_pictures_.size() > max_received_pictures) {
+        received_pictures_.pop_front();
+    }
+    print_picture(key.first, name, text);
+}
+
 void Chat::receive_chunk(const Packet& packet) {
     const auto nl = packet.text.find('\n');
     if (nl == std::string::npos) {
         return;
     }
-    std::uint64_t picture = 0;
-    std::size_t index = 0;
-    std::size_t count = 0;
-    if (!parse_numbers(std::string_view(packet.text).substr(0, nl), picture, index, count) || count < 2 ||
-        count > max_chunks || index >= count) {
+    const auto numbers = parse_numbers(std::string_view(packet.text).substr(0, nl));
+    if (!numbers || numbers->size() != 3) {
+        return;
+    }
+    const std::uint64_t picture = (*numbers)[0];
+    const std::uint64_t index = (*numbers)[1];
+    const std::uint64_t count = (*numbers)[2];
+    if (count < 2 || count > max_chunks || index >= count) {
         return;
     }
     const std::pair key {packet.sender, picture};
@@ -218,16 +385,18 @@ void Chat::receive_chunk(const Packet& packet) {
         if (incoming_.size() >= max_incoming_pictures) {
             return;
         }
-        it = incoming_.emplace(key, Incoming {packet.name, std::vector<std::string>(count), std::vector<bool>(count),
-                                              0, clock::now(), clock::now(), chunk_wait})
+        const auto c = static_cast<std::size_t>(count);
+        it = incoming_.emplace(key, Incoming {packet.name, std::vector<std::string>(c), std::vector<bool>(c), 0,
+                                              clock::now(), clock::now(), chunk_wait, false})
                  .first;
     }
     Incoming& in = it->second;
-    if (in.pieces.size() != count || in.have[index]) {
+    const auto i = static_cast<std::size_t>(index);
+    if (in.pieces.size() != count || in.have[i]) {
         return;
     }
-    in.pieces[index] = packet.text.substr(nl + 1);
-    in.have[index] = true;
+    in.pieces[i] = packet.text.substr(nl + 1);
+    in.have[i] = true;
     in.last_piece = clock::now();
     in.wait = chunk_wait;
     if (++in.received < count) {
@@ -237,19 +406,17 @@ void Chat::receive_chunk(const Packet& packet) {
     for (const auto& piece : in.pieces) {
         text += piece;
     }
-    const std::string name = std::move(in.name);
-    incoming_.erase(it);
-    received_pictures_.push_back(key);
-    if (received_pictures_.size() > max_received_pictures) {
-        received_pictures_.pop_front();
-    }
-    print_picture(packet.sender, name, text);
+    finish_picture(it, text);
 }
 
 void Chat::request_missing_chunks() {
     const auto now = clock::now();
     for (auto it = incoming_.begin(); it != incoming_.end();) {
         Incoming& in = it->second;
+        if (in.downloading) {
+            ++it;
+            continue;
+        }
         if (now - in.last_piece > chunk_give_up) {
             notice(std::format("A picture from {} did not arrive whole.", colored_name(it->first.first, in.name)));
             it = incoming_.erase(it);
@@ -277,37 +444,26 @@ void Chat::resend_chunks(std::string_view request) {
         return;
     }
     const auto sender = parse_id(request.substr(0, space));
-    request.remove_prefix(space + 1);
-    std::vector<std::size_t> indices;
-    std::uint64_t picture = 0;
-    bool first = true;
-    while (!request.empty()) {
-        const auto end = std::min(request.find(' '), request.size());
-        std::uint64_t n = 0;
-        const auto [ptr, ec] = std::from_chars(request.data(), request.data() + end, n);
-        if (ec != std::errc {} || ptr != request.data() + end) {
-            return;
-        }
-        if (first) {
-            picture = n;
-            first = false;
-        } else {
-            indices.push_back(static_cast<std::size_t>(n));
-        }
-        request.remove_prefix(std::min(end + 1, request.size()));
+    const auto numbers = parse_numbers(request.substr(space + 1));
+    if (!sender || !numbers || numbers->empty()) {
+        return;
     }
+    const std::uint64_t picture = numbers->front();
     std::scoped_lock lock(outgoing_mutex_);
     const auto it = std::ranges::find_if(outgoing_, [&](const Outgoing& out) {
-        return sender && out.sender == *sender && out.picture == picture;
+        return out.sender == *sender && out.picture == picture;
     });
     if (it == outgoing_.end()) {
         return;
     }
+    const std::string_view text = *it->text;
+    const std::size_t count = it->resent.size();
     const auto now = clock::now();
-    for (const std::size_t i : indices) {
-        if (i < it->pieces.size() && now - it->resent[i] >= chunk_resend_interval) {
+    for (std::size_t n = 1; n < numbers->size(); ++n) {
+        const auto i = static_cast<std::size_t>((*numbers)[n]);
+        if (i < count && now - it->resent[i] >= chunk_resend_interval) {
             it->resent[i] = now;
-            send_chunk(picture, i, it->pieces.size(), it->pieces[i]);
+            send_chunk(picture, i, count, text.substr(i * max_chunk_bytes, max_chunk_bytes));
         }
     }
 }
@@ -528,13 +684,14 @@ void Chat::run(std::stop_token stop) {
     auto next_heartbeat = clock::now() + heartbeat_interval;
     auto next_refresh = clock::now() + interfaces_refresh_interval;
     while (!stop.stop_requested()) {
-        if (auto data = socket_.receive(200ms)) {
+        if (auto datagram = socket_.receive(200ms)) {
             // Older versions send plaintext: still understood, but never sent.
-            const auto plain = cipher::unscramble(*data);
-            if (auto packet = decode(plain ? *plain : *data); packet && packet->sender != id_) {
-                handle(*packet);
+            const auto plain = cipher::unscramble(datagram->data);
+            if (auto packet = decode(plain ? *plain : datagram->data); packet && packet->sender != id_) {
+                handle(*packet, datagram->from);
             }
         }
+        finish_downloads();
         request_missing_chunks();
         const auto now = clock::now();
         if (now >= next_refresh) {
@@ -553,7 +710,7 @@ void Chat::run(std::stop_token stop) {
     }
 }
 
-void Chat::handle(const Packet& packet) {
+void Chat::handle(const Packet& packet, std::uint32_t from) {
     enum class Event { None, Joined, Discovered, Renamed, Recolored, Left };
     Event event = Event::None;
     std::string old_name;
@@ -654,6 +811,9 @@ void Chat::handle(const Packet& packet) {
         break;
     case PacketType::Image:
         print_picture(packet.sender, packet.name, packet.text);
+        break;
+    case PacketType::Offer:
+        receive_offer(packet, from);
         break;
     case PacketType::Chunk:
         receive_chunk(packet);

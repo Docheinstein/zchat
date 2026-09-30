@@ -42,6 +42,10 @@ public:
     // locked, so it must not print.
     virtual void set_mentions(std::function<std::vector<Mention>()> source) = 0;
 
+    // Sets where our own name and its style come from, for screens that show them (the window, above the channels).
+    // Called with the screen locked, so it must not print.
+    virtual void set_self(std::function<Mention()> /*source*/) {}
+
     // Sets what may rewrite the input line once the keys typed so far are handled and no more are waiting, as after
     // a paste or a file dropped on the window: it gets the line and returns its replacement, or nullopt to keep it.
     // It is called with the screen locked, so it must not print.

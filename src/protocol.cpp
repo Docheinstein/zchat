@@ -114,6 +114,9 @@ std::optional<Packet> decode(std::string_view data) {
     case 'R':
         packet.type = PacketType::Resend;
         break;
+    case 'O':
+        packet.type = PacketType::Offer;
+        break;
     default:
         return std::nullopt;
     }

@@ -194,6 +194,7 @@ struct Gui::Impl {
     std::string info = "{}";
 
     std::function<std::vector<Mention>()> mention_source;
+    std::function<Mention()> self_source;
     std::function<std::optional<std::string>(std::string_view)> rewriter;
 
     // Runs JavaScript in the page, from any thread.
@@ -217,7 +218,9 @@ bool Gui::available() {
 Gui::Gui() {
 #ifdef _WIN32
     // The web view keeps its data (the page's settings) in the config folder, not next to the executable.
-    if (const auto dir = config::dir(); !dir.empty()) {
+    // Unless one is given already (e.g. for a second window with its own).
+    if (const auto dir = config::dir();
+        !dir.empty() && GetEnvironmentVariableW(L"WEBVIEW2_USER_DATA_FOLDER", nullptr, 0) == 0) {
         std::error_code ec;
         std::filesystem::create_directories(dir / "webview", ec);
         _wputenv_s(L"WEBVIEW2_USER_DATA_FOLDER", (dir / "webview").wstring().c_str());
@@ -263,6 +266,14 @@ Gui::Gui() {
             out += "[" + json_string(m.name) + "," + json_string(m.style) + "]";
         }
         return out + "]";
+    });
+    view.bind("zchatSelf", [this](const std::string&) -> std::string {
+        std::scoped_lock lock(impl_->mutex);
+        if (!impl_->self_source) {
+            return "null";
+        }
+        const Mention self = impl_->self_source();
+        return "[" + json_string(self.name) + "," + json_string(self.style) + "]";
     });
     view.bind("zchatRewrite", [this](const std::string& args) -> std::string {
         const auto strings = json_strings(args);
@@ -364,6 +375,11 @@ std::optional<std::string> Gui::read_line() {
 void Gui::set_mentions(std::function<std::vector<Mention>()> source) {
     std::scoped_lock lock(impl_->mutex);
     impl_->mention_source = std::move(source);
+}
+
+void Gui::set_self(std::function<Mention()> source) {
+    std::scoped_lock lock(impl_->mutex);
+    impl_->self_source = std::move(source);
 }
 
 void Gui::set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter) {

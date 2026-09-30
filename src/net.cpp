@@ -4,6 +4,7 @@
 #include <array>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #ifdef _WIN32
 // Order matters: the Winsock headers must come before iphlpapi.h.
@@ -15,6 +16,7 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -196,7 +198,7 @@ void BroadcastSocket::broadcast(std::string_view payload, bool once) {
     }
 }
 
-std::optional<std::string> BroadcastSocket::receive(std::chrono::milliseconds timeout) {
+std::optional<Datagram> BroadcastSocket::receive(std::chrono::milliseconds timeout) {
     const socket_t s = to_socket(handle_);
     fd_set read_set;
     FD_ZERO(&read_set);
@@ -210,11 +212,204 @@ std::optional<std::string> BroadcastSocket::receive(std::chrono::milliseconds ti
     // Room for the biggest datagram there can be: an Art drawing with a lot of detail can take more than 8 KB, and a
     // datagram too big for the buffer is lost.
     thread_local std::array<char, 65536> buffer;
-    const auto n = ::recvfrom(s, buffer.data(), static_cast<int>(buffer.size()), 0, nullptr, nullptr);
+    sockaddr_in from {};
+    socklen_t from_size = sizeof from;
+    const auto n = ::recvfrom(s, buffer.data(), static_cast<int>(buffer.size()), 0, reinterpret_cast<sockaddr*>(&from),
+                              &from_size);
     if (n <= 0) {
         return std::nullopt;
     }
-    return std::string(buffer.data(), static_cast<std::size_t>(n));
+    return Datagram {std::string(buffer.data(), static_cast<std::size_t>(n)), from.sin_addr.s_addr};
 }
+
+namespace {
+
+    void set_blocking(socket_t s, bool blocking) {
+#ifdef _WIN32
+        u_long nonblocking = blocking ? 0 : 1;
+        ioctlsocket(s, FIONBIO, &nonblocking);
+#else
+        const int flags = fcntl(s, F_GETFL, 0);
+        fcntl(s, F_SETFL, blocking ? flags & ~O_NONBLOCK : flags | O_NONBLOCK);
+#endif
+    }
+
+    // Waits up to timeout until s can be read (or written), a slice at a time so a stop is noticed.
+    bool wait_socket(socket_t s, bool write, std::chrono::milliseconds timeout, const std::stop_token& stop) {
+        using namespace std::chrono;
+        const auto deadline = steady_clock::now() + timeout;
+        while (!stop.stop_requested()) {
+            const auto left = duration_cast<milliseconds>(deadline - steady_clock::now());
+            if (left.count() <= 0) {
+                return false;
+            }
+            const auto slice = std::min(left, milliseconds(200));
+            fd_set set;
+            FD_ZERO(&set);
+            FD_SET(s, &set);
+            timeval tv {};
+            tv.tv_sec = static_cast<long>(slice.count() / 1000);
+            tv.tv_usec = static_cast<long>((slice.count() % 1000) * 1000);
+            const int rc = ::select(static_cast<int>(s + 1), write ? nullptr : &set, write ? &set : nullptr, nullptr,
+                                    &tv);
+            if (rc > 0) {
+                return true;
+            }
+            if (rc < 0) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+#ifdef _WIN32
+    constexpr int send_flags = 0;
+#else
+    // A closed connection must be an error, not a SIGPIPE that ends zchat.
+    constexpr int send_flags = MSG_NOSIGNAL;
+#endif
+
+} // namespace
+
+std::optional<TcpStream> TcpStream::connect(std::uint32_t address, std::uint16_t port,
+                                            std::chrono::milliseconds timeout) {
+    const socket_t s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == invalid_socket) {
+        return std::nullopt;
+    }
+    TcpStream stream(static_cast<std::uintptr_t>(s));
+    sockaddr_in addr {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = address;
+    // Not blocking while it connects, so it can time out.
+    set_blocking(s, false);
+    if (::connect(s, reinterpret_cast<const sockaddr*>(&addr), sizeof addr) != 0) {
+#ifdef _WIN32
+        const bool pending = WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+        const bool pending = errno == EINPROGRESS;
+#endif
+        if (!pending || !wait_socket(s, true, timeout, {})) {
+            return std::nullopt;
+        }
+        int error = 0;
+        socklen_t size = sizeof error;
+        if (getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &size) != 0 || error != 0) {
+            return std::nullopt;
+        }
+    }
+    set_blocking(s, true);
+    return stream;
+}
+
+TcpStream::~TcpStream() {
+    if (handle_ != static_cast<std::uintptr_t>(invalid_socket)) {
+        close_socket(to_socket(handle_));
+    }
+}
+
+TcpStream::TcpStream(TcpStream&& other) noexcept :
+    handle_(std::exchange(other.handle_, static_cast<std::uintptr_t>(invalid_socket))) {}
+
+TcpStream& TcpStream::operator=(TcpStream&& other) noexcept {
+    if (this != &other) {
+        if (handle_ != static_cast<std::uintptr_t>(invalid_socket)) {
+            close_socket(to_socket(handle_));
+        }
+        handle_ = std::exchange(other.handle_, static_cast<std::uintptr_t>(invalid_socket));
+    }
+    return *this;
+}
+
+bool TcpStream::wait(bool write, std::chrono::milliseconds timeout, const std::stop_token& stop) const {
+    return wait_socket(to_socket(handle_), write, timeout, stop);
+}
+
+bool TcpStream::send_all(std::string_view data, std::chrono::milliseconds timeout, std::stop_token stop) {
+    while (!data.empty()) {
+        if (!wait(true, timeout, stop)) {
+            return false;
+        }
+        const int size = static_cast<int>(std::min<std::size_t>(data.size(), 1 << 20));
+        const auto n = ::send(to_socket(handle_), data.data(), size, send_flags);
+        if (n <= 0) {
+            return false;
+        }
+        data.remove_prefix(static_cast<std::size_t>(n));
+    }
+    return true;
+}
+
+std::optional<std::string> TcpStream::read_line(std::size_t max, std::chrono::milliseconds timeout,
+                                                std::stop_token stop) {
+    std::string line;
+    char c = 0;
+    while (line.size() < max) {
+        if (!wait(false, timeout, stop) || ::recv(to_socket(handle_), &c, 1, 0) != 1) {
+            return std::nullopt;
+        }
+        if (c == '\n') {
+            return line;
+        }
+        line += c;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> TcpStream::read_all(std::size_t max, std::chrono::milliseconds timeout,
+                                               std::stop_token stop) {
+    std::string out;
+    std::array<char, 64 * 1024> buffer;
+    while (true) {
+        if (!wait(false, timeout, stop)) {
+            return std::nullopt;
+        }
+        const auto n = ::recv(to_socket(handle_), buffer.data(), static_cast<int>(buffer.size()), 0);
+        if (n == 0) {
+            return out;
+        }
+        if (n < 0 || out.size() + static_cast<std::size_t>(n) > max) {
+            return std::nullopt;
+        }
+        out.append(buffer.data(), static_cast<std::size_t>(n));
+    }
+}
+
+TcpListener::TcpListener() {
+    const socket_t s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == invalid_socket) {
+        fail("cannot create TCP socket");
+    }
+    handle_ = static_cast<std::uintptr_t>(s);
+    sockaddr_in addr {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = 0;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    socklen_t size = sizeof addr;
+    if (::bind(s, reinterpret_cast<const sockaddr*>(&addr), sizeof addr) != 0 || ::listen(s, 16) != 0 ||
+        getsockname(s, reinterpret_cast<sockaddr*>(&addr), &size) != 0) {
+        close_socket(s);
+        fail("cannot listen on a TCP port");
+    }
+    port_ = ntohs(addr.sin_port);
+}
+
+TcpListener::~TcpListener() {
+    close_socket(to_socket(handle_));
+}
+
+std::optional<TcpStream> TcpListener::accept(std::chrono::milliseconds timeout) {
+    const socket_t s = to_socket(handle_);
+    if (!wait_socket(s, false, timeout, {})) {
+        return std::nullopt;
+    }
+    const socket_t client = ::accept(s, nullptr, nullptr);
+    if (client == invalid_socket) {
+        return std::nullopt;
+    }
+    return TcpStream(static_cast<std::uintptr_t>(client));
+}
+
 
 } // namespace zchat::net

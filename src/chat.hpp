@@ -13,6 +13,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -118,7 +119,8 @@ private:
     };
 
     void run(std::stop_token stop);
-    void handle(const Packet& packet);
+    // from is the address the packet came from.
+    void handle(const Packet& packet, std::uint32_t from);
     // With once, to each network once, see net::BroadcastSocket::broadcast().
     void send(PacketType type, std::string_view text = {}, bool once = false);
     // Returns whether the message tags us. when is the time it was sent at, for messages from the history.
@@ -130,8 +132,18 @@ private:
     void print_art(std::uint64_t id, std::string_view name, std::string_view art) const;
     void print_picture(std::uint64_t id, std::string_view name, std::string_view text) const;
     void prune_silent_peers();
-    // Pictures in Chunks: sending one piece, putting the pieces we receive together, asking again for the ones
-    // that did not arrive, and sending again the ones asked for.
+    // Pictures too big for a packet, see send_picture(): offered, and downloaded by the others from us, on threads
+    // of their own (see start_transfer()); or else sent in Chunks, asked for again when some do not arrive.
+    struct Incoming;
+    using IncomingKey = std::pair<std::uint64_t, std::uint64_t>;
+    bool start_transfer(std::function<void(std::stop_token)> work);
+    void serve_pictures(std::stop_token stop);
+    void serve_picture(net::TcpStream& stream, std::stop_token stop);
+    void receive_offer(const Packet& packet, std::uint32_t from);
+    void download_picture(IncomingKey key, std::uint32_t from, std::uint16_t port, std::size_t bytes,
+                          std::stop_token stop);
+    void finish_downloads();
+    void finish_picture(std::map<IncomingKey, Incoming>::iterator it, std::string_view text);
     void send_chunk(std::uint64_t picture, std::size_t index, std::size_t count, std::string_view piece);
     void receive_chunk(const Packet& packet);
     void request_missing_chunks();
@@ -151,12 +163,12 @@ private:
     // Ids we used before changing color: our own late packets from them must not look like another peer.
     std::vector<std::uint64_t> old_ids_;
 
-    // Our pictures sent in Chunks lately, kept for whoever missed some of their pieces.
+    // Our pictures offered lately, kept for whoever downloads them or asks for their pieces.
     struct Outgoing {
         std::uint64_t sender = 0;
         std::uint64_t picture = 0;
-        std::vector<std::string> pieces;
-        // When each piece was last sent again.
+        std::shared_ptr<const std::string> text;
+        // When each piece was last sent in a Chunk.
         std::vector<clock::time_point> resent;
         clock::time_point sent;
     };
@@ -164,7 +176,7 @@ private:
     std::deque<Outgoing> outgoing_;
     std::atomic<std::uint64_t> next_picture_ {1};
 
-    // Pictures arriving in Chunks, by sender and picture; only the chat thread uses them.
+    // Pictures being downloaded or arriving in Chunks, by sender and picture; only the chat thread uses them.
     struct Incoming {
         std::string name;
         std::vector<std::string> pieces;
@@ -173,10 +185,27 @@ private:
         clock::time_point last_piece;
         clock::time_point last_request;
         clock::duration wait {};
+        bool downloading = false;
     };
-    std::map<std::pair<std::uint64_t, std::uint64_t>, Incoming> incoming_;
+    std::map<IncomingKey, Incoming> incoming_;
     // The ones put together lately, so pieces sent again for somebody else do not start them over.
     std::deque<std::pair<std::uint64_t, std::uint64_t>> received_pictures_;
+
+    // Downloads finished (the picture, or nullopt when it failed), for the chat thread.
+    struct Download {
+        IncomingKey key;
+        std::optional<std::string> text;
+    };
+    std::mutex downloads_mutex_;
+    std::vector<Download> downloads_;
+    struct Transfer {
+        std::shared_ptr<std::atomic<bool>> done;
+        std::jthread thread;
+    };
+    std::mutex transfers_mutex_;
+    std::vector<Transfer> transfers_;
+    std::optional<net::TcpListener> listener_;
+    std::jthread server_;
 
     // Held while a hook runs, so set_game_hooks() can wait for it.
     std::mutex hooks_mutex_;
