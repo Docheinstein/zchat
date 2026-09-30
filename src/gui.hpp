@@ -42,6 +42,7 @@ public:
     void set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter) override;
     void bell() override;
     bool show_image(std::string_view line, int width, int height, const std::vector<Frame>& frames) override;
+    bool show_file(std::string_view line, std::size_t index, std::string_view name, std::string_view size) override;
     void interrupt() override;
 
 private:

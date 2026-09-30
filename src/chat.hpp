@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <ctime>
 #include <deque>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -63,6 +64,18 @@ public:
 
     // Sends a real picture to everybody (see image::encode_picture()): windows show it, terminals draw it.
     void send_picture(std::string_view picture);
+
+    // Sends a file of any kind to everybody (see file::encode()), for them to download.
+    void send_file(std::string_view file);
+
+    // A file received (or sent) in this session: where it is kept until zchat quits, and its name.
+    struct ReceivedFile {
+        std::filesystem::path path;
+        std::string name;
+    };
+    // The file numbered index (from 1, in the order they came), as "/save INDEX" names it.
+    std::optional<ReceivedFile> received_file(std::size_t index) const;
+    std::size_t received_files() const;
 
     // Tells the others this peer is leaving and stops listening. Safe to call more than once.
     void stop();
@@ -130,7 +143,9 @@ private:
     // underlined. Sets tags_us when we are tagged.
     std::string mark_mentions(std::string_view text, bool& tags_us) const;
     void print_art(std::uint64_t id, std::string_view name, std::string_view art) const;
-    void print_picture(std::uint64_t id, std::string_view name, std::string_view text) const;
+    // Also files, which come the same way.
+    void print_picture(std::uint64_t id, std::string_view name, std::string_view text);
+    void print_file(std::uint64_t id, std::string_view name, std::string_view text);
     void prune_silent_peers();
     // Pictures too big for a packet, see send_picture(): offered, and downloaded by the others from us, on threads
     // of their own (see start_transfer()); or else sent in Chunks, asked for again when some do not arrive.
@@ -206,6 +221,10 @@ private:
     std::vector<Transfer> transfers_;
     std::optional<net::TcpListener> listener_;
     std::jthread server_;
+    // The files received, kept in files_dir_ (a temporary folder of this session's own, deleted when it ends).
+    std::filesystem::path files_dir_;
+    mutable std::mutex files_mutex_;
+    std::vector<ReceivedFile> files_;
 
     // Held while a hook runs, so set_game_hooks() can wait for it.
     std::mutex hooks_mutex_;
