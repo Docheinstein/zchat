@@ -29,6 +29,7 @@ enum class PacketType : char {
     // Windows show it as it is; terminals draw it with characters. Older versions do not know 'I' and ignore it.
     // Also "png W H" and "bmp W H", with the file: pictures are sent as they are whenever they can be.
     // Or a file of any kind, to download: "file SIZE NAME", see file::encode(). Older versions ignore it.
+    // Or a trill, an MP3 file everybody plays once: "trill SIZE NAME", the same way.
     Image = 'I',
     // An Image too big for one datagram, offered for download: "ID BYTES COUNT PORT", its id, the size of its text,
     // the number of Chunks it makes, and the TCP port of the sender to download it from, see Chat::send_picture().

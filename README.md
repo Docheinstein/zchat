@@ -86,6 +86,7 @@ While chatting:
 | `/file FILE`       | send a file of any kind (up to about 34 MB), for everyone to download |
 | drop a file        | drag any other file onto the window (or a terminal): the line becomes `/file PATH`, to send with Enter |
 | `/save N`          | save file N of the chat in your downloads folder; `/save` alone lists them (windows have a Download button) |
+| `/trill [MP3]`     | everybody in the chat hears an MP3 file once, as it arrives (up to 2 MB); `/trill` alone plays the built-in *Fahhh* |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
 | `/game`            | list the games everyone in the chat can play           |
@@ -148,6 +149,14 @@ the downloads folder (or the home folder, without one), with ` (2)`, ` (3)`... i
 there already. Until then, received files are kept in a temporary folder of zchat's own, deleted when it quits. As
 with pictures, dropping a file on a terminal types its full path, which then sends it. Names are cleaned up, so a
 file can never be saved outside the downloads folder. Versions from before files show nothing.
+
+`/trill` sends an MP3 file (up to 2 MB, about two minutes) the same way as `/file`, and everybody plays it once as it
+arrives, you too, whatever channel they are looking at (a trill in a channel is heard only by its members). The
+chat shows who sent it and its name. It is never saved: windows play it themselves; terminals keep it in zchat's
+temporary folder while it plays, with the system's own player (Windows' MCI, `afplay` on macOS, and on Linux the
+first of `mpg123`, `ffplay`, `mpv` and `paplay` that is installed), and delete it after. `/trill` alone plays the
+*Fahhh* built into zchat (`src/sounds/fahhh.mp3`). Only MP3 files are played. Versions from before trills show
+nothing.
 
 `/ascii` sends a picture as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
 with more ink, in the color of the picture. They are shown as solid blocks of color, as dark or bright as the

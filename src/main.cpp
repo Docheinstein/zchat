@@ -13,6 +13,7 @@
 #include "net.hpp"
 #include "terminal.hpp"
 #include "text.hpp"
+#include "trill_mp3.hpp"
 #include "update.hpp"
 
 #include <algorithm>
@@ -282,6 +283,9 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /file FILE   send a file of any kind, for everyone to download");
     chat.notice("               (or drop any other file on the window, then press Enter)");
     chat.notice("  /save N      save file N from the chat in your downloads folder (/save alone lists them)");
+    chat.notice(
+        std::format("  /trill [MP3] everybody in the chat hears an MP3 file once (up to {}; /trill alone: Fahhh)",
+                    zchat::file::format_size(zchat::file::max_bytes(zchat::file::Kind::Trill))));
     chat.notice("  @NAME        tag someone in a message: they hear a sound");
     chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
     chat.notice("  @everyone    tag all the people in the chat: they all hear a sound");
@@ -631,6 +635,23 @@ void send_file(zchat::Chat& chat, std::string_view arg) {
     const auto text = zchat::file::encode(zchat::image::parse_path(arg));
     if (!text) {
         chat.notice(std::format("Cannot send {}: {}", zchat::text::sanitize(arg, 200), text.error()));
+        return;
+    }
+    chat.send_file(*text);
+}
+
+// A trill: an MP3 file everybody in the chat (or the channel) hears once, as it arrives; without one, the sound built
+// into zchat.
+void send_trill(zchat::Chat& chat, std::string_view arg) {
+    if (arg.empty()) {
+        chat.send_file(zchat::file::encode("Fahhh.mp3",
+                                           std::string_view(reinterpret_cast<const char*>(trill_mp3), trill_mp3_size),
+                                           zchat::file::Kind::Trill));
+        return;
+    }
+    const auto text = zchat::file::encode(zchat::image::parse_path(arg), zchat::file::Kind::Trill);
+    if (!text) {
+        chat.notice(std::format("Cannot play {}: {}", zchat::text::sanitize(arg, 200), text.error()));
         return;
     }
     chat.send_file(*text);
@@ -1061,6 +1082,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             send_file(chat, input.substr(std::min(input.size(), std::string_view("/file ").size())));
         } else if (input == "/save" || input.starts_with("/save ")) {
             save_file(chat, input.substr(std::min(input.size(), std::string_view("/save ").size())));
+        } else if (input == "/trill" || input.starts_with("/trill ")) {
+            send_trill(chat, input.substr(std::min(input.size(), std::string_view("/trill ").size())));
         } else if (input == "/ascii" || input.starts_with("/ascii ")) {
             send_ascii(chat, input.substr(std::min(input.size(), std::string_view("/ascii ").size())));
         } else if (input == "/addemoji" || input.starts_with("/addemoji ")) {

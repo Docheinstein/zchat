@@ -273,7 +273,7 @@
 <div id="viewer"><img alt="picture"></div>
 <script>
 "use strict";
-// The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
+// The C++ side calls zchat.print(), zchat.bell(), zchat.sound() and zchat.info(); it is called through the functions it binds:
 // zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatChannels(), zchatChannelPeople(channel), zchatRewrite(line), zchatDrop(name, base64), zchatSettings()
 // and zchatSaveSettings(size, font).
 const log = document.getElementById("log");
@@ -434,6 +434,10 @@ window.zchat = {
       document.title = "(!) zchat";
       window.addEventListener("focus", () => { document.title = "zchat"; }, { once: true });
     }
+  },
+  // A trill (/trill): a sound, as a data: URL, played once as it arrives.
+  sound(src) {
+    new Audio(src).play().catch(() => {});
   },
   info(i) {
     port = i.port || 0;

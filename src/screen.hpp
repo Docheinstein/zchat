@@ -113,6 +113,15 @@ public:
         return false;
     }
 
+    // Plays a sound once (a trill, see sound.hpp): a sound file, its MIME type and its bytes in base64, if this screen
+    // can. Returns false where it cannot (a terminal), for it to be played with the system's own player instead.
+    // Thread-safe.
+    virtual bool play_sound(std::string_view mime, std::string_view base64) {
+        (void)mime;
+        (void)base64;
+        return false;
+    }
+
     // Makes read_line() return nullopt right away, now and from then on. Thread-safe.
     virtual void interrupt() = 0;
 };
