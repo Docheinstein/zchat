@@ -58,6 +58,15 @@
   #log .line { white-space: pre-wrap; overflow-wrap: anywhere; }
   /* Pictures and the paint canvas: characters touching, like in a terminal. */
   #log .block { white-space: pre; line-height: 1; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+  #log .picture img {
+    display: block; margin: 4px 0 6px 6ch; max-width: min(100% - 6ch, 480px); height: auto; max-height: 480px;
+    object-fit: contain; border-radius: 6px; cursor: zoom-in; background: #000;
+  }
+  #viewer {
+    position: fixed; inset: 0; display: none; place-items: center; background: #000c; z-index: 20; cursor: zoom-out;
+  }
+  /* As big as the window allows, even for a small picture. */
+  #viewer img { height: 88vh; width: auto; max-width: 92vw; object-fit: contain; border-radius: 6px; }
   #inputbar { position: relative; padding: 10px 14px 14px; border-top: 1px solid var(--border); }
   #input {
     width: 100%; background: var(--input); color: var(--text); border: 1px solid var(--border);
@@ -101,6 +110,7 @@
   </div>
 </main>
 <div id="drop">Drop an image to send it</div>
+<div id="viewer"><img alt="picture"></div>
 <script>
 "use strict";
 // The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
@@ -199,6 +209,32 @@ window.zchat = {
     while (log.childElementCount > maxLines) log.firstElementChild.remove();
     if (stick) log.scrollTop = log.scrollHeight;
   },
+  // A real picture: the line saying who sent it, then the picture, which can be opened big with a click. frames is
+  // [[src, delay], ...]: one for a still picture or a GIF (which plays by itself), more for an animation.
+  image(line, width, height, frames) {
+    const stick = atBottom();
+    const div = document.createElement("div");
+    div.className = "picture";
+    const head = document.createElement("div");
+    head.className = "line";
+    ansiToNodes(line, head);
+    const img = document.createElement("img");
+    img.width = width;
+    img.height = height;
+    img.alt = "picture";
+    animate(img, frames);
+    img.onclick = () => openViewer(frames);
+    // Once, when it first shows (an animation loads each frame): kept at the bottom unless scrolled away since.
+    img.addEventListener("load", () => {
+      if (stick && log.scrollHeight - log.scrollTop - log.clientHeight < img.offsetHeight + 40) {
+        log.scrollTop = log.scrollHeight;
+      }
+    }, { once: true });
+    div.append(head, img);
+    log.appendChild(div);
+    while (log.childElementCount > maxLines) log.firstElementChild.remove();
+    if (stick) log.scrollTop = log.scrollHeight;
+  },
   bell() {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -219,6 +255,33 @@ window.zchat = {
     document.getElementById("channel-item").textContent = "# " + (i.channel || "general");
   },
 };
+
+// --- Animations: the frames of an image element, shown one after the other for their delays, in a loop, while the
+// element is on the page.
+function animate(img, frames) {
+  img.src = frames[0][0];
+  if (frames.length < 2) return;
+  // Loaded and decoded ahead, and kept, so frames do not flicker or stutter.
+  img._frames = frames.map(([src]) => { const f = new Image(); f.src = src; f.decode().catch(() => {}); return f; });
+  let i = 0;
+  const next = () => {
+    if (!img.isConnected && img !== viewer.querySelector("img")) return;
+    i = (i + 1) % frames.length;
+    img.src = frames[i][0];
+    img._timer = setTimeout(next, Math.max(20, frames[i][1]));
+  };
+  clearTimeout(img._timer);
+  img._timer = setTimeout(next, Math.max(20, frames[0][1]));
+}
+
+// --- Opening a picture big, over the chat: a click, or Escape, closes it.
+const viewer = document.getElementById("viewer");
+function openViewer(frames) {
+  animate(viewer.querySelector("img"), frames);
+  viewer.style.display = "grid";
+}
+viewer.onclick = () => { viewer.style.display = "none"; clearTimeout(viewer.querySelector("img")._timer); };
+document.addEventListener("keydown", e => { if (e.key === "Escape") viewer.style.display = "none"; });
 
 // --- People: the names that can be tagged, which are the people in the chat.
 function styleColor(style) {

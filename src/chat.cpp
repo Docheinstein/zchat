@@ -35,6 +35,37 @@ namespace {
         return id;
     }
 
+    // Pictures in Chunks, see Chat::send_picture().
+    constexpr std::size_t max_outgoing_pictures = 8;
+    constexpr auto outgoing_picture_lifetime = 2min;
+    constexpr std::size_t max_incoming_pictures = 8;
+    constexpr std::size_t max_received_pictures = 64;
+    // How long after the last piece the missing ones are asked for (twice as long after each request that brings
+    // nothing, up to chunk_max_wait); when a picture is given up on; how soon a piece is not sent again, for
+    // everybody who asked for it at about the same time.
+    constexpr auto chunk_wait = 300ms;
+    constexpr auto chunk_max_wait = 2400ms;
+    constexpr auto chunk_give_up = 20s;
+    constexpr auto chunk_resend_interval = 250ms;
+
+    // "A B C": three numbers.
+    bool parse_numbers(std::string_view s, std::uint64_t& a, std::size_t& b, std::size_t& c) {
+        const char* p = s.data();
+        const char* end = s.data() + s.size();
+        std::uint64_t values[3] {};
+        for (int i = 0; i < 3; ++i) {
+            const auto [ptr, ec] = std::from_chars(p, end, values[i]);
+            if (ec != std::errc {} || (i < 2 ? ptr == end || *ptr != ' ' : ptr != end)) {
+                return false;
+            }
+            p = ptr + (i < 2 ? 1 : 0);
+        }
+        a = values[0];
+        b = static_cast<std::size_t>(values[1]);
+        c = static_cast<std::size_t>(values[2]);
+        return true;
+    }
+
     std::tm local_time(std::time_t t) {
         std::tm local {};
 #ifdef _WIN32
@@ -129,6 +160,156 @@ void Chat::draw(std::string_view art) {
     const std::string clean = decode(encode(packet)).value_or(Packet {}).text;
     send(PacketType::Art, clean);
     print_art(id_, name(), clean);
+}
+
+void Chat::send_picture(std::string_view picture) {
+    Packet packet;
+    packet.type = PacketType::Image;
+    packet.name = name();
+    packet.text = std::string(picture);
+    const std::string clean = decode(encode(packet)).value_or(Packet {}).text;
+    print_picture(id_, name(), clean);
+    if (clean.size() <= max_chunk_bytes) {
+        send(PacketType::Image, clean);
+        return;
+    }
+    // In pieces; the others ask again for the ones they miss, from the ones kept in outgoing_. They can be asked for
+    // only once all were sent: until then, the others are just waiting for them.
+    Outgoing out {id_, next_picture_++, {}, {}, clock::now()};
+    for (std::size_t i = 0; i < clean.size(); i += max_chunk_bytes) {
+        out.pieces.emplace_back(std::string_view(clean).substr(i, max_chunk_bytes));
+    }
+    out.resent.resize(out.pieces.size());
+    for (std::size_t i = 0; i < out.pieces.size(); ++i) {
+        send_chunk(out.picture, i, out.pieces.size(), out.pieces[i]);
+    }
+    std::scoped_lock lock(outgoing_mutex_);
+    while (!outgoing_.empty() && (outgoing_.size() >= max_outgoing_pictures ||
+                                  clock::now() - outgoing_.front().sent > outgoing_picture_lifetime)) {
+        outgoing_.pop_front();
+    }
+    outgoing_.push_back(std::move(out));
+}
+
+void Chat::send_chunk(std::uint64_t picture, std::size_t index, std::size_t count, std::string_view piece) {
+    std::string text = std::format("{} {} {}\n", picture, index, count);
+    text += piece;
+    send(PacketType::Chunk, text, true);
+}
+
+void Chat::receive_chunk(const Packet& packet) {
+    const auto nl = packet.text.find('\n');
+    if (nl == std::string::npos) {
+        return;
+    }
+    std::uint64_t picture = 0;
+    std::size_t index = 0;
+    std::size_t count = 0;
+    if (!parse_numbers(std::string_view(packet.text).substr(0, nl), picture, index, count) || count < 2 ||
+        count > max_chunks || index >= count) {
+        return;
+    }
+    const std::pair key {packet.sender, picture};
+    if (std::ranges::find(received_pictures_, key) != received_pictures_.end()) {
+        return;
+    }
+    auto it = incoming_.find(key);
+    if (it == incoming_.end()) {
+        if (incoming_.size() >= max_incoming_pictures) {
+            return;
+        }
+        it = incoming_.emplace(key, Incoming {packet.name, std::vector<std::string>(count), std::vector<bool>(count),
+                                              0, clock::now(), clock::now(), chunk_wait})
+                 .first;
+    }
+    Incoming& in = it->second;
+    if (in.pieces.size() != count || in.have[index]) {
+        return;
+    }
+    in.pieces[index] = packet.text.substr(nl + 1);
+    in.have[index] = true;
+    in.last_piece = clock::now();
+    in.wait = chunk_wait;
+    if (++in.received < count) {
+        return;
+    }
+    std::string text;
+    for (const auto& piece : in.pieces) {
+        text += piece;
+    }
+    const std::string name = std::move(in.name);
+    incoming_.erase(it);
+    received_pictures_.push_back(key);
+    if (received_pictures_.size() > max_received_pictures) {
+        received_pictures_.pop_front();
+    }
+    print_picture(packet.sender, name, text);
+}
+
+void Chat::request_missing_chunks() {
+    const auto now = clock::now();
+    for (auto it = incoming_.begin(); it != incoming_.end();) {
+        Incoming& in = it->second;
+        if (now - in.last_piece > chunk_give_up) {
+            notice(std::format("A picture from {} did not arrive whole.", colored_name(it->first.first, in.name)));
+            it = incoming_.erase(it);
+            continue;
+        }
+        // Once the pieces stop coming: the ones missing, as many as fit in a request.
+        if (now - in.last_piece >= in.wait && now - in.last_request >= in.wait) {
+            std::string request = std::format("{:x} {}", it->first.first, it->first.second);
+            for (std::size_t i = 0; i < in.have.size() && request.size() + 12 < max_resend_bytes; ++i) {
+                if (!in.have[i]) {
+                    request += std::format(" {}", i);
+                }
+            }
+            send(PacketType::Resend, request);
+            in.last_request = now;
+            in.wait = std::min<clock::duration>(in.wait * 2, chunk_max_wait);
+        }
+        ++it;
+    }
+}
+
+void Chat::resend_chunks(std::string_view request) {
+    const auto space = request.find(' ');
+    if (space == std::string_view::npos) {
+        return;
+    }
+    const auto sender = parse_id(request.substr(0, space));
+    request.remove_prefix(space + 1);
+    std::vector<std::size_t> indices;
+    std::uint64_t picture = 0;
+    bool first = true;
+    while (!request.empty()) {
+        const auto end = std::min(request.find(' '), request.size());
+        std::uint64_t n = 0;
+        const auto [ptr, ec] = std::from_chars(request.data(), request.data() + end, n);
+        if (ec != std::errc {} || ptr != request.data() + end) {
+            return;
+        }
+        if (first) {
+            picture = n;
+            first = false;
+        } else {
+            indices.push_back(static_cast<std::size_t>(n));
+        }
+        request.remove_prefix(std::min(end + 1, request.size()));
+    }
+    std::scoped_lock lock(outgoing_mutex_);
+    const auto it = std::ranges::find_if(outgoing_, [&](const Outgoing& out) {
+        return sender && out.sender == *sender && out.picture == picture;
+    });
+    if (it == outgoing_.end()) {
+        return;
+    }
+    const auto now = clock::now();
+    for (const std::size_t i : indices) {
+        if (i < it->pieces.size() && now - it->resent[i] >= chunk_resend_interval) {
+            it->resent[i] = now;
+            send_chunk(picture, i, it->pieces.size(), it->pieces[i]);
+        }
+    }
 }
 
 void Chat::set_name(std::string name) {
@@ -257,6 +438,28 @@ void Chat::print_art(std::uint64_t id, std::string_view name, std::string_view a
     terminal_.print(out);
 }
 
+void Chat::print_picture(std::uint64_t id, std::string_view name, std::string_view text) const {
+    const auto picture = image::parse_picture(text);
+    if (!picture) {
+        return;
+    }
+    const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", timestamp()) : timestamp();
+    std::vector<Screen::Frame> frames;
+    for (const auto& frame : picture->frames) {
+        frames.push_back({frame.mime, frame.base64, frame.delay_ms});
+    }
+    if (terminal_.show_image(std::format("{} {}:", time, colored_name(id, name)), picture->width, picture->height,
+                             frames)) {
+        return;
+    }
+    // Where pictures cannot be shown, drawn with characters: about one per 8 pixels, as wide as a terminal allows.
+    const std::size_t cols = std::clamp<std::size_t>(static_cast<std::size_t>(picture->width) / 8, 8, max_art_cols);
+    // (An animation: its first frame.)
+    if (const auto art = image::to_ascii_data(picture->first, cols, max_art_rows)) {
+        print_art(id, name, *art);
+    }
+}
+
 std::vector<std::string> Chat::peers() const {
     std::vector<std::string> names;
     {
@@ -311,14 +514,14 @@ void Chat::notice(std::string_view text) const {
     }
 }
 
-void Chat::send(PacketType type, std::string_view text) {
+void Chat::send(PacketType type, std::string_view text, bool once) {
     Packet packet;
     packet.type = type;
     packet.sender = id_;
     packet.seq = ++seq_;
     packet.name = name();
     packet.text = std::string(text);
-    socket_.broadcast(cipher::scramble(encode(packet)));
+    socket_.broadcast(cipher::scramble(encode(packet)), once);
 }
 
 void Chat::run(std::stop_token stop) {
@@ -332,6 +535,7 @@ void Chat::run(std::stop_token stop) {
                 handle(*packet);
             }
         }
+        request_missing_chunks();
         const auto now = clock::now();
         if (now >= next_refresh) {
             socket_.refresh_targets();
@@ -447,6 +651,15 @@ void Chat::handle(const Packet& packet) {
     }
     case PacketType::Art:
         print_art(packet.sender, packet.name, packet.text);
+        break;
+    case PacketType::Image:
+        print_picture(packet.sender, packet.name, packet.text);
+        break;
+    case PacketType::Chunk:
+        receive_chunk(packet);
+        break;
+    case PacketType::Resend:
+        resend_chunks(packet.text);
         break;
     case PacketType::Here:
     case PacketType::Leave:

@@ -61,9 +61,11 @@ While chatting:
 | `/color random`    | switch to a random color, and forget the saved one     |
 | `/tags`            | list the tags you can use in messages                  |
 | `/tags NAME`       | explain a tag, with an example (`/tag NAME` works too) |
-| `/image FILE`      | send a picture, drawn with blocks of color               |
-| `/image SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
-| `/image 30% FILE`  | the same with texture: from `0%`, blocks only (the default), to `100%`, symbols only; with a size too, in any order (`/image small 30% FILE`) |
+| `/image FILE`      | send a picture: windows show it as it is, terminals draw it with characters |
+| `/image SIZE FILE` | the same at another size: `small`, `medium`, `large` (default, up to 480 pixels), or a width in characters like `40` |
+| `/ascii FILE`      | send a picture drawn with characters (blocks of color), for everyone |
+| `/ascii SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
+| `/ascii 30% FILE`  | the same with texture: from `0%`, blocks only (the default), to `100%`, symbols only; with a size too, in any order (`/ascii small 30% FILE`); `/image 30% FILE` does the same |
 | `/addemoji NAME [SIZE] [TEXTURE%] FILE` | save a picture as an emoji, drawn as `/image` would; the same name again replaces it |
 | `/emoji NAME`      | send a saved emoji; `/emoji` alone lists yours          |
 | `/removeemoji NAME` | delete a saved emoji                                  |
@@ -108,7 +110,21 @@ read <u>this</u> first, the meeting is on <s>Monday</s> Tuesday
 Anything that is not a valid tag is shown as typed. Tags are applied by whoever receives the message, so older
 zchat versions show them as plain text.
 
-Pictures are sent as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
+`/image` sends a real picture, the file as it is (PNG, JPEG, GIF and BMP files up to about 36 MB), so it keeps all
+its quality. Windows show it at most 480 pixels wide and tall (never bigger than it is; a size makes it smaller),
+and a click opens it big, at its full size. Terminals, which cannot show pictures, draw it with characters, as
+`/ascii` would. Other kinds of file (TGA, PSD, PNM) and bigger ones are sent as a JPEG of good quality instead, up to
+1280 pixels. Versions from before real pictures show nothing.
+
+Animated GIFs play in windows at their own speed and full quality, as any GIF does, since the file is sent as it is.
+One too big for that is sent as JPEG frames, all of them, as big and good as fits; one too long to decode (over 64
+million pixels in all its frames) is then sent as its first frame, and zchat says so. Terminals draw the first frame.
+
+A picture bigger than one packet is sent in pieces (48 KB each, about 20 per MB), which take as long as the network
+needs to carry them (a few seconds for tens of MB on Wi-Fi). Whoever misses some asks for them again, so a picture
+arrives whole even when packets get lost. Versions from before pieces only see pictures of up to about 45 KB.
+
+`/ascii` sends a picture as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
 with more ink, in the color of the picture. They are shown as solid blocks of color, as dark or bright as the
 picture there, so they look the same in every terminal and font (it looks best on a dark terminal; without colors,
 they are shown as the black and white ASCII art). PNG, JPEG, GIF, BMP, TGA, PSD and PNM files can be sent. Dropping
@@ -230,7 +246,8 @@ the terminal version.)
 
 * Every instance binds UDP port 47474 (shared, so several instances can run on the same machine) and **broadcasts**
   its packets to `255.255.255.255` and to the broadcast address of each network interface. Packets that arrive more
-  than once this way are dropped by sequence number.
+  than once this way are dropped by sequence number. The pieces of big pictures are sent once per network instead
+  (to the broadcast address of each interface only), since they are a lot of data.
 * On start a peer sends `JOIN`; the others answer with `HERE`, so the newcomer learns who is around. Everybody sends
   `HERE` every 5 seconds as a heartbeat; a peer silent for 16 seconds is considered gone. Quitting sends `LEAVE`.
 * A name's color is `sender id % 12`, so choosing a color means picking a new random id that maps to it. A custom
@@ -257,6 +274,11 @@ the terminal version.)
   square carries a clock and a tag from the painter's id, and a square keeps the newest change, so changes lost or
   heard out of order do not matter. Every 15 seconds each zchat sends a hash of its canvas, and whoever has a
   different one sends the changes it has, so newcomers and whoever missed a packet catch up. Older versions ignore `GAME` packets, so they just see people typing funny words.
+* **Pictures** bigger than a packet go as `CHUNK` packets (`<picture id> <index> <count>`, then a piece of the
+  picture's text), put back together by whoever receives them. When the pieces stop coming and some are missing,
+  the receiver sends a `RESEND` packet (`<sender id> <picture id> <index> ...`), waiting twice as long each time it
+  gets nothing; the sender keeps its last pictures for two minutes and sends those pieces again. A picture whose
+  pieces stop coming for 20 seconds is given up on, and zchat says so.
 * Incoming names and messages are sanitized (control characters stripped) so nobody can mess with your terminal.
 * The input line is edited in raw mode, so incoming messages are printed above what you are typing instead of
   getting mixed with it.
@@ -264,7 +286,7 @@ the terminal version.)
 Wire format, one datagram per packet (fields separated by `\n`):
 
 ```
-ZCHAT1 \n <J|H|M|L|P|G> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
+ZCHAT1 \n <J|H|M|L|P|G|I|K|R> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
 ```
 
 which is sent scrambled (see `src/cipher.hpp`):
