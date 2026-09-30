@@ -108,8 +108,17 @@ a block drawn over it. Each character is looked at as 8 x 8 points, and gets the
 the eighths (`▁▂▃▅▆▇ ▔`, `▏▎▍▋▊▉ ▕`) and the quadrants (`▘▝▖▗▚▞▛▜▙▟`), and the two colors that look the most
 like it: edges fall where they are to an eighth of a character, and thin dark outlines (eyes, teeth, the lines of
 a drawing) are kept instead of being averaged away. These blocks are drawn by Windows Terminal itself, and by most
-fonts, to fill exactly their part of the character. A line that would be too long for a packet is drawn with one
-color per character, or as the plain ASCII art. Versions from before this show the codes as they are.
+fonts, to fill exactly their part of the character. To keep lines crisp, each character also tries its two main
+colors (so a white stays white next to a black outline instead of both turning grey), and candidates are compared
+by the absolute difference of their colors, which does not favor averaging over sharpness.
+
+Each picture comes with its own palette, the 61 colors that represent it best (found with k-means), in a first
+row: `$` followed by 3 characters per color (one per channel, 64 levels each). The color codes of the drawing
+refer to it, so skin, the white of an eye or a sky get their own colors instead of the closest of fixed hues.
+
+A line with a lot of detail that would be too long for a packet keeps the blocks of its clearest details only, and
+at worst is drawn with one color per character, or as the plain ASCII art. Versions from before this show the codes
+as they are, and may not receive the biggest pictures at all (they took at most 8 KB).
 
 Images are decoded with [stb_image](https://github.com/nothings/stb) (public domain / MIT), in `third_party/stb`.
 

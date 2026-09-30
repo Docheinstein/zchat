@@ -23,7 +23,8 @@ bool is_dropped_image(std::string_view line);
 // from dark to bright, and blocks (▀▄▌▐, eighths like ▁▂▃ and ▏▎▍, quadrants like ▘▚▙) where a character has parts
 // of two colors; codes before them set their look: a letter or digit their color, one of ()[]{}<>^~;? how bright
 // they are, from the dimmest to full ('`' for black), and '&' followed by a color and a brightness code the color
-// behind the blocks ('|' for none). Every row starts without a color, at full brightness and without a background,
+// behind the blocks ('|' for none). The first row is the palette of the picture, '$' then 3 characters per color,
+// which the color codes refer to. Every row starts without a color, at full brightness and without a background,
 // and a row that would be too long for a packet is drawn more simply. On failure, returns why.
 std::expected<std::string, std::string> to_ascii(const std::filesystem::path& path, std::size_t max_cols,
                                                  std::size_t max_rows);
