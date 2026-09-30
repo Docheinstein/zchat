@@ -97,6 +97,17 @@
   #channel-panel button:hover { border-color: var(--accent); }
   #channel-panel button.add { border-color: var(--accent); color: var(--accent); }
   #channel-panel button.remove:hover { border-color: #e5534b; color: #e5534b; }
+  /* The dice window, when the web view cannot open a real one: floating, dragged by its title. */
+  #dice-float {
+    position: fixed; top: 60px; right: 24px; width: 360px; z-index: 18; display: none; background: #111317;
+    border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px #000b; overflow: hidden;
+  }
+  #dice-float.open { display: block; }
+  #dice-float-title {
+    display: flex; align-items: center; padding: 6px 10px; background: var(--panel); cursor: move; color: var(--muted);
+    font-size: 12px; user-select: none;
+  }
+  #dice-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
   #new-channel { display: none; margin: 4px 14px 8px; }
   #new-channel.open { display: block; }
   #new-channel input, #new-channel select {
@@ -210,6 +221,7 @@
   }
   body.dragging #drop { display: grid; }
 </style>
+<style id="dice-style"></style>
 </head>
 <body>
 <header>
@@ -221,6 +233,7 @@
     <button id="channel-delete" class="danger" title="Delete this channel, for everybody" hidden>Delete</button>
   </span>
   <span class="spacer"></span>
+  <button id="dice-open" title="Dice" hidden>🎲</button>
   <select id="font" title="Font"></select>
   <button id="smaller" title="Smaller text">A−</button>
   <button id="bigger" title="Bigger text">A+</button>
@@ -269,6 +282,8 @@
   <div class="buttons"><button id="profile-cancel">Cancel</button><button class="primary" id="profile-save">Save</button></div>
 </div>
 <div id="channel-panel"></div>
+<div id="dice-float"><div id="dice-float-title">zchat · dice<button id="dice-float-close" title="Close">×</button></div>
+  <div class="dice" id="dice-body"></div></div>
 <div id="drop">Drop a picture or a file to send it</div>
 <div id="viewer"><img alt="picture"></div>
 <script>
@@ -632,6 +647,199 @@ newChannelName.addEventListener("keydown", e => {
   if (e.key === "Enter") { createChannel(); e.preventDefault(); }
   else if (e.key === "Escape") { newChannel.classList.remove("open"); input.focus(); e.preventDefault(); }
 });
+
+// --- Dice, in a window of its own (zchat.game("dice", state)): a real window when the web view allows one
+// (window.open), or else one floating over the chat. Its buttons send the /game dice commands.
+const diceStyle = `
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #111317; color: #d6d9df; font: 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .dice { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .top { display: flex; align-items: baseline; gap: 8px; }
+  .top .title { font-size: 18px; font-weight: 700; }
+  .top .by { color: #7d8491; font-size: 12px; }
+  .timer { display: flex; justify-content: space-between; align-items: baseline; }
+  .timer .left { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .timer .phase { color: #7d8491; }
+  .timer .left.low { color: #e5534b; }
+  .bar { height: 6px; border-radius: 3px; background: #262a33; overflow: hidden; }
+  .bar div { height: 100%; background: #6ea8ff; transition: width .9s linear; }
+  .bar div.low { background: #e5534b; }
+  .you { background: #181b21; border: 1px solid #262a33; border-radius: 10px; padding: 12px; display: flex; align-items: center; gap: 14px; }
+  .you .face { font-size: 46px; line-height: 1; width: 52px; text-align: center; }
+  .you .points { font-size: 22px; font-weight: 700; }
+  .you .hint { color: #7d8491; font-size: 12px; }
+  .buttons { display: flex; gap: 8px; }
+  .buttons button { flex: 1; height: 40px; border-radius: 8px; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+    border: 1px solid #262a33; background: #1e222a; color: #d6d9df; }
+  .buttons button.roll { background: #6ea8ff; border-color: #6ea8ff; color: #0b0d10; }
+  .buttons button.stop { border-color: #3fb950; color: #3fb950; }
+  .buttons button:disabled { opacity: .35; cursor: default; }
+  h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: #7d8491; margin: 0 0 6px; }
+  .player { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid #1c1f26; }
+  .player .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .player .name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .player .status { font-size: 12px; color: #7d8491; }
+  .player .pts { font-weight: 700; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
+  .player.win .pts { color: #f2c94c; }
+  .none { color: #7d8491; font-size: 12px; }
+  .result { font-size: 15px; font-weight: 700; text-align: center; padding: 6px; border-radius: 8px; background: #2a2410; color: #f2c94c; }
+`;
+let diceState = null, dicePopup = null, diceClosedRound = null;
+// The same look for the floating window, but only inside it.
+document.getElementById("dice-style").textContent = diceStyle.replace(/:root \{[^}]*\}/, "").replace(/(^|\})\s*([^{}@]+)\{/g,
+  (m, end, sel) => end + " " + sel.split(",").map(x => x.trim() === "body" ? "#dice-float" : "#dice-float " + x.trim()).join(", ") + " {");
+const diceFloat = document.getElementById("dice-float");
+function diceDoc() {
+  // The real window, while it is open; or the floating one.
+  if (dicePopup && !dicePopup.closed) return dicePopup.document;
+  return null;
+}
+function openDice(focus) {
+  if (!diceDoc()) {
+    let w = null;
+    try { w = window.open("", "zchat-dice", "popup,width=380,height=560"); } catch {}
+    if (w && w.document) {
+      w.document.open();
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · dice</title><style>${diceStyle}</style></head><body><div class="dice" id="dice"></div></body></html>`);
+      w.document.close();
+      dicePopup = w;
+      // Someone else's round: back to typing in the chat.
+      if (!focus) setTimeout(() => { try { window.focus(); } catch {} }, 50);
+    } else {
+      dicePopup = null;
+      diceFloat.classList.add("open");
+    }
+  }
+  renderDice();
+}
+function closeDice() {
+  if (diceState) diceClosedRound = diceState.round;
+  if (dicePopup && !dicePopup.closed) dicePopup.close();
+  dicePopup = null;
+  diceFloat.classList.remove("open");
+}
+function diceSend(line) {
+  window.zchatSend(line);
+}
+const faces = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
+function renderDice() {
+  const s = diceState;
+  const doc = diceDoc() || document;
+  const root = diceDoc() ? doc.getElementById("dice") : document.getElementById("dice-body");
+  if (!s || !root || (!diceDoc() && !diceFloat.classList.contains("open"))) return;
+  const el = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  root.textContent = "";
+  const top = el("div", "top");
+  top.append(el("span", "title", "🎲 Dice"), el("span", "by", s.starter ? "started by " + s.starter : ""));
+  if (diceDoc()) {
+    const close = el("button", "", "×");
+    close.style.cssText = "margin-left:auto;background:none;border:0;color:#7d8491;font-size:18px;cursor:pointer";
+    close.onclick = closeDice;
+    top.append(close);
+  }
+  root.append(top);
+
+  // The time left: to join, then to play.
+  const timer = el("div", "timer");
+  const over = s.phase === "over";
+  const low = !over && s.left <= 10;
+  timer.append(el("span", "left" + (low ? " low" : ""), over ? "Over" : s.left + "s"),
+               el("span", "phase", over ? "round finished" : s.phase === "join" ? "join in " + s.joinLeft + "s" : "left to play"));
+  root.append(timer);
+  const bar = el("div", "bar"), fill = el("div", low ? "low" : "");
+  fill.style.width = over ? "0%" : Math.min(100, s.left / 60 * 100) + "%";
+  bar.append(fill);
+  root.append(bar);
+
+  if (s.result) root.append(el("div", "result", "🏆 " + s.result));
+
+  // Us: our points (only we see them) and our last roll.
+  const you = el("div", "you");
+  const face = el("div", "face", s.playing ? (faces[s.face] || "🎲") : "🎲");
+  const info = el("div");
+  if (!s.playing) {
+    info.append(el("div", "points", over ? "You did not play" : s.phase === "join" ? "Roll to join" : "Too late to join"),
+                el("div", "hint", over ? "" : s.phase === "join" ? "Each roll adds its points; a 1 loses them all." : "Wait for the next round."));
+  } else if (s.status === "rolling") {
+    info.append(el("div", "points", s.points + (s.points === 1 ? " point" : " points")),
+                el("div", "hint", s.face === 0 ? "Roll!" : "Only you see them. Roll again, or stop to keep them."));
+  } else if (s.status === "stopped") {
+    info.append(el("div", "points", "Kept " + s.points + (s.points === 1 ? " point" : " points")),
+                el("div", "hint", over ? "" : "The others see them when the round ends."));
+  } else {
+    info.append(el("div", "points", s.face === 1 ? "Rolled a 1: out!" : "Out"), el("div", "hint", "Better luck next round."));
+  }
+  you.append(face, info);
+  root.append(you);
+
+  const buttons = el("div", "buttons");
+  if (over) {
+    const again = el("button", "roll", "New round");
+    again.onclick = () => diceSend("/game dice");
+    buttons.append(again);
+  } else {
+    const canRoll = s.playing ? s.status === "rolling" : s.phase === "join";
+    const roll = el("button", "roll", s.playing ? "Roll" : "Roll to join");
+    roll.disabled = !canRoll;
+    roll.onclick = () => diceSend("/game dice roll");
+    const stop = el("button", "stop", "Stop");
+    stop.disabled = !(s.playing && s.status === "rolling");
+    stop.onclick = () => diceSend("/game dice stop");
+    buttons.append(roll, stop);
+  }
+  root.append(buttons);
+
+  // The players: rolling, stopped or out; their points only at the end.
+  const list = el("div");
+  list.append(el("h3", "", "Players"));
+  if (!s.players.length) list.append(el("div", "none", "Nobody yet."));
+  const best = over ? Math.max(0, ...s.players.filter(p => p.status === "stopped").map(p => p.points || 0)) : -1;
+  for (const p of s.players) {
+    const row = el("div", "player" + (over && best > 0 && p.status === "stopped" && p.points === best ? " win" : ""));
+    const dot = el("span", "dot");
+    dot.style.background = p.color;
+    const name = el("span", "name", p.name + (p.you ? " (you)" : ""));
+    name.style.color = p.color;
+    const status = el("span", "status", p.status === "rolling" ? "🎲 rolling" : p.status === "stopped" ? "✋ stopped" : "💥 out");
+    row.append(dot, name, status);
+    if (p.points !== null && p.status === "stopped") row.append(el("span", "pts", String(p.points)));
+    list.append(row);
+  }
+  root.append(list);
+}
+zchat.game = (game, state) => {
+  if (game !== "dice") return;
+  const fresh = !diceState || diceState.round !== state.round;
+  diceState = state;
+  document.getElementById("dice-open").hidden = false;
+  // A new round opens it, unless it was closed during this one.
+  if (fresh && state.phase !== "over" && diceClosedRound !== state.round) {
+    openDice(state.playing || state.starter === selfName);
+  } else {
+    renderDice();
+  }
+};
+document.getElementById("dice-open").onclick = () => { diceClosedRound = null; openDice(true); };
+document.getElementById("dice-float-close").onclick = closeDice;
+// The floating one can be dragged by its title.
+(() => {
+  const handle = document.getElementById("dice-float-title");
+  let dx = 0, dy = 0, dragging = false;
+  handle.addEventListener("mousedown", e => {
+    dragging = true;
+    const r = diceFloat.getBoundingClientRect();
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    diceFloat.style.left = Math.max(0, e.clientX - dx) + "px";
+    diceFloat.style.top = Math.max(0, e.clientY - dy) + "px";
+    diceFloat.style.right = "auto";
+  });
+  document.addEventListener("mouseup", () => { dragging = false; });
+})();
 
 // --- Animations: the frames of an image element, shown one after the other for their delays, in a loop, while the
 // element is on the page.

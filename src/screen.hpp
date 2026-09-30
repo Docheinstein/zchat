@@ -71,6 +71,12 @@ public:
     };
     virtual void set_channel_people(std::function<ChannelPeople(std::string_view channel)> /*source*/) {}
 
+    // Shows the state of a game in a window of its own (see the dice game), where it can: state is JSON, as the
+    // game makes it. Returns false where it cannot (a terminal), where the game is played with commands. Thread-safe.
+    virtual bool show_game(std::string_view /*game*/, std::string_view /*state*/) {
+        return false;
+    }
+
     // Empties what is shown (another channel is joined), where it can: returns false where it cannot (a terminal).
     // Thread-safe.
     virtual bool clear() {
