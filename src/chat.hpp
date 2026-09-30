@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace zchat {
@@ -58,6 +59,9 @@ public:
 
     // Sends a picture drawn with characters to everybody: its rows, separated by '\n'.
     void draw(std::string_view art);
+
+    // Sends a real picture to everybody (see image::encode_picture()): windows show it, terminals draw it.
+    void send_picture(std::string_view picture);
 
     // Tells the others this peer is leaving and stops listening. Safe to call more than once.
     void stop();
@@ -115,7 +119,8 @@ private:
 
     void run(std::stop_token stop);
     void handle(const Packet& packet);
-    void send(PacketType type, std::string_view text = {});
+    // With once, to each network once, see net::BroadcastSocket::broadcast().
+    void send(PacketType type, std::string_view text = {}, bool once = false);
     // Returns whether the message tags us. when is the time it was sent at, for messages from the history.
     bool print_message(std::uint64_t id, std::string_view name, std::string_view text,
                        std::optional<std::time_t> when = std::nullopt) const;
@@ -123,7 +128,14 @@ private:
     // underlined. Sets tags_us when we are tagged.
     std::string mark_mentions(std::string_view text, bool& tags_us) const;
     void print_art(std::uint64_t id, std::string_view name, std::string_view art) const;
+    void print_picture(std::uint64_t id, std::string_view name, std::string_view text) const;
     void prune_silent_peers();
+    // Pictures in Chunks: sending one piece, putting the pieces we receive together, asking again for the ones
+    // that did not arrive, and sending again the ones asked for.
+    void send_chunk(std::uint64_t picture, std::size_t index, std::size_t count, std::string_view piece);
+    void receive_chunk(const Packet& packet);
+    void request_missing_chunks();
+    void resend_chunks(std::string_view request);
 
     // Changes with the color, see set_color().
     std::atomic<std::uint64_t> id_;
@@ -138,6 +150,33 @@ private:
     std::map<std::uint64_t, Peer> peers_;
     // Ids we used before changing color: our own late packets from them must not look like another peer.
     std::vector<std::uint64_t> old_ids_;
+
+    // Our pictures sent in Chunks lately, kept for whoever missed some of their pieces.
+    struct Outgoing {
+        std::uint64_t sender = 0;
+        std::uint64_t picture = 0;
+        std::vector<std::string> pieces;
+        // When each piece was last sent again.
+        std::vector<clock::time_point> resent;
+        clock::time_point sent;
+    };
+    std::mutex outgoing_mutex_;
+    std::deque<Outgoing> outgoing_;
+    std::atomic<std::uint64_t> next_picture_ {1};
+
+    // Pictures arriving in Chunks, by sender and picture; only the chat thread uses them.
+    struct Incoming {
+        std::string name;
+        std::vector<std::string> pieces;
+        std::vector<bool> have;
+        std::size_t received = 0;
+        clock::time_point last_piece;
+        clock::time_point last_request;
+        clock::duration wait {};
+    };
+    std::map<std::pair<std::uint64_t, std::uint64_t>, Incoming> incoming_;
+    // The ones put together lately, so pieces sent again for somebody else do not start them over.
+    std::deque<std::pair<std::uint64_t, std::uint64_t>> received_pictures_;
 
     // Held while a hook runs, so set_game_hooks() can wait for it.
     std::mutex hooks_mutex_;

@@ -152,7 +152,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /color random  pick a random color (not kept)");
     chat.notice("  /tags        list the tags for messages, like <color=red>text</color>");
     chat.notice("  /tags NAME   explain a tag, with an example");
-    chat.notice("  /image [SIZE] [TEXTURE%] FILE  send a picture, drawn with blocks of color");
+    chat.notice("  /image [SIZE] FILE  send a picture (windows show it, terminals draw it with characters)");
+    chat.notice("  /ascii [SIZE] [TEXTURE%] FILE  send a picture drawn with characters, for everyone");
     chat.notice("               (SIZE: small, medium, large, a width like 40, or 40x20;");
     chat.notice("                TEXTURE%: 0% blocks only, the default, to 100% symbols only)");
     chat.notice("  /addemoji NAME [SIZE] [TEXTURE%] FILE  save a picture as an emoji");
@@ -324,13 +325,19 @@ std::optional<int> parse_percent(std::string_view s) {
     return value;
 }
 
-// Turns "[SIZE] [TEXTURE%] FILE" into a drawing, or says why it cannot ("Cannot <what> FILE: ...").
-std::optional<std::string> draw_image(zchat::Chat& chat, std::string_view arg, std::string_view what) {
+// What "[SIZE] [TEXTURE%] FILE" says, for /image, /ascii and /addemoji.
+struct ImageArgs {
+    ArtSize size;
+    bool sized = false;
+    std::optional<int> texture;
+    std::string_view file;
+};
+
+// Reads "[SIZE] [TEXTURE%] FILE", or says why it cannot.
+std::optional<ImageArgs> parse_image_args(zchat::Chat& chat, std::string_view arg) {
     // A size and a texture first, in any order, when there is something after them: "/image 40" alone still sends
     // a file named 40.
-    ArtSize size;
-    std::optional<int> texture;
-    bool sized = false;
+    ImageArgs args;
     while (true) {
         const auto space = arg.find(' ');
         if (space == std::string_view::npos) {
@@ -344,41 +351,92 @@ std::optional<std::string> draw_image(zchat::Chat& chat, std::string_view arg, s
         if (rest.empty()) {
             break;
         }
-        if (const auto percent = parse_percent(word); percent && !texture) {
-            texture = *percent;
+        if (const auto percent = parse_percent(word); percent && !args.texture) {
+            args.texture = *percent;
         } else if (word.ends_with('%') && !percent) {
             chat.notice(std::format("The texture is from 0% to 100%, not {}.", zchat::text::sanitize(word, 20)));
             return std::nullopt;
-        } else if (const auto parsed = parse_art_size(word); parsed && !sized) {
-            size = *parsed;
-            sized = true;
+        } else if (const auto parsed = parse_art_size(word); parsed && !args.sized) {
+            args.size = *parsed;
+            args.sized = true;
         } else {
             break;
         }
         arg = rest;
     }
-    auto art = zchat::image::to_ascii(zchat::image::parse_path(arg), size.cols, size.rows, texture.value_or(0));
+    args.file = arg;
+    return args;
+}
+
+// Turns "[SIZE] [TEXTURE%] FILE" into a drawing, or says why it cannot ("Cannot <what> FILE: ...").
+std::optional<std::string> draw_image(zchat::Chat& chat, std::string_view arg, std::string_view what) {
+    const auto args = parse_image_args(chat, arg);
+    if (!args) {
+        return std::nullopt;
+    }
+    auto art = zchat::image::to_ascii(zchat::image::parse_path(args->file), args->size.cols, args->size.rows,
+                                      args->texture.value_or(0));
     if (!art) {
-        chat.notice(std::format("Cannot {} {}: {}", what, zchat::text::sanitize(arg, 200), art.error()));
+        chat.notice(std::format("Cannot {} {}: {}", what, zchat::text::sanitize(args->file, 200), art.error()));
         return std::nullopt;
     }
     return std::move(*art);
 }
 
-void send_image(zchat::Chat& chat, std::string_view arg) {
+// How big a real picture of a size is: large (the default) is as big as a packet takes well, and a width in characters
+// is about as wide as that drawing would be (8 pixels a character).
+constexpr int picture_pixels_per_char = 8;
+constexpr int max_picture_size = 480;
+
+void ascii_help(zchat::Chat& chat, std::string_view command) {
+    chat.notice(std::format("Use {} [SIZE] [TEXTURE%] FILE to send a picture drawn with characters.", command));
+    chat.notice(std::format("SIZE is small, medium, large (the default), a width like 40, or a width and height "
+                            "like 40x20, up to {}x{}.",
+                            zchat::max_art_cols, zchat::max_art_rows));
+    chat.notice("TEXTURE% is how much is drawn with symbols instead of blocks: 0% none (the default), about 15% the "
+                "dark parts, 100% no blocks at all.");
+}
+
+void send_ascii(zchat::Chat& chat, std::string_view arg) {
     if (arg.empty()) {
-        chat.notice("Use /image [SIZE] [TEXTURE%] FILE to send a picture, or drop an image file on the window and press "
-                    "Enter.");
-        chat.notice(std::format("SIZE is small, medium, large (the default), a width like 40, or a width and height "
-                                "like 40x20, up to {}x{}.",
-                                zchat::max_art_cols, zchat::max_art_rows));
-        chat.notice("TEXTURE% is how much is drawn with symbols instead of blocks: 0% none (the default), about 15% the "
-                    "dark parts, 100% no blocks at all.");
+        ascii_help(chat, "/ascii");
         return;
     }
     if (const auto art = draw_image(chat, arg, "send")) {
         chat.draw(*art);
     }
+}
+
+void send_image(zchat::Chat& chat, std::string_view arg) {
+    if (arg.empty()) {
+        chat.notice("Use /image [SIZE] FILE to send a picture, or drop an image file on the window and press Enter. "
+                    "Windows show it as it is, terminals draw it with characters.");
+        chat.notice("SIZE is small, medium, large (the default), or a width in characters like 40.");
+        chat.notice("For a picture drawn with characters for everyone, use /ascii [SIZE] [TEXTURE%] FILE (or /image "
+                    "with a TEXTURE%).");
+        return;
+    }
+    const auto args = parse_image_args(chat, arg);
+    if (!args) {
+        return;
+    }
+    // A texture is for pictures drawn with characters.
+    if (args->texture) {
+        send_ascii(chat, arg);
+        return;
+    }
+    const int size = std::min(max_picture_size, static_cast<int>(std::min(args->size.cols * picture_pixels_per_char,
+                                                                          args->size.rows * 2 * picture_pixels_per_char)));
+    bool still = false;
+    const auto picture = zchat::image::encode_picture(zchat::image::parse_path(args->file), size, &still);
+    if (!picture) {
+        chat.notice(std::format("Cannot send {}: {}", zchat::text::sanitize(args->file, 200), picture.error()));
+        return;
+    }
+    if (still) {
+        chat.notice("That animation is too long to send whole: sending its first frame.");
+    }
+    chat.send_picture(*picture);
 }
 
 // Emoji: pictures saved under a name, already drawn, in the emoji folder of the config folder, one NAME.art file
@@ -643,6 +701,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             forget_nick(chat, rng);
         } else if (input == "/image" || input.starts_with("/image ")) {
             send_image(chat, input.substr(std::min(input.size(), std::string_view("/image ").size())));
+        } else if (input == "/ascii" || input.starts_with("/ascii ")) {
+            send_ascii(chat, input.substr(std::min(input.size(), std::string_view("/ascii ").size())));
         } else if (input == "/addemoji" || input.starts_with("/addemoji ")) {
             add_emoji(chat, input.substr(std::min(input.size(), std::string_view("/addemoji ").size())));
         } else if (input == "/removeemoji" || input.starts_with("/removeemoji ")) {

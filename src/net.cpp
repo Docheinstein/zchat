@@ -149,6 +149,12 @@ BroadcastSocket::BroadcastSocket(std::uint16_t port) :
         fail("cannot set SO_BROADCAST");
     }
 
+    // Room for the burst of datagrams of a big picture (see Chat::send_picture()); fine if the system gives less.
+    const int buffer_bytes = 16 * 1024 * 1024;
+    const auto* buffer_opt = reinterpret_cast<const char*>(&buffer_bytes);
+    setsockopt(s, SOL_SOCKET, SO_RCVBUF, buffer_opt, sizeof buffer_bytes);
+    setsockopt(s, SOL_SOCKET, SO_SNDBUF, buffer_opt, sizeof buffer_bytes);
+
     sockaddr_in addr {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
@@ -170,11 +176,14 @@ void BroadcastSocket::refresh_targets() {
     targets_ = std::move(targets);
 }
 
-void BroadcastSocket::broadcast(std::string_view payload) {
+void BroadcastSocket::broadcast(std::string_view payload, bool once) {
     std::vector<std::uint32_t> targets;
     {
         std::scoped_lock lock(targets_mutex_);
         targets = targets_;
+    }
+    if (once && targets.size() > 1) {
+        std::erase(targets, htonl(INADDR_BROADCAST));
     }
     for (std::uint32_t target : targets) {
         sockaddr_in addr {};

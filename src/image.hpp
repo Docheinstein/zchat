@@ -3,8 +3,11 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace zchat::image {
 
@@ -31,6 +34,44 @@ bool is_dropped_image(std::string_view line);
 // (no blocks at all). On failure, returns why.
 std::expected<std::string, std::string> to_ascii(const std::filesystem::path& path, std::size_t max_cols,
                                                  std::size_t max_rows, int texture = 0);
+
+// The same, from the bytes of an image file (e.g. the JPEG of a received picture).
+std::expected<std::string, std::string> to_ascii_data(std::string_view encoded, std::size_t max_cols,
+                                                      std::size_t max_rows, int texture = 0);
+
+// The bytes of an image file, or why they cannot be read.
+std::expected<std::string, std::string> read_image_file(const std::filesystem::path& path);
+
+// An image file decoded: its pixels, RGBA, row by row.
+struct DecodedImage {
+    std::unique_ptr<unsigned char, void (*)(void*)> pixels;
+    int width = 0;
+    int height = 0;
+};
+std::expected<DecodedImage, std::string> decode_image(std::string_view encoded);
+
+// A real picture to send (see PacketType::Image), made to fit in a packet, and at most max_size pixels wide and tall:
+// "jpeg W H", '\n' and a JPEG in base64 (on black where it is transparent); for an animated GIF, "gif W H" and the
+// GIF itself when it is small enough, or else "anim W H" and a line per frame, "DELAY BASE64" (a JPEG, and how long
+// it is shown in milliseconds). On failure, returns why.
+// still_of_animation (if given) tells whether it is the first frame of an animation too long to send whole.
+std::expected<std::string, std::string> encode_picture(const std::filesystem::path& path, int max_size,
+                                                       bool* still_of_animation = nullptr);
+
+// A received picture: its size, and its frames (one, or more for an animation), each an image file in base64 (as
+// data: URLs want it) shown for its delay in milliseconds; and the bytes of the first, to draw it with characters.
+struct Picture {
+    struct Frame {
+        std::string mime;
+        std::string base64;
+        int delay_ms = 0;
+    };
+    int width = 0;
+    int height = 0;
+    std::vector<Frame> frames;
+    std::string first;
+};
+std::optional<Picture> parse_picture(std::string_view text);
 
 // Turns ASCII art from to_ascii() into what to print. With colors, each colored symbol becomes a solid block of its
 // color, darker for the symbols with less ink and dimmed by the brightness codes, and blocks are shown in their color

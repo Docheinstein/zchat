@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <format>
@@ -35,6 +36,9 @@
 #pragma warning(push, 0)
 #endif
 #include <stb_image.h>
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBI_WRITE_NO_STDIO
+#include <stb_image_write.h>
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
@@ -46,6 +50,8 @@ namespace {
     // Bigger files or images are surely not meant to be turned into a few lines of text.
     constexpr std::uintmax_t max_file_bytes = 64 * 1024 * 1024;
     constexpr long long max_pixels = 64LL * 1024 * 1024;
+    // The biggest a picture that cannot be sent as it is gets made again at.
+    constexpr int max_remade_size = 1280;
 
     // Every character of a drawing gets its hue from a color code before it (see color_code()). With colors,
     // render() shows each one as a solid block, as bright as its place in the ramp (so pictures look the same in
@@ -497,9 +503,7 @@ bool is_dropped_image(std::string_view line) {
     return std::filesystem::is_regular_file(path, ec);
 }
 
-std::expected<std::string, std::string> to_ascii(const std::filesystem::path& path, std::size_t max_cols,
-                                                 std::size_t max_rows, int texture) {
-    texture = std::clamp(texture, 0, 100);
+std::expected<std::string, std::string> read_image_file(const std::filesystem::path& path) {
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
     if (ec) {
@@ -509,26 +513,52 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
         return std::unexpected("That file is too big.");
     }
     std::ifstream file(path, std::ios::binary);
-    const std::vector<unsigned char> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    std::string data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     if (!file && !file.eof()) {
         return std::unexpected("Could not read the file.");
     }
+    return data;
+}
 
+std::expected<DecodedImage, std::string> decode_image(std::string_view encoded) {
     int w = 0;
     int h = 0;
     int channels = 0;
-    const int len = static_cast<int>(data.size());
-    if (!stbi_info_from_memory(data.data(), len, &w, &h, &channels) || w <= 0 || h <= 0) {
+    const auto* bytes = reinterpret_cast<const stbi_uc*>(encoded.data());
+    const int len = static_cast<int>(std::min<std::size_t>(encoded.size(), std::numeric_limits<int>::max()));
+    if (!stbi_info_from_memory(bytes, len, &w, &h, &channels) || w <= 0 || h <= 0) {
         return std::unexpected("That is not an image zchat can read (PNG, JPEG, GIF, BMP, TGA, PSD or PNM).");
     }
     if (static_cast<long long>(w) * h > max_pixels) {
         return std::unexpected("That image is too big.");
     }
-    const std::unique_ptr<unsigned char, decltype(&stbi_image_free)> pixels(
-        stbi_load_from_memory(data.data(), len, &w, &h, &channels, 4), &stbi_image_free);
-    if (!pixels) {
+    DecodedImage out {{nullptr, &stbi_image_free}, w, h};
+    out.pixels.reset(stbi_load_from_memory(bytes, len, &w, &h, &channels, 4));
+    if (!out.pixels) {
         return std::unexpected(std::string("Could not decode the image: ") + stbi_failure_reason());
     }
+    return out;
+}
+
+std::expected<std::string, std::string> to_ascii(const std::filesystem::path& path, std::size_t max_cols,
+                                                 std::size_t max_rows, int texture) {
+    const auto data = read_image_file(path);
+    if (!data) {
+        return std::unexpected(data.error());
+    }
+    return to_ascii_data(*data, max_cols, max_rows, texture);
+}
+
+std::expected<std::string, std::string> to_ascii_data(std::string_view encoded, std::size_t max_cols,
+                                                      std::size_t max_rows, int texture) {
+    texture = std::clamp(texture, 0, 100);
+    auto decoded = decode_image(encoded);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    const auto& pixels = decoded->pixels;
+    const int w = decoded->width;
+    const int h = decoded->height;
 
     // A character is about twice as tall as it is wide, so each one covers twice as many pixel rows as columns.
     const auto width = static_cast<std::size_t>(w);
@@ -1050,6 +1080,344 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
         art += line.empty() ? line : line.substr(indent);
     }
     return art;
+}
+
+namespace {
+
+    constexpr std::string_view base64_digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    std::string base64_encode(std::string_view in) {
+        std::string out;
+        out.reserve((in.size() + 2) / 3 * 4);
+        std::size_t i = 0;
+        for (; i + 2 < in.size(); i += 3) {
+            const auto v = static_cast<unsigned>(static_cast<unsigned char>(in[i])) << 16 |
+                           static_cast<unsigned>(static_cast<unsigned char>(in[i + 1])) << 8 |
+                           static_cast<unsigned char>(in[i + 2]);
+            out += base64_digits[v >> 18 & 63];
+            out += base64_digits[v >> 12 & 63];
+            out += base64_digits[v >> 6 & 63];
+            out += base64_digits[v & 63];
+        }
+        if (i < in.size()) {
+            auto v = static_cast<unsigned>(static_cast<unsigned char>(in[i])) << 16;
+            if (i + 1 < in.size()) {
+                v |= static_cast<unsigned>(static_cast<unsigned char>(in[i + 1])) << 8;
+            }
+            out += base64_digits[v >> 18 & 63];
+            out += base64_digits[v >> 12 & 63];
+            out += i + 1 < in.size() ? base64_digits[v >> 6 & 63] : '=';
+            out += '=';
+        }
+        return out;
+    }
+
+    std::string base64_decode(std::string_view in) {
+        std::string out;
+        unsigned value = 0;
+        int bits = 0;
+        for (const char c : in) {
+            const auto d = base64_digits.find(c);
+            if (d == std::string_view::npos) {
+                continue;
+            }
+            value = (value << 6) | static_cast<unsigned>(d);
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out += static_cast<char>((value >> bits) & 0xFF);
+            }
+        }
+        return out;
+    }
+
+    // An image (RGBA, sw x sh) at a smaller size, RGB on black: each pixel the average of the ones it covers.
+    std::vector<unsigned char> shrink(const unsigned char* rgba, int sw, int sh, int w, int h) {
+        std::vector<unsigned char> out(static_cast<std::size_t>(w) * h * 3);
+        for (int y = 0; y < h; ++y) {
+            const int y0 = y * sh / h;
+            const int y1 = std::max(y0 + 1, (y + 1) * sh / h);
+            for (int x = 0; x < w; ++x) {
+                const int x0 = x * sw / w;
+                const int x1 = std::max(x0 + 1, (x + 1) * sw / w);
+                std::array<double, 3> sum {};
+                for (int sy = y0; sy < y1; ++sy) {
+                    for (int sx = x0; sx < x1; ++sx) {
+                        const unsigned char* p = rgba + (static_cast<std::size_t>(sy) * sw + sx) * 4;
+                        for (int k = 0; k < 3; ++k) {
+                            sum[k] += p[k] * p[3] / 255.0;
+                        }
+                    }
+                }
+                const double n = static_cast<double>((y1 - y0) * (x1 - x0));
+                for (int k = 0; k < 3; ++k) {
+                    out[(static_cast<std::size_t>(y) * w + x) * 3 + k] =
+                        static_cast<unsigned char>(std::lround(sum[k] / n));
+                }
+            }
+        }
+        return out;
+    }
+
+    void append_to_string(void* context, void* data, int size) {
+        static_cast<std::string*>(context)->append(static_cast<const char*>(data), static_cast<std::size_t>(size));
+    }
+
+    std::string jpeg_of(const std::vector<unsigned char>& rgb, int w, int h, int quality) {
+        std::string jpeg;
+        stbi_write_jpg_to_func(append_to_string, &jpeg, w, h, 3, rgb.data(), quality);
+        return jpeg;
+    }
+
+    // At most max_size wide and tall, never bigger than it is.
+    std::pair<int, int> fit(int width, int height, int max_size) {
+        const double scale = std::min(1.0, static_cast<double>(max_size) / std::max(width, height));
+        return {std::max(1, static_cast<int>(std::lround(width * scale))),
+                std::max(1, static_cast<int>(std::lround(height * scale)))};
+    }
+
+    bool is_gif(std::string_view data) {
+        return data.starts_with("GIF87a") || data.starts_with("GIF89a");
+    }
+
+    // An animated GIF: its frames (RGBA, one after the other) and how long each is shown, in milliseconds.
+    struct Animation {
+        std::unique_ptr<unsigned char, void (*)(void*)> pixels {nullptr, &stbi_image_free};
+        std::vector<int> delays;
+        int width = 0;
+        int height = 0;
+        int frames = 0;
+    };
+
+    // How many frames a GIF has, from its blocks, without decoding it; 0 when it is not a GIF that reads well.
+    int gif_frames(std::string_view data) {
+        if (!is_gif(data) || data.size() < 13) {
+            return 0;
+        }
+        const auto byte = [&](std::size_t i) -> unsigned char {
+            return i < data.size() ? static_cast<unsigned char>(data[i]) : 0;
+        };
+        const auto skip_sub_blocks = [&](std::size_t i) {
+            while (i < data.size() && byte(i) != 0) {
+                i += byte(i) + 1;
+            }
+            return i + 1;
+        };
+        std::size_t i = 13;
+        if (byte(10) & 0x80) {
+            i += 3 * (std::size_t {2} << (byte(10) & 7));
+        }
+        int frames = 0;
+        while (i < data.size()) {
+            if (byte(i) == 0x21) {
+                i = skip_sub_blocks(i + 2);
+            } else if (byte(i) == 0x2C) {
+                ++frames;
+                const unsigned char flags = byte(i + 9);
+                i += 10;
+                if (flags & 0x80) {
+                    i += 3 * (std::size_t {2} << (flags & 7));
+                }
+                i = skip_sub_blocks(i + 1);
+            } else {
+                break;
+            }
+        }
+        return frames;
+    }
+
+    std::optional<Animation> decode_animation(std::string_view data) {
+        if (!is_gif(data)) {
+            return std::nullopt;
+        }
+        Animation a;
+        int* delays = nullptr;
+        int channels = 0;
+        a.pixels.reset(stbi_load_gif_from_memory(reinterpret_cast<const stbi_uc*>(data.data()),
+                                                 static_cast<int>(data.size()), &delays, &a.width, &a.height,
+                                                 &a.frames, &channels, 4));
+        if (!a.pixels || a.frames <= 0 || static_cast<long long>(a.width) * a.height * a.frames > max_pixels) {
+            STBI_FREE(delays);
+            return std::nullopt;
+        }
+        for (int i = 0; i < a.frames; ++i) {
+            // Browsers show frames without a delay (or a very short one) for a tenth of a second.
+            a.delays.push_back(delays && delays[i] >= 20 ? delays[i] : 100);
+        }
+        STBI_FREE(delays);
+        return a;
+    }
+
+    // An animation made of JPEG frames: "anim W H", then a line per frame, "DELAY BASE64". Every frame is kept, at the
+    // best quality and size that fit; frames are skipped (each kept one shown for as long as the ones it stands for,
+    // so it plays at its speed) only when nothing else does.
+    std::optional<std::string> encode_animation(const Animation& a, int max_size) {
+        const std::size_t frame_bytes = static_cast<std::size_t>(a.width) * a.height * 4;
+        for (const int size : {max_size, 640, 480, 320, 240, 160}) {
+            if (size > max_size) {
+                continue;
+            }
+            const auto [w, h] = fit(a.width, a.height, size);
+            std::vector<std::vector<unsigned char>> frames;
+            for (int i = 0; i < a.frames; ++i) {
+                frames.push_back(shrink(a.pixels.get() + frame_bytes * i, a.width, a.height, w, h));
+            }
+            for (const int quality : {90, 75, 60}) {
+                std::vector<std::string> encoded;
+                for (const auto& frame : frames) {
+                    encoded.push_back(base64_encode(jpeg_of(frame, w, h, quality)));
+                }
+                const int max_step = size == 160 && quality == 60 ? a.frames : 1;
+                for (int step = 1; step <= max_step; ++step) {
+                    std::string text = std::format("anim {} {}", w, h);
+                    for (int i = 0; i < a.frames; i += step) {
+                        int delay = 0;
+                        for (int j = i; j < std::min(a.frames, i + step); ++j) {
+                            delay += a.delays[j];
+                        }
+                        text += std::format("\n{} ", delay);
+                        text += encoded[i];
+                        if (text.size() > max_image_bytes) {
+                            break;
+                        }
+                    }
+                    if (text.size() <= max_image_bytes) {
+                        return text;
+                    }
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
+    // The kind of picture file windows show as it is, from its first bytes; empty for others.
+    std::string_view file_kind(std::string_view data) {
+        if (is_gif(data)) {
+            return "gif";
+        }
+        if (data.starts_with("\x89PNG\r\n\x1a\n")) {
+            return "png";
+        }
+        if (data.starts_with("\xFF\xD8\xFF")) {
+            return "jpeg";
+        }
+        if (data.starts_with("BM")) {
+            return "bmp";
+        }
+        return {};
+    }
+
+} // namespace
+
+std::expected<std::string, std::string> encode_picture(const std::filesystem::path& path, int max_size,
+                                                       bool* still_of_animation) {
+    if (still_of_animation) {
+        *still_of_animation = false;
+    }
+    const auto data = read_image_file(path);
+    if (!data) {
+        return std::unexpected(data.error());
+    }
+    const auto image = decode_image(*data);
+    if (!image) {
+        return std::unexpected(image.error());
+    }
+    const auto [show_w, show_h] = fit(image->width, image->height, max_size);
+    // The file as it is, whenever it can be: at its best, and an animated GIF plays at its own speed, as any GIF
+    // does. The size is only the one it is shown at; opened big, it shows all of it.
+    if (const auto kind = file_kind(*data); !kind.empty()) {
+        std::string text = std::format("{} {} {}\n", kind, show_w, show_h);
+        text += base64_encode(*data);
+        if (text.size() <= max_image_bytes) {
+            return text;
+        }
+    }
+    // Otherwise made again, as big and good as fits. An animated GIF as JPEG frames; one with too many pixels in all
+    // its frames to decode is sent as its first frame.
+    const int frames = gif_frames(*data);
+    const bool too_long = frames > 1 && static_cast<long long>(image->width) * image->height * frames > max_pixels;
+    if (too_long && still_of_animation) {
+        *still_of_animation = true;
+    }
+    if (const auto animation = frames > 1 && !too_long ? decode_animation(*data) : std::nullopt;
+        animation && animation->frames > 1) {
+        if (auto text = encode_animation(*animation, std::max(max_size, max_remade_size))) {
+            return std::move(*text);
+        }
+        return std::unexpected("That animation cannot be made small enough to send.");
+    }
+    auto [w, h] = fit(image->width, image->height, std::max(max_size, max_remade_size));
+    // Lower quality first, then a smaller picture, until it fits.
+    while (true) {
+        const auto rgb = shrink(image->pixels.get(), image->width, image->height, w, h);
+        for (const int quality : {92, 80, 65}) {
+            const std::string jpeg = jpeg_of(rgb, w, h, quality);
+            std::string text = std::format("jpeg {} {}\n", show_w, show_h);
+            text += base64_encode(jpeg);
+            if (!jpeg.empty() && text.size() <= max_image_bytes) {
+                return text;
+            }
+        }
+        if (w < 32 || h < 32) {
+            return std::unexpected("That image cannot be made small enough to send.");
+        }
+        w = w * 4 / 5;
+        h = h * 4 / 5;
+    }
+}
+
+std::optional<Picture> parse_picture(std::string_view text) {
+    auto nl = text.find('\n');
+    if (nl == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const std::string_view head = text.substr(0, nl);
+    const auto kind_end = head.find(' ');
+    if (kind_end == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const std::string_view kind = head.substr(0, kind_end);
+    const std::string_view size = head.substr(kind_end + 1);
+    const auto space = size.find(' ');
+    if (space == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const auto number = [](std::string_view s, int& v, int max) {
+        const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+        return ec == std::errc {} && ptr == s.data() + s.size() && v > 0 && v <= max;
+    };
+    Picture picture;
+    if (!number(size.substr(0, space), picture.width, 4096) || !number(size.substr(space + 1), picture.height, 4096)) {
+        return std::nullopt;
+    }
+    std::string_view body = text.substr(nl + 1);
+    if (kind == "jpeg" || kind == "gif" || kind == "png" || kind == "bmp") {
+        picture.frames.push_back({std::format("image/{}", kind), std::string(body), 0});
+    } else if (kind == "anim") {
+        // A line per frame: "DELAY BASE64".
+        while (!body.empty()) {
+            nl = body.find('\n');
+            const std::string_view line = body.substr(0, nl);
+            body.remove_prefix(nl == std::string_view::npos ? body.size() : nl + 1);
+            const auto gap = line.find(' ');
+            int delay = 0;
+            if (gap == std::string_view::npos || !number(line.substr(0, gap), delay, 60000)) {
+                continue;
+            }
+            picture.frames.push_back({"image/jpeg", std::string(line.substr(gap + 1)), delay});
+        }
+    } else {
+        return std::nullopt;
+    }
+    if (picture.frames.empty()) {
+        return std::nullopt;
+    }
+    // The first frame, for where it is drawn with characters.
+    picture.first = base64_decode(picture.frames.front().base64);
+    if (picture.first.empty()) {
+        return std::nullopt;
+    }
+    return picture;
 }
 
 std::string render(std::string_view art, bool colors) {

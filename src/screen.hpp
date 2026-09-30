@@ -50,6 +50,24 @@ public:
     // Plays the notification sound. Thread-safe.
     virtual void bell() = 0;
 
+    // A frame of a picture: an image file (its MIME type and its bytes in base64), shown for delay_ms milliseconds
+    // when there are several (an animation).
+    struct Frame {
+        std::string_view mime;
+        std::string_view base64;
+        int delay_ms = 0;
+    };
+
+    // Shows a real picture, after a line (e.g. who sent it), if this screen can. Returns false where pictures cannot
+    // be shown (a terminal), for them to be drawn with characters instead. Thread-safe.
+    virtual bool show_image(std::string_view line, int width, int height, const std::vector<Frame>& frames) {
+        (void)line;
+        (void)width;
+        (void)height;
+        (void)frames;
+        return false;
+    }
+
     // Makes read_line() return nullopt right away, now and from then on. Thread-safe.
     virtual void interrupt() = 0;
 };

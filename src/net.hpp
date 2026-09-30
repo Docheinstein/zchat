@@ -32,8 +32,10 @@ public:
     BroadcastSocket(const BroadcastSocket&) = delete;
     BroadcastSocket& operator=(const BroadcastSocket&) = delete;
 
-    // Sends the payload to every broadcast target. Thread-safe.
-    void broadcast(std::string_view payload);
+    // Sends the payload to every broadcast target. Thread-safe. With once, to each network only once: to the
+    // broadcast address of each interface, without the limited broadcast (unless there is nothing else), which
+    // sends it again on one of them; for big payloads, where that would take twice as long.
+    void broadcast(std::string_view payload, bool once = false);
 
     // Re-reads the network interfaces, in case they changed. Thread-safe.
     void refresh_targets();

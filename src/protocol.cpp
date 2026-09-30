@@ -2,6 +2,7 @@
 
 #include "text.hpp"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <format>
@@ -20,6 +21,32 @@ namespace {
 
     // Like text::sanitize(), but for the text of a packet: the rows of an Art drawing keep their line breaks.
     std::string sanitize_text(PacketType type, std::string_view text) {
+        if (type == PacketType::Image || type == PacketType::Chunk) {
+            // Its first line, then nothing but base64 (and, for an animation, the delay and line of each frame; for
+            // a chunk, what its piece has of those).
+            const std::size_t max = type == PacketType::Image ? max_image_bytes : max_chunk_bytes;
+            const auto nl = text.find('\n');
+            std::string out = text::sanitize(text.substr(0, nl), 64);
+            if (nl == std::string_view::npos) {
+                return out;
+            }
+            out += '\n';
+            const std::size_t head = out.size();
+            out.reserve(head + std::min(max, text.size() - nl - 1));
+            for (const char c : text.substr(nl + 1)) {
+                if (out.size() - head >= max) {
+                    break;
+                }
+                if (std::isalnum(static_cast<unsigned char>(c)) || c == '+' || c == '/' || c == '=' || c == ' ' ||
+                    c == '\n') {
+                    out += c;
+                }
+            }
+            return out;
+        }
+        if (type == PacketType::Resend) {
+            return text::sanitize(text, max_resend_bytes);
+        }
         if (type != PacketType::Art) {
             return text::sanitize(text, max_text_bytes);
         }
@@ -77,6 +104,15 @@ std::optional<Packet> decode(std::string_view data) {
         break;
     case 'G':
         packet.type = PacketType::Game;
+        break;
+    case 'I':
+        packet.type = PacketType::Image;
+        break;
+    case 'K':
+        packet.type = PacketType::Chunk;
+        break;
+    case 'R':
+        packet.type = PacketType::Resend;
         break;
     default:
         return std::nullopt;

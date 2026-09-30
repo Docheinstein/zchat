@@ -378,6 +378,24 @@ void Gui::bell() {
     }
 }
 
+bool Gui::show_image(std::string_view line, int width, int height, const std::vector<Frame>& frames) {
+    // [[data: URL, delay], ...]; base64 needs no escaping in a JSON string.
+    std::string list = "[";
+    for (const auto& frame : frames) {
+        list += list.size() > 1 ? "," : "";
+        list += std::format("[\"data:{};base64,{}\",{}]", frame.mime, frame.base64, frame.delay_ms);
+    }
+    list += "]";
+    const std::string js = std::format("zchat.image({},{},{},{})", json_string(line), width, height, list);
+    std::scoped_lock lock(impl_->mutex);
+    if (!impl_->ready) {
+        // Before the page is loaded: nothing can be shown yet, the chat draws it instead (only at start, if ever).
+        return false;
+    }
+    impl_->eval(js);
+    return true;
+}
+
 void Gui::interrupt() {
     {
         std::scoped_lock lock(impl_->mutex);
