@@ -52,6 +52,9 @@ While chatting:
 | `/image FILE`      | send a picture, drawn with blocks of color               |
 | `/image SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
 | `/image 30% FILE`  | the same with texture: from `0%`, blocks only (the default), to `100%`, symbols only; with a size too, in any order (`/image small 30% FILE`) |
+| `/addemoji NAME [SIZE] [TEXTURE%] FILE` | save a picture as an emoji, drawn as `/image` would; the same name again replaces it |
+| `/emoji NAME`      | send a saved emoji; `/emoji` alone lists yours          |
+| `/removeemoji NAME` | delete a saved emoji                                  |
 | drop an image      | drag an image file onto the window: the line becomes `/image PATH`, to send with Enter (or add a size first) |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
@@ -137,6 +140,10 @@ Images are decoded with [stb_image](https://github.com/nothings/stb) (public dom
 The name set with `/nick` is saved in the `zchat` config folder: `%APPDATA%\zchat\config` on Windows,
 `~/.config/zchat/config` on Linux (or `$XDG_CONFIG_HOME/zchat/config`). On start, `--name` wins over the saved
 name, which wins over a random one. The color set with `/color` is saved there too.
+
+Emoji are saved in the `emoji` folder of the config folder (`%APPDATA%\zchat\emoji` on Windows), one `NAME.art`
+file each: the picture already drawn, as it is sent, so `/emoji NAME` sends it right away and the same every time,
+even if the image file is gone. Names are letters, digits, `-` and `_`, up to 32, and are not case-sensitive.
 
 ### Updating
 
