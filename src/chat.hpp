@@ -220,9 +220,9 @@ private:
     void receive_picture(std::uint64_t id, std::string_view name, std::string_view text);
     // Saves a file received for /save, and fills in entry for it.
     bool keep_file(std::uint64_t id, std::string_view name, std::string_view text, Entry& entry);
-    // Plays a trill received (or ours) once, and fills in entry for it: the window plays it, or else it is saved in
-    // the temporary folder, played with the system's player on a thread of its own, and deleted.
-    bool play_trill(std::string_view text, Entry& entry);
+    // Plays a trill received once, and fills in entry for it: it is saved in the temporary folder, played at full
+    // volume (see sound::play()) on a thread of its own, and deleted. Ours (from id) is only shown: the others hear it.
+    bool play_trill(std::uint64_t id, std::string_view text, Entry& entry);
     void print_trill(const Entry& entry, std::optional<std::time_t> when = std::nullopt) const;
     // Shows an entry: live when it just arrived (tags ring), or else again, with the time it came at.
     void show(const Entry& entry, bool live);

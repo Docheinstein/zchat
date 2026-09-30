@@ -283,9 +283,9 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /file FILE   send a file of any kind, for everyone to download");
     chat.notice("               (or drop any other file on the window, then press Enter)");
     chat.notice("  /save N      save file N from the chat in your downloads folder (/save alone lists them)");
-    chat.notice(
-        std::format("  /trill [MP3] everybody in the chat hears an MP3 file once (up to {}; /trill alone: Fahhh)",
-                    zchat::file::format_size(zchat::file::max_bytes(zchat::file::Kind::Trill))));
+    chat.notice(std::format(
+        "  /trill [MP3] everybody else hears an MP3 file once, at full volume (up to {}; /trill alone: Fahhh)",
+        zchat::file::format_size(zchat::file::max_bytes(zchat::file::Kind::Trill))));
     chat.notice("  @NAME        tag someone in a message: they hear a sound");
     chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
     chat.notice("  @everyone    tag all the people in the chat: they all hear a sound");
@@ -640,8 +640,8 @@ void send_file(zchat::Chat& chat, std::string_view arg) {
     chat.send_file(*text);
 }
 
-// A trill: an MP3 file everybody in the chat (or the channel) hears once, as it arrives; without one, the sound built
-// into zchat.
+// A trill: an MP3 file everybody else in the chat (or the channel) hears once, as it arrives, at full volume; without
+// one, the sound built into zchat.
 void send_trill(zchat::Chat& chat, std::string_view arg) {
     if (arg.empty()) {
         chat.send_file(zchat::file::encode("Fahhh.mp3",

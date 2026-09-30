@@ -1288,7 +1288,7 @@ void Chat::receive_picture(std::uint64_t id, std::string_view name, std::string_
     Entry entry {Entry::Kind::Picture, std::time(nullptr), id, std::string(name), nullptr};
     if (file::is_trill(text)) {
         // Heard as it arrives, in whatever channel is shown: all its members hear it at once.
-        if (!play_trill(text, entry)) {
+        if (!play_trill(id, text, entry)) {
             return;
         }
     } else if (file::is_file(text)) {
@@ -1371,7 +1371,7 @@ void Chat::print_file(const Entry& entry, std::optional<std::time_t> when) const
                                 terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", hint) : hint));
 }
 
-bool Chat::play_trill(std::string_view text, Entry& entry) {
+bool Chat::play_trill(std::uint64_t id, std::string_view text, Entry& entry) {
     auto received = file::parse(text, file::Kind::Trill);
     if (!received) {
         return false;
@@ -1379,8 +1379,8 @@ bool Chat::play_trill(std::string_view text, Entry& entry) {
     entry.kind = Entry::Kind::Trill;
     entry.file_name = received->name;
     entry.file_size = file::format_size(received->data.size());
-    // (parse() checked that the base64 after the first line is the MP3.)
-    if (terminal_.play_sound("audio/mpeg", text.substr(text.find('\n') + 1))) {
+    // Ours: only the others hear it.
+    if (id == id_) {
         return true;
     }
     const auto path = files_dir_ / std::format("trill-{}.mp3", next_trill_++);

@@ -229,10 +229,6 @@ Gui::Gui() {
         std::filesystem::create_directories(dir / "webview", ec);
         _wputenv_s(L"WEBVIEW2_USER_DATA_FOLDER", (dir / "webview").wstring().c_str());
     }
-    // Sounds (tags, trills) play as they arrive, also before anything was clicked in the window.
-    if (GetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", nullptr, 0) == 0) {
-        _wputenv_s(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", L"--autoplay-policy=no-user-gesture-required");
-    }
 #endif
     impl_ = std::make_unique<Impl>();
     auto& view = impl_->view;
@@ -520,16 +516,6 @@ bool Gui::show_image(std::string_view line, int width, int height, const std::ve
 bool Gui::show_file(std::string_view line, std::size_t index, std::string_view name, std::string_view size) {
     const std::string js =
         std::format("zchat.file({},{},{},{})", json_string(line), index, json_string(name), json_string(size));
-    std::scoped_lock lock(impl_->mutex);
-    if (!impl_->ready) {
-        return false;
-    }
-    impl_->eval(js);
-    return true;
-}
-
-bool Gui::play_sound(std::string_view mime, std::string_view base64) {
-    const std::string js = std::format("zchat.sound({})", json_string(std::format("data:{};base64,{}", mime, base64)));
     std::scoped_lock lock(impl_->mutex);
     if (!impl_->ready) {
         return false;
