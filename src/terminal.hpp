@@ -37,6 +37,9 @@ public:
     void set_mentions(std::function<std::vector<Mention>()> source) override;
     void set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter) override;
     void bell() override;
+#ifdef _WIN32
+    void nudge() override;
+#endif
     // Without a terminal (plain line-by-line input) it cannot stop a read in progress, only the following ones.
     void interrupt() override;
 

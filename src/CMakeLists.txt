@@ -16,6 +16,7 @@ target_sources(zchat PUBLIC
     names.cpp
     net.cpp
     paint.cpp
+    popup.cpp
     process.cpp
     race.cpp
     protocol.cpp
@@ -45,7 +46,7 @@ add_custom_target(zchat_commit
 add_dependencies(zchat zchat_commit)
 target_include_directories(zchat PRIVATE "${zchat_generated}")
 
-# The sound /trill plays when given none, built into the executable.
+# The sound /trill plays when given none, built into the executable; and its picture, when there is one.
 add_custom_command(
     OUTPUT "${zchat_generated}/trill_mp3.hpp"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/sounds/fahhh.mp3"
@@ -53,6 +54,17 @@ add_custom_command(
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/sounds/fahhh.mp3" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     VERBATIM)
 target_sources(zchat PRIVATE "${zchat_generated}/trill_mp3.hpp")
+set(zchat_trill_picture "${CMAKE_CURRENT_SOURCE_DIR}/sounds/fahhh.jpg")
+if (EXISTS "${zchat_trill_picture}")
+    add_custom_command(
+        OUTPUT "${zchat_generated}/trill_picture.hpp"
+        COMMAND "${CMAKE_COMMAND}" "-DINPUT=${zchat_trill_picture}" "-DOUTPUT=${zchat_generated}/trill_picture.hpp"
+                -DNAME=trill_picture -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+        DEPENDS "${zchat_trill_picture}" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+        VERBATIM)
+    target_sources(zchat PRIVATE "${zchat_generated}/trill_picture.hpp")
+    target_compile_definitions(zchat PRIVATE ZCHAT_TRILL_PICTURE=1)
+endif()
 
 # The words /game wordle accepts as guesses, built into the executable.
 set(zchat_words "${PROJECT_SOURCE_DIR}/third_party/enable/words5.txt")
@@ -126,7 +138,7 @@ endif()
 
 if (WIN32)
     target_compile_definitions(zchat PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0601)
-    target_link_libraries(zchat PRIVATE ws2_32 iphlpapi shell32 ole32 winmm)
+    target_link_libraries(zchat PRIVATE ws2_32 iphlpapi shell32 ole32 winmm user32 gdi32)
 endif()
 if (MSVC)
     target_compile_options(zchat PRIVATE /utf-8)

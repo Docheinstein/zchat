@@ -1251,7 +1251,7 @@ namespace {
     // An animation made of JPEG frames: "anim W H", then a line per frame, "DELAY BASE64". Every frame is kept, at the
     // best quality and size that fit; frames are skipped (each kept one shown for as long as the ones it stands for,
     // so it plays at its speed) only when nothing else does.
-    std::optional<std::string> encode_animation(const Animation& a, int max_size) {
+    std::optional<std::string> encode_animation(const Animation& a, int max_size, std::size_t max_bytes) {
         const std::size_t frame_bytes = static_cast<std::size_t>(a.width) * a.height * 4;
         for (const int size : {max_size, 640, 480, 320, 240, 160}) {
             if (size > max_size) {
@@ -1277,11 +1277,11 @@ namespace {
                         }
                         text += std::format("\n{} ", delay);
                         text += encoded[i];
-                        if (text.size() > max_image_bytes) {
+                        if (text.size() > max_bytes) {
                             break;
                         }
                     }
-                    if (text.size() <= max_image_bytes) {
+                    if (text.size() <= max_bytes) {
                         return text;
                     }
                 }
@@ -1318,30 +1318,38 @@ std::expected<std::string, std::string> encode_picture(const std::filesystem::pa
     if (!data) {
         return std::unexpected(data.error());
     }
-    const auto image = decode_image(*data);
+    return encode_picture_data(*data, max_size, max_image_bytes, still_of_animation);
+}
+
+std::expected<std::string, std::string> encode_picture_data(std::string_view data, int max_size, std::size_t max_bytes,
+                                                            bool* still_of_animation) {
+    if (still_of_animation) {
+        *still_of_animation = false;
+    }
+    const auto image = decode_image(data);
     if (!image) {
         return std::unexpected(image.error());
     }
     const auto [show_w, show_h] = fit(image->width, image->height, max_size);
     // The file as it is, whenever it can be: at its best, and an animated GIF plays at its own speed, as any GIF
     // does. The size is only the one it is shown at; opened big, it shows all of it.
-    if (const auto kind = file_kind(*data); !kind.empty()) {
+    if (const auto kind = file_kind(data); !kind.empty()) {
         std::string text = std::format("{} {} {}\n", kind, show_w, show_h);
-        text += base64_encode(*data);
-        if (text.size() <= max_image_bytes) {
+        text += base64_encode(data);
+        if (text.size() <= max_bytes) {
             return text;
         }
     }
     // Otherwise made again, as big and good as fits. An animated GIF as JPEG frames; one with too many pixels in all
     // its frames to decode is sent as its first frame.
-    const int frames = gif_frames(*data);
+    const int frames = gif_frames(data);
     const bool too_long = frames > 1 && static_cast<long long>(image->width) * image->height * frames > max_pixels;
     if (too_long && still_of_animation) {
         *still_of_animation = true;
     }
-    if (const auto animation = frames > 1 && !too_long ? decode_animation(*data) : std::nullopt;
+    if (const auto animation = frames > 1 && !too_long ? decode_animation(data) : std::nullopt;
         animation && animation->frames > 1) {
-        if (auto text = encode_animation(*animation, std::max(max_size, max_remade_size))) {
+        if (auto text = encode_animation(*animation, std::max(max_size, max_remade_size), max_bytes)) {
             return std::move(*text);
         }
         return std::unexpected("That animation cannot be made small enough to send.");
@@ -1354,7 +1362,7 @@ std::expected<std::string, std::string> encode_picture(const std::filesystem::pa
             const std::string jpeg = jpeg_of(rgb, w, h, quality);
             std::string text = std::format("jpeg {} {}\n", show_w, show_h);
             text += base64_encode(jpeg);
-            if (!jpeg.empty() && text.size() <= max_image_bytes) {
+            if (!jpeg.empty() && text.size() <= max_bytes) {
                 return text;
             }
         }

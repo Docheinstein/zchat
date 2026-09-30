@@ -235,6 +235,14 @@ bool is_mp3(std::string_view data) {
            (static_cast<unsigned char>(data[1]) & 0xE0) == 0xE0;
 }
 
+bool is_wav(std::string_view data) {
+    return data.size() >= 12 && data.starts_with("RIFF") && data.substr(8, 4) == "WAVE";
+}
+
+bool is_audio(std::string_view data) {
+    return is_mp3(data) || is_wav(data);
+}
+
 #ifdef _WIN32
 bool play(const std::filesystem::path& path, std::stop_token stop) {
     using namespace std::chrono_literals;

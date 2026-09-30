@@ -86,7 +86,8 @@ While chatting:
 | `/file FILE`       | send a file of any kind (up to about 34 MB), for everyone to download |
 | drop a file        | drag any other file onto the window (or a terminal): the line becomes `/file PATH`, to send with Enter |
 | `/save N`          | save file N of the chat in your downloads folder; `/save` alone lists them (windows have a Download button) |
-| `/trill [MP3]`     | everybody else in the chat hears an MP3 file once, as it arrives, at full volume (up to 2 MB); `/trill` alone plays the built-in *Fahhh* |
+| `/trill [SOUND] [PICTURE]` | trill everybody else: 3 seconds to catch a STOP button running around their screen, or their window shakes, the sound (MP3, WAV) plays at full volume and the picture flies around the screen; `/trill` alone sends the built-in *Fahhh* |
+| `/stop`            | stop the trills coming at you (or playing)             |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
 | `/game`            | list the games everyone in the chat can play           |
@@ -151,15 +152,23 @@ there already. Until then, received files are kept in a temporary folder of zcha
 with pictures, dropping a file on a terminal types its full path, which then sends it. Names are cleaned up, so a
 file can never be saved outside the downloads folder. Versions from before files show nothing.
 
-`/trill` sends an MP3 file (up to 2 MB, about two minutes) the same way as `/file`, and everybody else plays it once
-as it arrives, at full volume, whatever channel they are looking at (a trill in a channel is heard only by its
-members). Whoever sends it does not hear it. The chat shows who sent it and its name. It is never saved: it is kept
-in zchat's temporary folder while it plays, with the system's own player (Windows' MCI, `afplay` on macOS, and on
-Linux the first of `mpg123`, `ffplay`, `mpv` and `paplay` that is installed), and deleted after. While it plays,
-the speakers are turned up to 100% and unmuted (Windows' Core Audio, `osascript` on macOS, `pactl` on Linux), then
-put back as they were once it is over (once the last one is over, when several play at once). `/trill` alone plays
-the *Fahhh* built into zchat (`src/sounds/fahhh.mp3`). Only MP3 files are played. Versions from before trills show
-nothing.
+`/trill SOUND PICTURE` trills everybody else in the chat, like MSN's nudge, whatever channel they are looking at (a
+trill in a channel only reaches its members). It takes a sound (an MP3 or WAV file, up to 2 MB), a picture (any image
+`/image` takes), or one of each, in any order; paths with spaces work too, as dropped on the terminal. Each of the
+others gets a little window with a STOP button, running around their screen for 3 seconds: whoever catches it (or
+types `/stop`) is spared. Everybody else gets their zchat window brought to the front (shown again if it was
+minimized) and shaken, the sound at full volume, and the picture, big and shaking, flying around the screen above
+every window for 3 seconds (clicks go through it). Whoever sends it gets none of it, and the chat shows who sent what.
+`/trill` alone sends the *Fahhh* built into zchat (`src/sounds/`). `/stop` also stops a trill already playing.
+
+The sound is played with the system's own player (Windows' MCI, `afplay` on macOS, and on Linux the first of
+`mpg123`, `ffplay`, `mpv` and `paplay` that is installed), from zchat's temporary folder, where each sound is saved
+the first time it comes, by name: sent again, the saved one plays. The picture is never saved: it is shown from
+memory. While the sound plays, the speakers are turned up to 100% and unmuted (Windows' Core Audio, `osascript` on
+macOS, `pactl` on Linux), then put back as they were once it is over (once the last one is over, when several play
+at once). The popups are Windows' own, and GTK's in the Linux window (not tested yet); elsewhere (macOS, Linux
+terminals) the chat says who is trilling you, with `/stop`, and shows the picture in the chat instead. Versions from
+before trills show nothing; the ones with sound-only trills play the sound of trills without a picture.
 
 `/ascii` sends a picture as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
 with more ink, in the color of the picture. They are shown as solid blocks of color, as dark or bright as the
