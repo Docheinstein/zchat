@@ -81,5 +81,6 @@ private:
 std::unique_ptr<Game> make_race(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_dice(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_paint(Chat& chat, Screen& terminal, Games& games);
+std::unique_ptr<Game> make_wordle(Chat& chat, Screen& terminal, Games& games);
 
 } // namespace zchat::game

@@ -468,6 +468,16 @@ void Gui::set_channel_people(std::function<ChannelPeople(std::string_view channe
     impl_->people_source = std::move(source);
 }
 
+bool Gui::show_game(std::string_view game, std::string_view state) {
+    const std::string js = std::format("zchat.game({},{})", json_string(game), state);
+    std::scoped_lock lock(impl_->mutex);
+    if (!impl_->ready) {
+        return false;
+    }
+    impl_->eval(js);
+    return true;
+}
+
 bool Gui::clear() {
     std::scoped_lock lock(impl_->mutex);
     if (!impl_->ready) {

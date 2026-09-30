@@ -25,6 +25,7 @@ Games::Games(Chat& chat, Screen& terminal) :
     games_.push_back(make_race(chat, terminal, *this));
     games_.push_back(make_dice(chat, terminal, *this));
     games_.push_back(make_paint(chat, terminal, *this));
+    games_.push_back(make_wordle(chat, terminal, *this));
 
     chat_.set_game_hooks({
         .packet =

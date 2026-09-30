@@ -91,8 +91,9 @@ While chatting:
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
 | `/game`            | list the games everyone in the chat can play           |
 | `/game race`       | typing race: some words show up for everyone in 3 seconds, the first to type them exactly wins |
-| `/game dice`       | push your luck: `/game dice roll` a die as often as you dare, each roll adds to points only you see, but a 1 loses them all; `/game dice stop` keeps them and shows them to everyone. The highest points kept in 60 seconds win; not stopped in time, and they are lost |
+| `/game dice`       | push your luck: `/game dice roll` a die as often as you dare, each roll adds to points only you see, but a 1 loses them all; `/game dice stop` keeps them (the others see only that you stopped: the points are shown when the round ends). The highest points kept in 60 seconds win; not stopped in time, and they are lost. In the window a round opens a dice window, with Roll and Stop buttons, the players and the time left (🎲 at the top opens it again) |
 | `/game paint`      | a shared canvas of 16×16 squares: `/game paint c7 red` colors a square, `/game paint c7-f9 blue` a rectangle, `/game paint c7 none` empties it and `/game paint undo` takes back your last change. Without a color, squares get your brush's: `/game paint color red` picks it, and it starts as the canvas color closest to your name color. Each square painted takes a second before the next change, so the chat has to draw together |
+| `/game wordle`     | the New York Times' Wordle of the day, for the whole chat: `/game wordle WORD` guesses the five-letter word whenever you like until midnight, showing you which letters are in it (green: right place, yellow: elsewhere) while the others only see your colors. Six guesses each; `/game wordle` shows your board and how everyone is doing. At midnight, when the Times has a new word, the fewest guesses win the day (ties share it). As on the Times, one a day: your guesses are saved, so coming back later goes on from them, and once done it is done until tomorrow. Guesses must be words of the built-in list (the five-letter words of ENABLE, public domain, in `third_party/enable`); the day's word always counts. Everyone gets the word from `nytimes.com/svc/wordle/v2/DATE.json`, with `curl` |
 | `/game scores`     | who won what in this session                           |
 | `/update`          | get the latest zchat from git, build it and restart (see below) |
 | `/help`            | list commands                                          |
@@ -198,6 +199,8 @@ at worst is drawn with one color per character, or as the plain ASCII art. Versi
 as they are, and may not receive the biggest pictures at all (they took at most 8 KB).
 
 Images are decoded with [stb_image](https://github.com/nothings/stb) (public domain / MIT), in `third_party/stb`.
+
+The words `/game wordle` accepts are those of five letters of ENABLE (public domain), in `third_party/enable`.
 
 The name set with `/nick` is saved in the `zchat` config folder: `%APPDATA%\zchat\config` on Windows,
 `~/.config/zchat/config` on Linux (or `$XDG_CONFIG_HOME/zchat/config`). On start, `--name` wins over the saved
@@ -321,7 +324,8 @@ the terminal version.)
   pasted they do not, and whoever pasted them is out of the round. If two rounds start at
   once, everybody plays the one with the lowest round number; if the referee leaves, the others give up the round
   after a while. In dice everyone rolls their own die, and tells the others when they join, stop (with their
-  points) or roll a 1; every zchat ends the round when time is up, or when all the players are done and nobody
+  points, which zchat shows only when the round ends; older versions show them right away, and miss newer ones
+  stopping, so everybody should update) or roll a 1; every zchat ends the round when time is up, or when all the players are done and nobody
   can join anymore (after 15 seconds), and shows who won. In paint every zchat keeps its own copy of the canvas: each change of a
   square carries a clock and a tag from the painter's id, and a square keeps the newest change, so changes lost or
   heard out of order do not matter. Every 15 seconds each zchat sends a hash of its canvas, and whoever has a
