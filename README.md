@@ -113,14 +113,16 @@ fonts, to fill exactly their part of the character. To keep lines crisp, each ch
 colors (so a white stays white next to a black outline instead of both turning grey), and candidates are compared
 by the absolute difference of their colors, which does not favor averaging over sharpness.
 
-A picture can also get texture, with `/image N% FILE`: some characters are then drawn with a symbol shown as
-itself, on black, among `. : - + = * ░ % # ▒ @ ▓`, the one with enough ink for their light, in the color that keeps
-it, instead of with blocks. At `0%`, the default, there is none. At about `15%`, the dark parts get it: characters
-that look dark on average (below a luminance of 0.2, or less in a picture that is dark all over) and are mostly
-black, with a few lit bits, like the shadows of a drawing; the smooth dim parts of a photo, like a face in the
-shade, stay blocks. Higher, brighter and less black characters get it too, and at `100%` all of them do, with
-ASCII symbols only: no blocks at all (the brightest parts are then a bit dimmer, as symbols have less ink than a
-block). In the art sent, `"` before a symbol makes it texture (shown as itself, not as a block).
+A picture can also get texture, with `/image N% FILE`: its dark parts are then drawn as text, with ASCII symbols
+shown as themselves, on black (`. : - + = * % # @`, and `# W @` in bold, which have more ink), the one with enough
+ink for their light, in the color that keeps it. At `0%`, the default, there is none. As it grows, more and more of
+the dark range becomes text, from the darkest up: at about `15%` the shadows of a drawing (characters that are mostly
+black, with a few lit bits), then also the smooth dim parts of a photo, and at `100%` all that symbols can show,
+up to the brightness of `@` in bold. What is brighter always keeps its blocks, which draw corners and thin lines
+that symbols cannot, and so does the bright side of an edge. How dark a character is is how dark it looks (a deep
+red is dark), and one that symbols could not show bright enough stays blocks. In a picture that is dark all over,
+less of it becomes text. In the art sent, `"` before a symbol makes it texture (shown as itself, not as a block),
+and `!` switches bold on and off for texture symbols.
 
 Each picture comes with its own palette, the 61 colors that represent it best (found with k-means), in a first
 row: `$` followed by 3 characters per color (one per channel, 64 levels each). The color codes of the drawing
