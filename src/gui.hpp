@@ -40,6 +40,9 @@ public:
     void set_mentions(std::function<std::vector<Mention>()> source) override;
     void set_self(std::function<Mention()> source) override;
     void set_avatars(std::function<std::optional<std::string>(std::string_view hash)> source) override;
+    void set_channels(std::function<std::vector<ChannelItem>()> source) override;
+    void set_channel_people(std::function<ChannelPeople(std::string_view channel)> source) override;
+    bool clear() override;
     void set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter) override;
     void bell() override;
     bool show_image(std::string_view line, int width, int height, const std::vector<Frame>& frames) override;

@@ -19,6 +19,18 @@ namespace {
         return ec == std::errc {} && ptr == s.data() + s.size() && !s.empty();
     }
 
+    // The rows of a drawing, and the palette row before them, each sanitized: they keep their line breaks.
+    std::string sanitize_art(std::string_view text) {
+        std::string out;
+        for (std::size_t row = 0; row < max_art_rows + 1 && !text.empty(); ++row) {
+            const auto nl = text.find('\n');
+            out += row == 0 ? "" : "\n";
+            out += text::sanitize(text.substr(0, nl), max_art_row_bytes);
+            text.remove_prefix(nl == std::string_view::npos ? text.size() : nl + 1);
+        }
+        return out;
+    }
+
     // Like text::sanitize(), but for the text of a packet: the rows of an Art drawing keep their line breaks.
     std::string sanitize_text(PacketType type, std::string_view text) {
         if (type == PacketType::Image || type == PacketType::Chunk) {
@@ -47,18 +59,25 @@ namespace {
         if (type == PacketType::Resend) {
             return text::sanitize(text, max_resend_bytes);
         }
+        if (type == PacketType::ChannelState) {
+            return text::sanitize(text, max_channel_state_bytes);
+        }
+        if (type == PacketType::ChannelMessage) {
+            // "CHANNEL KIND", then a message (KIND m) or a drawing (KIND a).
+            const auto nl = text.find('\n');
+            std::string out = text::sanitize(text.substr(0, nl), 64);
+            if (nl == std::string_view::npos) {
+                return out;
+            }
+            out += '\n';
+            const std::string_view body = text.substr(nl + 1);
+            out += out.ends_with(" a\n") ? sanitize_art(body) : text::sanitize(body, max_text_bytes);
+            return out;
+        }
         if (type != PacketType::Art) {
             return text::sanitize(text, max_text_bytes);
         }
-        std::string out;
-        // The rows of the drawing, and the palette row before them.
-        for (std::size_t row = 0; row < max_art_rows + 1 && !text.empty(); ++row) {
-            const auto nl = text.find('\n');
-            out += row == 0 ? "" : "\n";
-            out += text::sanitize(text.substr(0, nl), max_art_row_bytes);
-            text.remove_prefix(nl == std::string_view::npos ? text.size() : nl + 1);
-        }
-        return out;
+        return sanitize_art(text);
     }
 
 } // namespace
@@ -116,6 +135,12 @@ std::optional<Packet> decode(std::string_view data) {
         break;
     case 'O':
         packet.type = PacketType::Offer;
+        break;
+    case 'N':
+        packet.type = PacketType::ChannelState;
+        break;
+    case 'C':
+        packet.type = PacketType::ChannelMessage;
         break;
     default:
         return std::nullopt;

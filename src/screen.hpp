@@ -52,6 +52,31 @@ public:
     // image::encode_avatar()), or nullopt when it is not here (yet). Thread-safe.
     virtual void set_avatars(std::function<std::optional<std::string>(std::string_view hash)> /*source*/) {}
 
+    // A channel, for screens that list them (the window): see Chat::channels().
+    struct ChannelItem {
+        std::string name;
+        bool is_public = true;
+        bool member = false;
+        bool current = false;
+        bool unread = false;
+        bool owner = false;
+    };
+    virtual void set_channels(std::function<std::vector<ChannelItem>()> /*source*/) {}
+
+    // Who is in a channel, and who could be added to it (see Chat::channel_people()), for screens that show them.
+    struct ChannelPeople {
+        std::vector<Mention> members;
+        std::vector<Mention> others;
+        std::size_t away = 0;
+    };
+    virtual void set_channel_people(std::function<ChannelPeople(std::string_view channel)> /*source*/) {}
+
+    // Empties what is shown (another channel is joined), where it can: returns false where it cannot (a terminal).
+    // Thread-safe.
+    virtual bool clear() {
+        return false;
+    }
+
     // Sets what may rewrite the input line once the keys typed so far are handled and no more are waiting, as after
     // a paste or a file dropped on the window: it gets the line and returns its replacement, or nullopt to keep it.
     // It is called with the screen locked, so it must not print.

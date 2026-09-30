@@ -1,5 +1,6 @@
 #pragma once
 
+#include "channel.hpp"
 #include "color.hpp"
 #include "history.hpp"
 #include "net.hpp"
@@ -87,6 +88,43 @@ public:
     // An avatar downloaded (or ours), by hash in hex. Thread-safe.
     std::optional<std::string> avatar(std::string_view hash) const;
 
+    // Who we are for channels: an id of ours that stays the same (unlike the sender id, which changes with the
+    // color), kept in the config; and the file where the channels we know are kept. Before start().
+    void set_user(std::uint64_t user, std::filesystem::path channels_file);
+
+    // Channels (see channel.hpp): what we say, draw and send goes to the current one. Each returns what went wrong, or
+    // nullopt. The channel of add_to_channel() and the others is the current one when empty; people are named as
+    // they are in the chat (they must be online).
+    std::optional<std::string> create_channel(std::string_view name, bool is_public);
+    std::optional<std::string> join_channel(std::string_view name);
+    std::optional<std::string> leave_channel(std::string_view name);
+    std::optional<std::string> delete_channel(std::string_view name);
+    std::optional<std::string> add_to_channel(std::string_view channel, std::string_view person);
+    std::optional<std::string> remove_from_channel(std::string_view channel, std::string_view person);
+    std::string current_channel() const;
+    struct ChannelInfo {
+        std::string name;
+        bool is_public = true;
+        bool member = false;
+        bool current = false;
+        bool unread = false;
+        std::size_t members = 0;
+        // We created it: we can delete it.
+        bool owner = false;
+    };
+    // General first, then the others there are for us: the public ones, and the private ones we are in.
+    std::vector<ChannelInfo> channels() const;
+    // The names of the members in the chat; away is how many others there are.
+    std::vector<std::string> channel_members(std::string_view channel, std::size_t& away) const;
+    // For the window: the members in the chat (us too), the others in the chat who could be added, and how many
+    // members are not in the chat now. Names as they are, for /add and /remove.
+    struct ChannelPeople {
+        std::vector<Screen::Mention> members;
+        std::vector<Screen::Mention> others;
+        std::size_t away = 0;
+    };
+    ChannelPeople channel_people(std::string_view channel) const;
+
     // Tells the others this peer is leaving and stops listening. Safe to call more than once.
     void stop();
 
@@ -108,7 +146,7 @@ public:
     void notice(std::string_view text) const;
 
     // Prints messages from the history (see history.hpp), each with the time it was sent at.
-    void print_history(const std::vector<history::Entry>& entries) const;
+    void print_history(const std::vector<history::Entry>& entries);
 
     // Our id, which changes with the color.
     std::uint64_t id() const {
@@ -141,6 +179,23 @@ private:
         std::deque<std::uint64_t> recent_seqs;
         // Their avatar's hash, 0 for none.
         std::uint64_t avatar = 0;
+        // Who they are for channels, see set_user(); 0 for versions without channels.
+        std::uint64_t user = 0;
+    };
+
+    // Something said, drawn or sent in a channel, kept to show it again (see deliver()).
+    struct Entry {
+        enum class Kind { Message, Art, Picture, File };
+        Kind kind = Kind::Message;
+        std::time_t time = 0;
+        std::uint64_t id = 0;
+        std::string name;
+        // The message, the drawing or the picture.
+        std::shared_ptr<const std::string> data;
+        // A file: see keep_file().
+        std::size_t file_index = 0;
+        std::string file_name;
+        std::string file_size;
     };
 
     void run(std::stop_token stop);
@@ -154,10 +209,31 @@ private:
     // Turns the "@Name" tags of the people in the chat into markup showing them bold in their color, ours also
     // underlined. Sets tags_us when we are tagged.
     std::string mark_mentions(std::string_view text, bool& tags_us) const;
-    void print_art(std::uint64_t id, std::string_view name, std::string_view art) const;
+    void print_art(std::uint64_t id, std::string_view name, std::string_view art,
+                   std::optional<std::time_t> when = std::nullopt) const;
     // Also files, which come the same way.
-    void print_picture(std::uint64_t id, std::string_view name, std::string_view text);
-    void print_file(std::uint64_t id, std::string_view name, std::string_view text);
+    void print_picture(std::uint64_t id, std::string_view name, std::string_view text,
+                       std::optional<std::time_t> when = std::nullopt) const;
+    void print_file(const Entry& entry, std::optional<std::time_t> when = std::nullopt) const;
+    // A picture or file arrived (or ours): to the channel its first line names, see send_picture().
+    void receive_picture(std::uint64_t id, std::string_view name, std::string_view text);
+    // Saves a file received for /save, and fills in entry for it.
+    bool keep_file(std::uint64_t id, std::string_view name, std::string_view text, Entry& entry);
+    // Shows an entry: live when it just arrived (tags ring), or else again, with the time it came at.
+    void show(const Entry& entry, bool live);
+    // Something for a channel: kept, and shown if it is the current one, or else told about once.
+    void deliver(const std::string& channel, Entry entry);
+    // Channels: whether we are in one, who a user is, and who someone named is.
+    bool in_channel(const std::string& name) const;
+    std::string user_name(std::uint64_t user) const;
+    std::optional<std::uint64_t> find_user(std::string_view person, std::string& error) const;
+    // Makes a new version of a channel with edit (which returns what is wrong, if anything), and tells everybody.
+    std::optional<std::string> change_channel(const std::string& name,
+                                              const std::function<std::optional<std::string>(channel::Channel&)>& edit);
+    void switch_to(const std::string& name);
+    void receive_channel_state(const Packet& packet);
+    void send_channel_states();
+    void save_channels() const;
     void prune_silent_peers();
     // Pictures too big for a packet, see send_picture(): offered, and downloaded by the others from us, on threads
     // of their own (see start_transfer()); or else sent in Chunks, asked for again when some do not arrive.
@@ -250,6 +326,16 @@ private:
     std::filesystem::path files_dir_;
     mutable std::mutex files_mutex_;
     std::vector<ReceivedFile> files_;
+
+    // Channels: ours, what we know of the others' (by name), the current one, what was said in each, and those with
+    // something new since they were shown.
+    std::uint64_t user_ = 0;
+    std::filesystem::path channels_file_;
+    mutable std::mutex channels_mutex_;
+    std::map<std::string, channel::Channel> channels_;
+    std::string current_ {channel::general};
+    std::map<std::string, std::deque<Entry>> backlog_;
+    std::set<std::string> unread_;
 
     // Held while a hook runs, so set_game_hooks() can wait for it.
     std::mutex hooks_mutex_;

@@ -1,3 +1,4 @@
+#include "channel.hpp"
 #include "chat.hpp"
 #include "config.hpp"
 #include "file.hpp"
@@ -142,9 +143,124 @@ BOOL WINAPI on_console_event(DWORD event) {
 }
 #endif
 
+// Who we are for channels: an id of ours in the config, made the first time.
+std::uint64_t user_id(std::mt19937_64& rng) {
+    if (const auto saved = zchat::config::get("user")) {
+        std::uint64_t id = 0;
+        const auto [ptr, ec] = std::from_chars(saved->data(), saved->data() + saved->size(), id, 16);
+        if (ec == std::errc {} && ptr == saved->data() + saved->size() && id != 0) {
+            return id;
+        }
+    }
+    std::uint64_t id = 0;
+    while (id == 0) {
+        id = rng();
+    }
+    zchat::config::set("user", std::format("{:x}", id));
+    return id;
+}
+
+// "[#CHANNEL] REST": the channel, when named, and the rest.
+std::pair<std::string_view, std::string_view> channel_and_rest(std::string_view arg) {
+    while (!arg.empty() && arg.front() == ' ') {
+        arg.remove_prefix(1);
+    }
+    if (!arg.starts_with('#')) {
+        return {{}, arg};
+    }
+    const auto space = arg.find(' ');
+    std::string_view rest = space == std::string_view::npos ? std::string_view() : arg.substr(space + 1);
+    while (!rest.empty() && rest.front() == ' ') {
+        rest.remove_prefix(1);
+    }
+    return {arg.substr(0, space), rest};
+}
+
+void print_channels(zchat::Chat& chat) {
+    std::string list;
+    for (const auto& c : chat.channels()) {
+        list += list.empty() ? "" : ", ";
+        list += std::format("#{}{}{}{}", c.name, c.is_public ? "" : " (private)", c.current ? " (here)" : "",
+                            c.unread ? " (new)" : c.member || c.name == zchat::channel::general ? "" : " (not in)");
+    }
+    chat.notice(std::format("Channels: {}.", list));
+    chat.notice("/join NAME to go to one, /create NAME [public|private] for a new one.");
+}
+
+void print_members(zchat::Chat& chat, std::string_view arg) {
+    const auto [channel, rest] = channel_and_rest(arg);
+    const std::string name = channel.empty() ? chat.current_channel() : zchat::channel::clean_name(channel);
+    std::size_t away = 0;
+    auto names = chat.channel_members(name, away);
+    if (names.empty() && away == 0) {
+        chat.notice(std::format("There is no #{} for you (see /channels).", name));
+        return;
+    }
+    std::ranges::sort(names);
+    std::string list;
+    for (const auto& n : names) {
+        list += list.empty() ? "" : ", ";
+        list += n;
+    }
+    chat.notice(std::format("In #{}: {}{}.", name, list.empty() ? "nobody here now" : list,
+                            away ? std::format(", and {} not in the chat now", away) : ""));
+}
+
+// Runs a channel command: what went wrong, if anything, is said.
+void channel_command(zchat::Chat& chat, std::string_view command, std::string_view arg) {
+    while (!arg.empty() && arg.front() == ' ') {
+        arg.remove_prefix(1);
+    }
+    std::optional<std::string> error;
+    if (command == "/create") {
+        const auto space = arg.find(' ');
+        const std::string_view name = arg.substr(0, space);
+        std::string_view kind = space == std::string_view::npos ? std::string_view() : arg.substr(space + 1);
+        while (!kind.empty() && kind.front() == ' ') {
+            kind.remove_prefix(1);
+        }
+        if (name.empty() || (!kind.empty() && kind != "public" && kind != "private")) {
+            chat.notice("Use /create NAME [public|private]: public (the default) anybody can /join, private only "
+                        "whoever you /add.");
+            return;
+        }
+        error = chat.create_channel(name, kind != "private");
+    } else if (command == "/join") {
+        if (arg.empty()) {
+            print_channels(chat);
+            return;
+        }
+        error = chat.join_channel(arg);
+    } else if (command == "/leave") {
+        error = chat.leave_channel(arg);
+    } else if (command == "/delete") {
+        if (arg.empty()) {
+            chat.notice("Use /delete NAME to delete a channel you created (#general can never be removed).");
+            return;
+        }
+        error = chat.delete_channel(arg);
+    } else if (command == "/add" || command == "/remove") {
+        const auto [channel, person] = channel_and_rest(arg);
+        if (person.empty()) {
+            chat.notice(std::format("Use {} [#CHANNEL] NAME, with the name someone has in the chat; the channel is "
+                                    "the one you are in when not named.",
+                                    command));
+            return;
+        }
+        error = command == "/add" ? chat.add_to_channel(channel, person) : chat.remove_from_channel(channel, person);
+    }
+    if (error) {
+        chat.notice(*error);
+    }
+}
+
 void print_help(zchat::Chat& chat) {
     chat.notice("Commands:");
     chat.notice("  /who         list the people in the chat");
+    chat.notice("  /channels    list the channels; /join NAME goes to one (and joins it, if public)");
+    chat.notice("  /create NAME [public|private]  make a channel: public anybody can join, private only who you add");
+    chat.notice("  /add [#CHANNEL] NAME, /remove [#CHANNEL] NAME  add or remove someone (the current channel if none)");
+    chat.notice("  /members [#CHANNEL]  who is in a channel; /leave [NAME] leaves one; /delete NAME deletes yours");
     chat.notice("  /whoami      show your name");
     chat.notice("  /nick NAME   change your name, and keep it for next time");
     chat.notice("  /forget      forget the saved name and get a new random one");
@@ -158,8 +274,9 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /ascii [SIZE] [TEXTURE%] FILE  send a picture drawn with characters, for everyone");
     chat.notice("               (SIZE: small, medium, large, a width like 40, or 40x20;");
     chat.notice("                TEXTURE%: 0% blocks only, the default, to 100% symbols only)");
-    chat.notice("  /addemoji NAME [SIZE] [TEXTURE%] FILE  save a picture as an emoji");
-    chat.notice("  /emoji NAME  send a saved emoji (/emoji alone lists yours)");
+    chat.notice("  /addemoji NAME [SIZE] FILE  save a picture as an emoji (a GIF plays)");
+    chat.notice("  /addemoji NAME ascii [SIZE] [TEXTURE%] FILE  save one drawn with characters");
+    chat.notice("  /emoji NAME [ascii]  send a saved emoji, or draw it with characters (/emoji alone lists yours)");
     chat.notice("  /removeemoji NAME  delete a saved emoji");
     chat.notice("               (or drop an image file on the window, then press Enter)");
     chat.notice("  /file FILE   send a file of any kind, for everyone to download");
@@ -464,6 +581,23 @@ void send_ascii(zchat::Chat& chat, std::string_view arg) {
     }
 }
 
+// Turns parsed "[SIZE] FILE" into a real picture (see image::encode_picture()), or says why it cannot
+// ("Cannot <what> FILE: ...").
+std::optional<std::string> make_picture(zchat::Chat& chat, const ImageArgs& args, std::string_view what) {
+    const int size = std::min(max_picture_size, static_cast<int>(std::min(args.size.cols * picture_pixels_per_char,
+                                                                          args.size.rows * 2 * picture_pixels_per_char)));
+    bool still = false;
+    auto picture = zchat::image::encode_picture(zchat::image::parse_path(args.file), size, &still);
+    if (!picture) {
+        chat.notice(std::format("Cannot {} {}: {}", what, zchat::text::sanitize(args.file, 200), picture.error()));
+        return std::nullopt;
+    }
+    if (still) {
+        chat.notice("That animation is too long to keep whole: using its first frame.");
+    }
+    return std::move(*picture);
+}
+
 void send_image(zchat::Chat& chat, std::string_view arg) {
     if (arg.empty()) {
         chat.notice("Use /image [SIZE] FILE to send a picture, or drop an image file on the window and press Enter. "
@@ -482,18 +616,9 @@ void send_image(zchat::Chat& chat, std::string_view arg) {
         send_ascii(chat, arg);
         return;
     }
-    const int size = std::min(max_picture_size, static_cast<int>(std::min(args->size.cols * picture_pixels_per_char,
-                                                                          args->size.rows * 2 * picture_pixels_per_char)));
-    bool still = false;
-    const auto picture = zchat::image::encode_picture(zchat::image::parse_path(args->file), size, &still);
-    if (!picture) {
-        chat.notice(std::format("Cannot send {}: {}", zchat::text::sanitize(args->file, 200), picture.error()));
-        return;
+    if (const auto picture = make_picture(chat, *args, "send")) {
+        chat.send_picture(*picture);
     }
-    if (still) {
-        chat.notice("That animation is too long to send whole: sending its first frame.");
-    }
-    chat.send_picture(*picture);
 }
 
 void send_file(zchat::Chat& chat, std::string_view arg) {
@@ -548,10 +673,11 @@ void save_file(zchat::Chat& chat, std::string_view arg) {
     chat.notice(std::format("Saved {} to {}", f->name, zchat::text::sanitize(where, 500)));
 }
 
-// Emoji: pictures saved under a name, already drawn, in the emoji folder of the config folder, one NAME.art file
-// each (the drawing as it is sent), so /emoji NAME sends them without the image file.
+// Emoji: pictures saved under a name in the emoji folder of the config folder, so /emoji NAME sends them without the
+// image file. Each is a real picture, NAME.pic (as /image sends it, see image::encode_picture()), or a picture drawn
+// with characters, NAME.art (as /ascii sends it).
 constexpr std::size_t max_emoji_name = 32;
-constexpr std::uintmax_t max_emoji_bytes = 64 * 1024;
+constexpr std::uintmax_t max_emoji_art_bytes = 64 * 1024;
 
 std::filesystem::path emoji_dir() {
     const auto dir = zchat::config::dir();
@@ -580,17 +706,43 @@ std::string emoji_name(std::string_view s) {
     return name;
 }
 
-std::filesystem::path emoji_file(const std::string& name) {
-    return emoji_dir() / (name + ".art");
+// ascii: the drawing (NAME.art), or else the picture (NAME.pic).
+std::filesystem::path emoji_file(const std::string& name, bool ascii) {
+    return emoji_dir() / (name + (ascii ? ".art" : ".pic"));
 }
 
+// A saved emoji: what it is, and whether it is drawn with characters.
+struct Emoji {
+    std::string data;
+    bool ascii = false;
+};
+
+std::optional<Emoji> load_emoji(const std::string& name) {
+    for (const bool ascii : {false, true}) {
+        std::error_code ec;
+        const auto file = emoji_file(name, ascii);
+        const auto bytes = std::filesystem::file_size(file, ec);
+        if (ec || bytes > (ascii ? max_emoji_art_bytes : zchat::max_image_bytes)) {
+            continue;
+        }
+        std::ifstream in(file, std::ios::binary);
+        std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (!data.empty()) {
+            return Emoji {std::move(data), ascii};
+        }
+    }
+    return std::nullopt;
+}
+
+// The emoji saved, sorted, each with "(ascii)" when it is drawn with characters.
 std::vector<std::string> emoji_names() {
     std::vector<std::string> names;
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(emoji_dir(), ec)) {
-        if (entry.path().extension() == ".art") {
+        const auto extension = entry.path().extension();
+        if (extension == ".art" || extension == ".pic") {
             if (const std::string name = emoji_name(entry.path().stem().string()); !name.empty()) {
-                names.push_back(name);
+                names.push_back(extension == ".art" ? name + " (ascii)" : name);
             }
         }
     }
@@ -603,15 +755,34 @@ void emoji_name_help(zchat::Chat& chat, std::string_view given) {
                             zchat::text::sanitize(given, 40), max_emoji_name));
 }
 
+// Takes the word "ascii" off the front of arg, telling whether it was there.
+bool take_ascii(std::string_view& arg) {
+    while (!arg.empty() && arg.front() == ' ') {
+        arg.remove_prefix(1);
+    }
+    if (arg == "ascii" || arg.starts_with("ascii ")) {
+        arg.remove_prefix(std::min(arg.size(), std::string_view("ascii ").size()));
+        while (!arg.empty() && arg.front() == ' ') {
+            arg.remove_prefix(1);
+        }
+        return true;
+    }
+    return false;
+}
+
+void add_emoji_help(zchat::Chat& chat) {
+    chat.notice("Use /addemoji NAME [SIZE] FILE to save a picture as an emoji (a GIF plays), then /emoji NAME to send "
+                "it; SIZE as for /image.");
+    chat.notice("Use /addemoji NAME ascii [SIZE] [TEXTURE%] FILE to save it drawn with characters instead, as /ascii "
+                "draws (a TEXTURE% alone does too).");
+}
+
 void add_emoji(zchat::Chat& chat, std::string_view arg) {
     const auto space = arg.find(' ');
     std::string_view rest = space == std::string_view::npos ? std::string_view() : arg.substr(space + 1);
-    while (!rest.empty() && rest.front() == ' ') {
-        rest.remove_prefix(1);
-    }
+    bool ascii = take_ascii(rest);
     if (arg.empty() || rest.empty()) {
-        chat.notice("Use /addemoji NAME [SIZE] [TEXTURE%] FILE to save a picture as an emoji, then /emoji NAME to send "
-                    "it (SIZE and TEXTURE% as for /image).");
+        add_emoji_help(chat);
         return;
     }
     const std::string name = emoji_name(arg.substr(0, space));
@@ -619,8 +790,14 @@ void add_emoji(zchat::Chat& chat, std::string_view arg) {
         emoji_name_help(chat, arg.substr(0, space));
         return;
     }
-    const auto art = draw_image(chat, rest, "add");
-    if (!art) {
+    const auto args = parse_image_args(chat, rest);
+    if (!args) {
+        return;
+    }
+    // A texture is for pictures drawn with characters, as with /image.
+    ascii = ascii || args->texture.has_value();
+    const auto data = ascii ? draw_image(chat, rest, "add") : make_picture(chat, *args, "add");
+    if (!data) {
         return;
     }
     if (emoji_dir().empty()) {
@@ -628,18 +805,32 @@ void add_emoji(zchat::Chat& chat, std::string_view arg) {
         return;
     }
     std::error_code ec;
-    const bool existed = std::filesystem::exists(emoji_file(name), ec);
+    const bool existed = std::filesystem::exists(emoji_file(name, false), ec) ||
+                         std::filesystem::exists(emoji_file(name, true), ec);
     std::filesystem::create_directories(emoji_dir(), ec);
-    std::ofstream out(emoji_file(name), std::ios::binary | std::ios::trunc);
-    out << *art;
+    std::ofstream out(emoji_file(name, ascii), std::ios::binary | std::ios::trunc);
+    out.write(data->data(), static_cast<std::streamsize>(data->size()));
     if (!out.flush()) {
         chat.notice(std::format("Could not save the emoji in {}", emoji_dir().string()));
         return;
     }
-    chat.notice(std::format("{} emoji {}: send it with /emoji {}", existed ? "Replaced" : "Saved", name, name));
+    out.close();
+    // One emoji per name: the other kind goes.
+    std::filesystem::remove(emoji_file(name, !ascii), ec);
+    chat.notice(std::format("{} emoji {}{}: send it with /emoji {}", existed ? "Replaced" : "Saved", name,
+                            ascii ? " (drawn with characters)" : "", name));
 }
 
 void send_emoji(zchat::Chat& chat, std::string_view arg) {
+    // "/emoji NAME ascii" draws a picture emoji with characters, this once.
+    while (!arg.empty() && arg.back() == ' ') {
+        arg.remove_suffix(1);
+    }
+    bool as_ascii = false;
+    if (const auto space = arg.rfind(' '); space != std::string_view::npos && arg.substr(space + 1) == "ascii") {
+        as_ascii = true;
+        arg = arg.substr(0, space);
+    }
     const std::string name = emoji_name(arg);
     if (name.empty()) {
         if (arg.find_first_not_of(' ') != std::string_view::npos) {
@@ -648,7 +839,8 @@ void send_emoji(zchat::Chat& chat, std::string_view arg) {
         }
         const auto names = emoji_names();
         if (names.empty()) {
-            chat.notice("No emoji yet: save one with /addemoji NAME [SIZE] [TEXTURE%] FILE.");
+            chat.notice("No emoji yet: save one with /addemoji NAME [SIZE] FILE (or /addemoji NAME ascii ... for one "
+                        "drawn with characters).");
             return;
         }
         std::string list;
@@ -656,26 +848,38 @@ void send_emoji(zchat::Chat& chat, std::string_view arg) {
             list += list.empty() ? "" : ", ";
             list += n;
         }
-        chat.notice(std::format("Your emoji: {}. Send one with /emoji NAME.", list));
+        chat.notice(std::format("Your emoji: {}. Send one with /emoji NAME (or /emoji NAME ascii to draw it with "
+                                "characters).",
+                                list));
         return;
     }
-    std::error_code ec;
-    const auto bytes = std::filesystem::file_size(emoji_file(name), ec);
-    if (ec) {
+    const auto emoji = load_emoji(name);
+    if (!emoji) {
         chat.notice(std::format("There is no emoji {} (try /emoji).", name));
         return;
     }
-    if (bytes > max_emoji_bytes) {
-        chat.notice(std::format("The emoji {} is too big to send: add it again with /addemoji.", name));
+    if (emoji->ascii) {
+        chat.draw(emoji->data);
         return;
     }
-    std::ifstream in(emoji_file(name), std::ios::binary);
-    const std::string art((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (art.empty()) {
-        chat.notice(std::format("Could not read the emoji {}.", name));
+    if (!as_ascii) {
+        chat.send_picture(emoji->data);
         return;
     }
-    chat.draw(art);
+    // Its first frame, drawn as /ascii draws a picture as big as it.
+    const auto picture = zchat::image::parse_picture(emoji->data);
+    const auto art =
+        picture ? zchat::image::to_ascii_data(picture->first,
+                                              std::clamp<std::size_t>(static_cast<std::size_t>(picture->width) /
+                                                                          picture_pixels_per_char,
+                                                                      8, zchat::max_art_cols),
+                                              zchat::max_art_rows)
+                : std::unexpected(std::string("it cannot be read"));
+    if (!art) {
+        chat.notice(std::format("Cannot draw the emoji {}: {}", name, art.error()));
+        return;
+    }
+    chat.draw(*art);
 }
 
 void remove_emoji(zchat::Chat& chat, std::string_view arg) {
@@ -689,7 +893,9 @@ void remove_emoji(zchat::Chat& chat, std::string_view arg) {
         return;
     }
     std::error_code ec;
-    if (!std::filesystem::remove(emoji_file(name), ec)) {
+    const bool picture = std::filesystem::remove(emoji_file(name, false), ec);
+    const bool drawing = std::filesystem::remove(emoji_file(name, true), ec);
+    if (!picture && !drawing) {
         chat.notice(std::format("There is no emoji {} (try /emoji).", name));
         return;
     }
@@ -727,6 +933,9 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
 
     const auto saved_color = zchat::config::get("color");
     zchat::Chat chat(options.port, name, saved_color ? zchat::parse_color(*saved_color) : std::nullopt, terminal);
+    if (const auto dir = zchat::config::dir(); !dir.empty()) {
+        chat.set_user(user_id(rng), dir / "channels");
+    }
 #ifdef _WIN32
     active_chat = &chat;
     SetConsoleCtrlHandler(on_console_event, TRUE);
@@ -749,6 +958,17 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
     });
     terminal.set_avatars([&chat](std::string_view hash) {
         return chat.avatar(hash);
+    });
+    terminal.set_channels([&chat] {
+        std::vector<zchat::Screen::ChannelItem> items;
+        for (const auto& c : chat.channels()) {
+            items.push_back({c.name, c.is_public, c.member, c.current, c.unread, c.owner});
+        }
+        return items;
+    });
+    terminal.set_channel_people([&chat](std::string_view channel) {
+        auto people = chat.channel_people(channel);
+        return zchat::Screen::ChannelPeople {std::move(people.members), std::move(people.others), people.away};
     });
     // Dropping a file on the window types its path: show it as the /image command it becomes, which can still be
     // changed (e.g. given a size) before pressing Enter; or /file, for other kinds of file.
@@ -800,6 +1020,20 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
         }
         if (input == "/quit" || input == "/exit" || input == "/q") {
             break;
+        }
+        const auto command = input.substr(0, input.find(' '));
+        if (command == "/create" || command == "/join" || command == "/leave" || command == "/delete" ||
+            command == "/add" || command == "/remove") {
+            channel_command(chat, command, input.substr(command.size()));
+            continue;
+        }
+        if (input == "/channels") {
+            print_channels(chat);
+            continue;
+        }
+        if (input == "/members" || input.starts_with("/members ")) {
+            print_members(chat, input.substr(std::string_view("/members").size()));
+            continue;
         }
         if (input == "/who" || input == "/list") {
             print_who(chat);

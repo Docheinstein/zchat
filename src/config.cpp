@@ -3,6 +3,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <string>
 #include <system_error>
 
 #ifdef _WIN32
@@ -60,7 +61,13 @@ namespace {
 } // namespace
 
 std::filesystem::path dir() {
+    // Another folder, for a second profile (e.g. two people on one computer, or tests).
 #ifdef _WIN32
+    if (const DWORD size = GetEnvironmentVariableW(L"ZCHAT_CONFIG_DIR", nullptr, 0); size > 1) {
+        std::wstring custom(size, wchar_t {});
+        custom.resize(GetEnvironmentVariableW(L"ZCHAT_CONFIG_DIR", custom.data(), size));
+        return std::filesystem::path(custom);
+    }
     PWSTR appdata = nullptr;
     std::filesystem::path base;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appdata))) {
@@ -69,6 +76,9 @@ std::filesystem::path dir() {
     CoTaskMemFree(appdata);
     return base.empty() ? base : base / "zchat";
 #else
+    if (const char* custom = std::getenv("ZCHAT_CONFIG_DIR"); custom && *custom) {
+        return std::filesystem::path(custom);
+    }
     if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg) {
         return std::filesystem::path(xdg) / "zchat";
     }
