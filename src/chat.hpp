@@ -2,6 +2,7 @@
 
 #include "channel.hpp"
 #include "color.hpp"
+#include "file.hpp"
 #include "history.hpp"
 #include "net.hpp"
 #include "protocol.hpp"
@@ -79,6 +80,9 @@ public:
     // The file numbered index (from 1, in the order they came), as "/save INDEX" names it.
     std::optional<ReceivedFile> received_file(std::size_t index) const;
     std::size_t received_files() const;
+
+    // Stops the trills coming at us or playing (see /trill); returns how many.
+    std::size_t stop_trills();
 
     // Sets our avatar (see image::encode_avatar()), or none; the others download it from us, see presence_text().
     void set_avatar(std::optional<std::string> picture);
@@ -193,7 +197,7 @@ private:
         std::string name;
         // The message, the drawing or the picture.
         std::shared_ptr<const std::string> data;
-        // A file: see keep_file(); a trill: see play_trill() (no index, it is not kept).
+        // A file: see keep_file(); a trill: what it has, in file_name (no index, it is not kept).
         std::size_t file_index = 0;
         std::string file_name;
         std::string file_size;
@@ -220,9 +224,15 @@ private:
     void receive_picture(std::uint64_t id, std::string_view name, std::string_view text);
     // Saves a file received for /save, and fills in entry for it.
     bool keep_file(std::uint64_t id, std::string_view name, std::string_view text, Entry& entry);
-    // Plays a trill received once, and fills in entry for it: it is saved in the temporary folder, played at full
-    // volume (see sound::play()) on a thread of its own, and deleted. Ours (from id) is only shown: the others hear it.
-    bool play_trill(std::uint64_t id, std::string_view text, Entry& entry);
+    // A trill arrived: fills in entry for it, and plays it on a thread of its own (see run_trill()). Ours (from id) is
+    // only shown: the others get it.
+    bool receive_trill(std::uint64_t id, std::string_view name, std::string_view text, Entry& entry);
+    // Gives the user three seconds to catch the STOP button running around the screen (or to type /stop); then shakes
+    // the window, plays the sound at full volume and sends the picture flying around the screen.
+    void run_trill(std::uint64_t id, const std::string& name, const file::Trill& trill, std::stop_token stop);
+    // Where the sound of a trill is kept, by name: saved in the temporary folder the first time only. Empty when it
+    // cannot be.
+    std::filesystem::path trill_file(std::string_view name, std::string_view data);
     void print_trill(const Entry& entry, std::optional<std::time_t> when = std::nullopt) const;
     // Shows an entry: live when it just arrived (tags ring), or else again, with the time it came at.
     void show(const Entry& entry, bool live);
@@ -331,8 +341,9 @@ private:
     std::filesystem::path files_dir_;
     mutable std::mutex files_mutex_;
     std::vector<ReceivedFile> files_;
-    // Names the trills played, each in files_dir_ only while it plays.
-    std::atomic<std::uint64_t> next_trill_ {1};
+    // The trills coming or playing, for /stop to stop them.
+    std::mutex trills_mutex_;
+    std::vector<std::shared_ptr<std::stop_source>> trills_;
 
     // Channels: ours, what we know of the others' (by name), the current one, what was said in each, and those with
     // something new since they were shown.

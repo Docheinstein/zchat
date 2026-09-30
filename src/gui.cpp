@@ -2,6 +2,7 @@
 
 #include "config.hpp"
 #include "image.hpp"
+#include "popup.hpp"
 #include "ui_html.hpp"
 
 #include <cctype>
@@ -386,9 +387,15 @@ Gui::Gui() {
         return "null";
     });
     view.set_html(std::string(reinterpret_cast<const char*>(ui_html), ui_html_size));
+    // On Linux, the popups of trills are made on the thread of the window's loop (see popup.hpp).
+    popup::set_dispatcher([this](std::function<void()> work) {
+        impl_->view.dispatch(std::move(work));
+    });
 }
 
-Gui::~Gui() = default;
+Gui::~Gui() {
+    popup::set_dispatcher({});
+}
 
 void Gui::set_info(std::uint16_t port) {
     std::scoped_lock lock(impl_->mutex);
@@ -400,6 +407,8 @@ void Gui::set_info(std::uint16_t port) {
 
 void Gui::run() {
     impl_->view.run();
+    // The loop is over: what is dispatched now would never run.
+    popup::set_dispatcher({});
     {
         std::scoped_lock lock(impl_->mutex);
         impl_->closed = true;
@@ -522,6 +531,12 @@ bool Gui::show_file(std::string_view line, std::size_t index, std::string_view n
     }
     impl_->eval(js);
     return true;
+}
+
+void Gui::nudge() {
+    if (const auto window = impl_->view.window(); window.ok()) {
+        popup::nudge(window.value());
+    }
 }
 
 void Gui::interrupt() {

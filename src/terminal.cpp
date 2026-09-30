@@ -1,5 +1,6 @@
 #include "terminal.hpp"
 
+#include "popup.hpp"
 #include "protocol.hpp"
 #include "text.hpp"
 
@@ -188,6 +189,13 @@ std::size_t Terminal::width() const {
 void Terminal::bell() {
     // The system sound: the console bell is silent in some hosts.
     MessageBeep(MB_OK);
+}
+
+void Terminal::nudge() {
+    // The console's own window, when it is the one shown (in Windows Terminal it is a hidden one).
+    if (const HWND console = GetConsoleWindow(); console && IsWindowVisible(console)) {
+        popup::nudge(console);
+    }
 }
 
 std::optional<std::string> Terminal::read_line_interactive() {

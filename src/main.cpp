@@ -11,9 +11,13 @@
 #include "markup.hpp"
 #include "names.hpp"
 #include "net.hpp"
+#include "sound.hpp"
 #include "terminal.hpp"
 #include "text.hpp"
 #include "trill_mp3.hpp"
+#ifdef ZCHAT_TRILL_PICTURE
+#include "trill_picture.hpp"
+#endif
 #include "update.hpp"
 
 #include <algorithm>
@@ -283,9 +287,12 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /file FILE   send a file of any kind, for everyone to download");
     chat.notice("               (or drop any other file on the window, then press Enter)");
     chat.notice("  /save N      save file N from the chat in your downloads folder (/save alone lists them)");
-    chat.notice(std::format(
-        "  /trill [MP3] everybody else hears an MP3 file once, at full volume (up to {}; /trill alone: Fahhh)",
-        zchat::file::format_size(zchat::file::max_bytes(zchat::file::Kind::Trill))));
+    chat.notice("  /trill [SOUND] [PICTURE]  trill everybody else: they have 3 seconds to catch a STOP button running");
+    chat.notice(std::format("               around the screen, or they hear the sound (MP3, WAV, up to {}) at full "
+                            "volume",
+                            zchat::file::format_size(zchat::sound::max_bytes)));
+    chat.notice("               and see the picture flying around (/trill alone: Fahhh)");
+    chat.notice("  /stop        stop the trills coming at you");
     chat.notice("  @NAME        tag someone in a message: they hear a sound");
     chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
     chat.notice("  @everyone    tag all the people in the chat: they all hear a sound");
@@ -640,21 +647,92 @@ void send_file(zchat::Chat& chat, std::string_view arg) {
     chat.send_file(*text);
 }
 
-// A trill: an MP3 file everybody else in the chat (or the channel) hears once, as it arrives, at full volume; without
-// one, the sound built into zchat.
+// The pictures of trills: at most this many pixels wide and tall when they have to be made again (see
+// image::encode_picture_data()).
+constexpr int max_trill_picture_size = 1280;
+
+// The one or two files of "/trill FILE [FILE]": the whole line when it is a file, or else its two halves at the first
+// space where both are. Empty when there are none.
+std::vector<std::filesystem::path> trill_files(std::string_view arg) {
+    const auto exists = [](const std::filesystem::path& path) {
+        std::error_code ec;
+        return !path.empty() && std::filesystem::is_regular_file(path, ec);
+    };
+    if (auto whole = zchat::image::parse_path(arg); exists(whole)) {
+        return {std::move(whole)};
+    }
+    for (auto space = arg.find(' '); space != std::string_view::npos; space = arg.find(' ', space + 1)) {
+        auto first = zchat::image::parse_path(arg.substr(0, space));
+        auto second = zchat::image::parse_path(arg.substr(space + 1));
+        if (exists(first) && exists(second)) {
+            return {std::move(first), std::move(second)};
+        }
+    }
+    return {};
+}
+
+// A trill: a sound (MP3 or WAV) and a picture, or one of them, that everybody else in the chat (or the channel) gets
+// once, after a few seconds to stop it; without either, Fahhh.
 void send_trill(zchat::Chat& chat, std::string_view arg) {
+    zchat::file::Trill trill;
     if (arg.empty()) {
-        chat.send_file(zchat::file::encode("Fahhh.mp3",
-                                           std::string_view(reinterpret_cast<const char*>(trill_mp3), trill_mp3_size),
-                                           zchat::file::Kind::Trill));
+        trill.sound_name = "Fahhh.mp3";
+        trill.sound.assign(reinterpret_cast<const char*>(trill_mp3), trill_mp3_size);
+#ifdef ZCHAT_TRILL_PICTURE
+        if (auto picture = zchat::image::encode_picture_data(
+                std::string_view(reinterpret_cast<const char*>(trill_picture), trill_picture_size),
+                max_trill_picture_size, zchat::file::max_trill_picture_bytes)) {
+            trill.picture_name = "Fahhh.jpg";
+            trill.picture = std::move(*picture);
+        }
+#endif
+        chat.send_file(zchat::file::encode_trill(trill));
         return;
     }
-    const auto text = zchat::file::encode(zchat::image::parse_path(arg), zchat::file::Kind::Trill);
-    if (!text) {
-        chat.notice(std::format("Cannot play {}: {}", zchat::text::sanitize(arg, 200), text.error()));
+    const auto files = trill_files(arg);
+    if (files.empty()) {
+        chat.notice(std::format("Cannot find {}: use /trill [SOUND] [PICTURE], with a sound (MP3 or WAV), a picture or "
+                                "both.",
+                                zchat::text::sanitize(arg, 200)));
         return;
     }
-    chat.send_file(*text);
+    for (const auto& path : files) {
+        const auto u8 = path.filename().u8string();
+        const std::string name(u8.begin(), u8.end());
+        const std::string shown = zchat::text::sanitize(name, 200);
+        auto data = zchat::image::read_image_file(path);
+        if (!data) {
+            chat.notice(std::format("Cannot send {}: {}", shown, data.error()));
+            return;
+        }
+        if (zchat::sound::is_audio(*data)) {
+            if (!trill.sound.empty()) {
+                chat.notice("A trill has one sound: give a sound, a picture, or one of each.");
+                return;
+            }
+            if (data->size() > zchat::sound::max_bytes) {
+                chat.notice(std::format("Cannot send {}: sounds up to {} can be trilled.", shown,
+                                        zchat::file::format_size(zchat::sound::max_bytes)));
+                return;
+            }
+            trill.sound_name = name;
+            trill.sound = std::move(*data);
+            continue;
+        }
+        auto picture =
+            zchat::image::encode_picture_data(*data, max_trill_picture_size, zchat::file::max_trill_picture_bytes);
+        if (!picture) {
+            chat.notice(std::format("Cannot send {}: {} Sounds can be MP3 or WAV files.", shown, picture.error()));
+            return;
+        }
+        if (!trill.picture.empty()) {
+            chat.notice("A trill has one picture: give a sound, a picture, or one of each.");
+            return;
+        }
+        trill.picture_name = name;
+        trill.picture = std::move(*picture);
+    }
+    chat.send_file(zchat::file::encode_trill(trill));
 }
 
 void save_file(zchat::Chat& chat, std::string_view arg) {
@@ -1084,6 +1162,10 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             save_file(chat, input.substr(std::min(input.size(), std::string_view("/save ").size())));
         } else if (input == "/trill" || input.starts_with("/trill ")) {
             send_trill(chat, input.substr(std::min(input.size(), std::string_view("/trill ").size())));
+        } else if (input == "/stop") {
+            const std::size_t stopped = chat.stop_trills();
+            chat.notice(stopped == 0 ? std::string("No trill to stop.")
+                                     : std::format("Stopped {} trill{}.", stopped, stopped == 1 ? "" : "s"));
         } else if (input == "/ascii" || input.starts_with("/ascii ")) {
             send_ascii(chat, input.substr(std::min(input.size(), std::string_view("/ascii ").size())));
         } else if (input == "/addemoji" || input.starts_with("/addemoji ")) {

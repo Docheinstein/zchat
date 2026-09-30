@@ -5,6 +5,7 @@
 #include "file.hpp"
 #include "image.hpp"
 #include "markup.hpp"
+#include "popup.hpp"
 #include "sound.hpp"
 #include "text.hpp"
 
@@ -12,6 +13,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <condition_variable>
 #include <ctime>
 #include <format>
 #include <fstream>
@@ -74,6 +76,9 @@ namespace {
     constexpr auto chunk_max_wait = 2400ms;
     constexpr auto chunk_give_up = 20s;
     constexpr auto chunk_resend_interval = 250ms;
+    // Trills: how long there is to catch the STOP button (or type /stop), and how long the picture flies around.
+    constexpr std::chrono::milliseconds trill_countdown = 3s;
+    constexpr std::chrono::milliseconds trill_picture_time = 3s;
 
     // "A B C ...": numbers, one space between them.
     std::optional<std::vector<std::uint64_t>> parse_numbers(std::string_view s) {
@@ -1287,8 +1292,8 @@ void Chat::receive_picture(std::uint64_t id, std::string_view name, std::string_
     }
     Entry entry {Entry::Kind::Picture, std::time(nullptr), id, std::string(name), nullptr};
     if (file::is_trill(text)) {
-        // Heard as it arrives, in whatever channel is shown: all its members hear it at once.
-        if (!play_trill(id, text, entry)) {
+        // As it arrives, in whatever channel is shown: all its members get it at once.
+        if (!receive_trill(id, name, text, entry)) {
             return;
         }
     } else if (file::is_file(text)) {
@@ -1371,38 +1376,111 @@ void Chat::print_file(const Entry& entry, std::optional<std::time_t> when) const
                                 terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", hint) : hint));
 }
 
-bool Chat::play_trill(std::uint64_t id, std::string_view text, Entry& entry) {
-    auto received = file::parse(text, file::Kind::Trill);
-    if (!received) {
+bool Chat::receive_trill(std::uint64_t id, std::string_view name, std::string_view text, Entry& entry) {
+    auto trill = file::parse_trill(text);
+    if (!trill) {
         return false;
     }
     entry.kind = Entry::Kind::Trill;
-    entry.file_name = received->name;
-    entry.file_size = file::format_size(received->data.size());
-    // Ours: only the others hear it.
+    entry.file_name = trill->sound.empty()     ? trill->picture_name
+                      : trill->picture.empty() ? trill->sound_name
+                                               : std::format("{} + {}", trill->sound_name, trill->picture_name);
+    // Ours: only the others get it.
     if (id == id_) {
         return true;
     }
-    const auto path = files_dir_ / std::format("trill-{}.mp3", next_trill_++);
-    auto data = std::make_shared<const std::string>(std::move(received->data));
-    // Too many transfers and sounds at once: this one is not heard.
-    start_transfer([path, data](std::stop_token stop) {
-        std::error_code ec;
-        std::filesystem::create_directories(path.parent_path(), ec);
-        if (std::ofstream out(path, std::ios::binary | std::ios::trunc);
-            !out.write(data->data(), static_cast<std::streamsize>(data->size())).flush()) {
-            return;
-        }
-        sound::play(path, stop);
-        std::filesystem::remove(path, ec);
+    auto shared = std::make_shared<const file::Trill>(std::move(*trill));
+    // (With too many transfers and trills at once, this one is missed.)
+    start_transfer([this, id, who = std::string(name), shared](std::stop_token stop) {
+        run_trill(id, who, *shared, stop);
     });
     return true;
+}
+
+void Chat::run_trill(std::uint64_t id, const std::string& name, const file::Trill& trill, std::stop_token stop) {
+    // Stopped by /stop, or when zchat quits.
+    const auto cancel = std::make_shared<std::stop_source>();
+    const std::stop_callback quit(stop, [cancel] {
+        cancel->request_stop();
+    });
+    {
+        std::scoped_lock lock(trills_mutex_);
+        trills_.push_back(cancel);
+    }
+    const std::stop_token token = cancel->get_token();
+    // Ready to go as soon as the countdown is over.
+    const auto sound = trill.sound.empty() ? std::filesystem::path() : trill_file(trill.sound_name, trill.sound);
+    const auto picture = trill.picture.empty() ? std::nullopt : image::parse_picture(trill.picture);
+    bool caught = false;
+    if (popup::available()) {
+        caught = popup::alert(std::format("{} is trilling you!", name), trill_countdown, token);
+    } else {
+        notice(std::format("🔊 {} is trilling you in {} seconds: /stop to stop it!", colored_name(id, name),
+                           std::chrono::duration_cast<std::chrono::seconds>(trill_countdown).count()));
+        std::mutex mutex;
+        std::condition_variable_any cv;
+        std::unique_lock lock(mutex);
+        cv.wait_for(lock, token, trill_countdown, [] {
+            return false;
+        });
+    }
+    if (caught) {
+        notice(std::format("You stopped {}'s trill in time!", colored_name(id, name)));
+    } else if (!token.stop_requested()) {
+        // All at once; each thread is waited for at the end of the block.
+        const std::jthread nudging([this] {
+            terminal_.nudge();
+        });
+        std::jthread playing;
+        if (!sound.empty()) {
+            playing = std::jthread([&sound, &token] {
+                sound::play(sound, token);
+            });
+        }
+        if (picture && popup::available()) {
+            if (const auto decoded = image::decode_image(picture->first)) {
+                popup::fly(*decoded, trill_picture_time, token);
+            }
+        } else if (picture) {
+            // Without popups, in the chat.
+            print_picture(id, name, trill.picture);
+        }
+    }
+    std::scoped_lock lock(trills_mutex_);
+    std::erase(trills_, cancel);
+}
+
+std::filesystem::path Chat::trill_file(std::string_view name, std::string_view data) {
+    // By name only: a trill sent again (Fahhh!) plays the copy saved the first time.
+    std::scoped_lock lock(files_mutex_);
+    const auto path = files_dir_ / "trills" / std::filesystem::path(std::u8string(name.begin(), name.end()));
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(path, ec)) {
+        return path;
+    }
+    std::filesystem::create_directories(path.parent_path(), ec);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out.write(data.data(), static_cast<std::streamsize>(data.size())).flush()) {
+        out.close();
+        std::filesystem::remove(path, ec);
+        return {};
+    }
+    return path;
+}
+
+std::size_t Chat::stop_trills() {
+    std::scoped_lock lock(trills_mutex_);
+    std::size_t stopped = 0;
+    for (const auto& trill : trills_) {
+        stopped += trill->request_stop() ? 1 : 0;
+    }
+    return stopped;
 }
 
 void Chat::print_trill(const Entry& entry, std::optional<std::time_t> when) const {
     const std::string stamp = when ? timestamp(*when) : timestamp();
     const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", stamp) : stamp;
-    terminal_.print(std::format("{} {}: 🔊 {}", time, colored_name(entry.id, entry.name), entry.file_name));
+    terminal_.print(std::format("{} {}: 🔊 trill! {}", time, colored_name(entry.id, entry.name), entry.file_name));
 }
 
 void Chat::show(const Entry& entry, bool live) {

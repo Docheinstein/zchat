@@ -57,6 +57,9 @@ std::expected<DecodedImage, std::string> decode_image(std::string_view encoded);
 // still_of_animation (if given) tells whether it is the first frame of an animation too long to send whole.
 std::expected<std::string, std::string> encode_picture(const std::filesystem::path& path, int max_size,
                                                        bool* still_of_animation = nullptr);
+// The same from the bytes of an image file, in at most max_bytes (instead of what fits in a picture's packets).
+std::expected<std::string, std::string> encode_picture_data(std::string_view data, int max_size, std::size_t max_bytes,
+                                                            bool* still_of_animation = nullptr);
 
 // An avatar, as a picture like encode_picture()'s, square: a still image cropped to its middle, 256 pixels; an
 // animated GIF as it is when it is small enough (shown cropped), or else as square JPEG frames. At most

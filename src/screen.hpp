@@ -119,6 +119,10 @@ public:
         return false;
     }
 
+    // A trill (/trill): brings the window to the front, shown again if it is minimized, and shakes it, where it can
+    // (see popup::nudge()). Takes about half a second. Thread-safe.
+    virtual void nudge() {}
+
     // Makes read_line() return nullopt right away, now and from then on. Thread-safe.
     virtual void interrupt() = 0;
 };
