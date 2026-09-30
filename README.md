@@ -38,7 +38,9 @@ zchat [-p PORT] [-n NAME] [--terminal]
 `zchat` opens a window; `zchat --terminal`, or where there is no display (e.g. over ssh on Linux), chats in the
 terminal like before. Everything works the same in both: messages, commands, pictures, emoji, games, `/update`.
 
-The window has the channel (the UDP port) and the people in the chat on the left, with an avatar in their color,
+The window has your avatar and name at the top left (click them to change your name, and your color with a color
+picker; `/nick` and `/color` change them too), then the channel (the
+UDP port) and the people in the chat, each with an avatar in their color,
 the messages in the middle, and the input box at the bottom: Enter sends, Up and Down go through what was sent,
 typing `@` lists the people to tag, pasting the path of an image turns it into `/image`, and dropping an image file
 on the window types the `/image` command for it (a size or texture can still be added before Enter). The text size
@@ -120,9 +122,11 @@ Animated GIFs play in windows at their own speed and full quality, as any GIF do
 One too big for that is sent as JPEG frames, all of them, as big and good as fits; one too long to decode (over 64
 million pixels in all its frames) is then sent as its first frame, and zchat says so. Terminals draw the first frame.
 
-A picture bigger than one packet is sent in pieces (48 KB each, about 20 per MB), which take as long as the network
-needs to carry them (a few seconds for tens of MB on Wi-Fi). Whoever misses some asks for them again, so a picture
-arrives whole even when packets get lost. Versions from before pieces only see pictures of up to about 45 KB.
+A picture bigger than one packet (about 45 KB) is downloaded by each of the others straight from the sender, over
+TCP, as fast as the network goes: broadcasts are no good for big data (Wi-Fi sends them at its slowest, and never
+again when they are lost). Whoever cannot download it (e.g. a firewall in the way) gets it in pieces instead, and
+asks again for the ones lost, so it still arrives whole, only slower. Versions from before this only see pictures of
+up to about 45 KB.
 
 `/ascii` sends a picture as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
 with more ink, in the color of the picture. They are shown as solid blocks of color, as dark or bright as the
@@ -274,11 +278,14 @@ the terminal version.)
   square carries a clock and a tag from the painter's id, and a square keeps the newest change, so changes lost or
   heard out of order do not matter. Every 15 seconds each zchat sends a hash of its canvas, and whoever has a
   different one sends the changes it has, so newcomers and whoever missed a packet catch up. Older versions ignore `GAME` packets, so they just see people typing funny words.
-* **Pictures** bigger than a packet go as `CHUNK` packets (`<picture id> <index> <count>`, then a piece of the
-  picture's text), put back together by whoever receives them. When the pieces stop coming and some are missing,
-  the receiver sends a `RESEND` packet (`<sender id> <picture id> <index> ...`), waiting twice as long each time it
-  gets nothing; the sender keeps its last pictures for two minutes and sends those pieces again. A picture whose
-  pieces stop coming for 20 seconds is given up on, and zchat says so.
+* **Pictures** bigger than a packet are offered with an `OFFER` packet (`<picture id> <bytes> <pieces> <TCP port>`).
+  Every zchat listens on a TCP port the system picks; whoever gets an offer connects to the address it came from,
+  sends `GET <picture id>`, and reads the picture (scrambled like packets) until the sender closes the connection.
+  If that fails, it asks for the picture in 8 KB pieces instead, with a `RESEND` packet (`<sender id> <picture id>
+  <index> ...`), and gets them as `CHUNK` packets (`<picture id> <index> <count>`, then a piece of the picture's
+  text); it asks again for the ones missing when they stop coming, waiting twice as long each time it gets nothing.
+  The sender keeps its last pictures for two minutes. A picture whose pieces stop coming for 20 seconds is given up
+  on, and zchat says so.
 * Incoming names and messages are sanitized (control characters stripped) so nobody can mess with your terminal.
 * The input line is edited in raw mode, so incoming messages are printed above what you are typing instead of
   getting mixed with it.
@@ -286,7 +293,7 @@ the terminal version.)
 Wire format, one datagram per packet (fields separated by `\n`):
 
 ```
-ZCHAT1 \n <J|H|M|L|P|G|I|K|R> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
+ZCHAT1 \n <J|H|M|L|P|G|I|O|K|R> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
 ```
 
 which is sent scrambled (see `src/cipher.hpp`):
@@ -299,6 +306,9 @@ ZX1 <4 byte nonce> <scrambled bytes of the packet above>
 
 * **Nobody shows up**: the firewall must allow incoming UDP on port 47474. Windows asks the first time you run
   zchat: allow it on *private* networks. On Linux, e.g. `sudo ufw allow 47474/udp`.
+* **Big pictures arrive slowly**: they are downloaded over TCP, on a port the system picks, so the firewall must let
+  zchat itself accept connections (the rule Windows makes when you allow zchat does); without that they still
+  arrive, in pieces, much more slowly.
 * Broadcasts do not cross routers, and some Wi-Fi networks (guest networks, "client isolation") block traffic
   between devices.
 * **Dropping a picture does nothing** (Linux, Terminator 2.1.3): Terminator itself fails on every drop, in any

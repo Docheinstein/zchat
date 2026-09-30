@@ -50,6 +50,19 @@
     flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
     font-size: 11px; font-weight: 700; color: #111;
   }
+  /* Who we are, above the channels. */
+  #me {
+    display: flex; align-items: center; gap: 10px; margin: 0 8px 6px; padding: 8px 8px 12px;
+    border-bottom: 1px solid var(--border); min-width: 0;
+  }
+  #me { cursor: pointer; border-radius: 8px 8px 0 0; }
+  #me:hover { background: #20242d; }
+  #me .avatar { width: 34px; height: 34px; font-size: 15px; }
+  #me .who { min-width: 0; }
+  #me .name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #me .status { color: var(--muted); font-size: 11px; }
+  #me .status::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: #3fb950; margin-right: 5px; vertical-align: 1px; }
   main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   #log {
     flex: 1; overflow-y: auto; padding: 10px 14px; font-family: var(--font); font-size: var(--size);
@@ -73,6 +86,37 @@
     border-radius: 8px; padding: 10px 12px; font-family: var(--font); font-size: var(--size); outline: none;
   }
   #input:focus { border-color: var(--accent); }
+  /* Changing our name and color: opened by clicking them, above the channels. */
+  #profile {
+    position: fixed; top: 112px; left: 8px; width: 264px; z-index: 15; display: none;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+    box-shadow: 0 8px 28px #000a;
+  }
+  #profile.open { display: block; }
+  #profile label { display: block; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .8px; margin: 2px 0 6px; }
+  #profile input[type=text] {
+    width: 100%; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 9px; font: inherit; font-size: 13px; outline: none; margin-bottom: 12px;
+  }
+  #profile input[type=text]:focus { border-color: var(--accent); }
+  #profile .colors { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  #profile input[type=color] {
+    width: 44px; height: 32px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none;
+    cursor: pointer;
+  }
+  #profile .hex { font-family: var(--font); color: var(--muted); flex: 1; }
+  #profile .swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-bottom: 12px; }
+  #profile .swatches span { height: 22px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
+  #profile .swatches span:hover { border-color: var(--text); }
+  #profile .preview { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-weight: 600; }
+  #profile .buttons { display: flex; gap: 8px; justify-content: flex-end; }
+  #profile button {
+    background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    height: 30px; padding: 0 12px; font: inherit; cursor: pointer;
+  }
+  #profile button:hover { border-color: var(--accent); }
+  #profile button.primary { background: var(--accent); border-color: var(--accent); color: #0b0d10; font-weight: 600; }
   #mentions {
     position: absolute; left: 14px; bottom: 58px; min-width: 220px; max-height: 240px; overflow-y: auto;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px 0;
@@ -97,6 +141,8 @@
   <button id="bigger" title="Bigger text">A+</button>
 </header>
 <aside>
+  <div id="me" title="Change your name and color"><span class="avatar"></span>
+    <div class="who"><div class="name"></div><div class="status">online</div></div></div>
   <h2>Channels</h2>
   <div class="item active" id="channel-item"># general</div>
   <h2>People</h2>
@@ -109,12 +155,25 @@
     <input id="input" autocomplete="off" spellcheck="false" placeholder="Type a message, or /help for commands">
   </div>
 </main>
+<div id="profile">
+  <div class="preview"><span class="avatar"></span><span class="name"></span></div>
+  <label for="profile-name">Name</label>
+  <input type="text" id="profile-name" maxlength="48" autocomplete="off" spellcheck="false">
+  <label for="profile-color">Color</label>
+  <div class="colors">
+    <input type="color" id="profile-color">
+    <span class="hex" id="profile-hex"></span>
+    <button id="profile-random" title="Pick a random bright color">Random</button>
+  </div>
+  <div class="swatches" id="profile-swatches"></div>
+  <div class="buttons"><button id="profile-cancel">Cancel</button><button class="primary" id="profile-save">Save</button></div>
+</div>
 <div id="drop">Drop an image to send it</div>
 <div id="viewer"><img alt="picture"></div>
 <script>
 "use strict";
 // The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
-// zchatReady(), zchatSend(line), zchatMentions(), zchatRewrite(line), zchatDrop(name, base64), zchatSettings()
+// zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatRewrite(line), zchatDrop(name, base64), zchatSettings()
 // and zchatSaveSettings(size, font).
 const log = document.getElementById("log");
 const input = document.getElementById("input");
@@ -291,7 +350,96 @@ function styleColor(style) {
 async function mentions() {
   try { return await window.zchatMentions(); } catch { return []; }
 }
+function setAvatar(avatar, name, style) {
+  avatar.style.background = styleColor(style) || "#888";
+  avatar.textContent = name.trim().charAt(0).toUpperCase();
+}
+// Our own name and avatar, above the channels.
+async function refreshSelf() {
+  let self = null;
+  try { self = await window.zchatSelf(); } catch {}
+  if (!self) return;
+  const [name, style] = self;
+  const me = document.getElementById("me");
+  setAvatar(me.querySelector(".avatar"), name, style);
+  const label = me.querySelector(".name");
+  label.textContent = name;
+  label.title = name;
+  label.style.color = styleColor(style);
+}
+// --- Changing our name and color, by clicking them: sent as /nick and /color, like typing them.
+const profile = document.getElementById("profile");
+const profileName = document.getElementById("profile-name");
+const profileColor = document.getElementById("profile-color");
+let current = { name: "", color: "" };
+function toHex(rgb) {
+  const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(rgb || "");
+  return m ? "#" + m.slice(1).map(n => (+n).toString(16).padStart(2, "0")).join("") : "#888888";
+}
+function showProfilePreview() {
+  const name = profileName.value.trim() || current.name;
+  const avatar = profile.querySelector(".preview .avatar");
+  avatar.style.background = profileColor.value;
+  avatar.textContent = name.charAt(0).toUpperCase();
+  const label = profile.querySelector(".preview .name");
+  label.textContent = name;
+  label.style.color = profileColor.value;
+  document.getElementById("profile-hex").textContent = profileColor.value;
+}
+const swatches = ["#e63232", "#ff8800", "#f2c94c", "#3fb950", "#2ec4b6", "#4d8dff", "#9b5de5", "#f15bb5",
+                  "#ff6b6b", "#ffb86b", "#c3e88d", "#7ee787", "#89ddff", "#a5b4fc", "#d4a5ff", "#ffffff"];
+for (const color of swatches) {
+  const swatch = document.createElement("span");
+  swatch.style.background = color;
+  swatch.title = color;
+  swatch.onclick = () => { profileColor.value = color; showProfilePreview(); };
+  document.getElementById("profile-swatches").appendChild(swatch);
+}
+function openProfile() {
+  const me = document.getElementById("me");
+  current = { name: me.querySelector(".name").textContent, color: toHex(me.querySelector(".name").style.color) };
+  profileName.value = current.name;
+  profileColor.value = current.color;
+  showProfilePreview();
+  profile.classList.add("open");
+  profileName.focus();
+  profileName.select();
+}
+function closeProfile() {
+  profile.classList.remove("open");
+  input.focus();
+}
+function saveProfile() {
+  const name = profileName.value.trim();
+  if (name && name !== current.name) window.zchatSend("/nick " + name);
+  if (profileColor.value.toLowerCase() !== current.color.toLowerCase()) window.zchatSend("/color " + profileColor.value);
+  closeProfile();
+  setTimeout(refreshSelf, 150);
+}
+document.getElementById("me").onclick = () => profile.classList.contains("open") ? closeProfile() : openProfile();
+profileName.oninput = showProfilePreview;
+profileColor.oninput = showProfilePreview;
+document.getElementById("profile-random").onclick = () => {
+  // Any hue, bright enough to read on the dark background.
+  const h = Math.random() * 360, s = 0.75, l = 0.6;
+  const f = n => { const k = (n + h / 30) % 12; return Math.round(255 * (l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+  profileColor.value = "#" + [f(0), f(8), f(4)].map(v => v.toString(16).padStart(2, "0")).join("");
+  showProfilePreview();
+};
+document.getElementById("profile-save").onclick = saveProfile;
+document.getElementById("profile-cancel").onclick = closeProfile;
+profile.addEventListener("keydown", e => {
+  if (e.key === "Enter") { saveProfile(); e.preventDefault(); }
+  else if (e.key === "Escape") { closeProfile(); e.preventDefault(); e.stopPropagation(); }
+});
+document.addEventListener("mousedown", e => {
+  if (profile.classList.contains("open") && !profile.contains(e.target) && !document.getElementById("me").contains(e.target)) {
+    closeProfile();
+  }
+});
+
 async function refreshPeople() {
+  refreshSelf();
   const people = await mentions();
   const box = document.getElementById("people");
   box.textContent = "";
@@ -301,8 +449,7 @@ async function refreshPeople() {
     item.className = "item";
     const avatar = document.createElement("span");
     avatar.className = "avatar";
-    avatar.style.background = styleColor(style) || "#888";
-    avatar.textContent = name.trim().charAt(0).toUpperCase();
+    setAvatar(avatar, name, style);
     const label = document.createElement("span");
     label.textContent = name;
     label.style.color = styleColor(style);
@@ -370,6 +517,8 @@ input.addEventListener("keydown", e => {
     sentPos = sent.length;
     draft = "";
     window.zchatSend(line);
+    // A new name or color (/nick, /color) shows right away.
+    setTimeout(refreshSelf, 150);
     e.preventDefault();
   } else if (e.key === "ArrowUp" && sentPos > 0) {
     if (sentPos === sent.length) draft = input.value;

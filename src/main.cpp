@@ -635,6 +635,9 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
     terminal.set_mentions([&chat] {
         return chat.mentionable();
     });
+    terminal.set_self([&chat] {
+        return zchat::Screen::Mention {chat.name(), zchat::ansi_foreground(chat.color())};
+    });
     // Dropping an image file on the window types its path: show it as the /image command it becomes, which can
     // still be changed (e.g. given a size) before pressing Enter.
     terminal.set_rewriter([](std::string_view line) -> std::optional<std::string> {
