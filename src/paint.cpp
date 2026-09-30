@@ -183,7 +183,7 @@ namespace {
 
     class Paint final : public Game {
     public:
-        Paint(Chat& chat, Terminal& terminal, Games& games) :
+        Paint(Chat& chat, Screen& terminal, Games& games) :
             chat_(chat),
             terminal_(terminal) {
             (void)games;
@@ -545,7 +545,7 @@ namespace {
         }
 
         Chat& chat_;
-        Terminal& terminal_;
+        Screen& terminal_;
 
         std::array<Cell, size * size> board_ {};
         // The highest clock heard: our next change gets one more.
@@ -564,7 +564,7 @@ namespace {
 
 } // namespace
 
-std::unique_ptr<Game> make_paint(Chat& chat, Terminal& terminal, Games& games) {
+std::unique_ptr<Game> make_paint(Chat& chat, Screen& terminal, Games& games) {
     return std::make_unique<Paint>(chat, terminal, games);
 }
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "screen.hpp"
+
 #include <atomic>
 #include <deque>
 #include <functional>
@@ -16,50 +18,27 @@ namespace zchat {
 // the bottom and redrawn after every printed line.
 //
 // When stdin or stdout is not a terminal (e.g. piped), it falls back to plain line-by-line I/O.
-class Terminal {
+class Terminal : public Screen {
 public:
     Terminal();
-    ~Terminal();
+    ~Terminal() override;
     Terminal(const Terminal&) = delete;
     Terminal& operator=(const Terminal&) = delete;
 
     // Whether ANSI colors and cursor control can be used.
-    bool colors() const {
+    bool colors() const override {
         return vt_;
     }
 
-    // Sets the prompt; prompt_width is its visible width (without escape sequences).
-    void set_prompt(std::string prompt, std::size_t prompt_width);
-
-    // Prints a full line above the input line; it can span several lines, separated by '\n'. Thread-safe.
-    void print(std::string_view line);
-
-    // Reads the next line typed by the user, or nullopt on end of input (Ctrl+D, Ctrl+C, closed stdin) or after
-    // interrupt().
-    std::optional<std::string> read_line();
-
-    // Someone who can be tagged by typing '@': the name inserted, and the ANSI SGR parameters it is shown with in
-    // the list (e.g. "38;2;R;G;B"), empty for plain text.
-    struct Mention {
-        std::string name;
-        std::string style;
-    };
-
-    // Sets where the list shown after typing '@' gets its names from. The source is called with the terminal
-    // locked, so it must not print.
-    void set_mentions(std::function<std::vector<Mention>()> source);
-
-    // Sets what may rewrite the input line once the keys typed so far are handled and no more are waiting, as after
-    // a paste or a file dropped on the window: it gets the line and returns its replacement, or nullopt to keep it.
-    // It is called with the terminal locked, so it must not print.
-    void set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter);
-
-    // Plays the notification sound. Thread-safe.
-    void bell();
-
-    // Makes read_line() return nullopt right away, now and from then on. Thread-safe. Without a terminal (plain
-    // line-by-line input) it cannot stop a read in progress, only the following ones.
-    void interrupt();
+    void set_prompt(std::string prompt, std::size_t prompt_width) override;
+    void print(std::string_view line) override;
+    // nullopt also on end of input (Ctrl+D, Ctrl+C, closed stdin).
+    std::optional<std::string> read_line() override;
+    void set_mentions(std::function<std::vector<Mention>()> source) override;
+    void set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter) override;
+    void bell() override;
+    // Without a terminal (plain line-by-line input) it cannot stop a read in progress, only the following ones.
+    void interrupt() override;
 
 private:
     struct Platform;

@@ -4,7 +4,7 @@
 #include "history.hpp"
 #include "net.hpp"
 #include "protocol.hpp"
-#include "terminal.hpp"
+#include "screen.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -27,7 +27,7 @@ namespace zchat {
 class Chat {
 public:
     // Without a color, a random one is used.
-    Chat(std::uint16_t port, std::string name, std::optional<Color> color, Terminal& terminal);
+    Chat(std::uint16_t port, std::string name, std::optional<Color> color, Screen& terminal);
     ~Chat();
     Chat(const Chat&) = delete;
     Chat& operator=(const Chat&) = delete;
@@ -66,7 +66,7 @@ public:
     std::vector<std::string> peers() const;
 
     // The other peers, sorted by name, for the list shown when typing '@'.
-    std::vector<Terminal::Mention> mentionable() const;
+    std::vector<Screen::Mention> mentionable() const;
 
     // Our own name, with its color.
     std::string colored_own_name() const {
@@ -129,7 +129,7 @@ private:
     std::atomic<std::uint64_t> id_;
     mutable std::mutex name_mutex_;
     std::string name_;
-    Terminal& terminal_;
+    Screen& terminal_;
     net::BroadcastSocket socket_;
     std::atomic<std::uint64_t> seq_ {0};
     std::atomic<bool> stopped_ {false};
