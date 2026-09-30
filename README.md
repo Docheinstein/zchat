@@ -55,6 +55,14 @@ While chatting:
 |--------------------|--------------------------------------------------------|
 | text + Enter       | send a message                                         |
 | `/who`             | list who is in the chat                                |
+| `/channels`        | list the channels: `#general`, the public ones, and the private ones you are in |
+| `/create NAME [public\|private]` | make a channel and go to it: public (the default) anybody can join, private starts with just you |
+| `/join NAME`       | go to a channel, joining it if it is public; what you say, draw and send goes there |
+| `/add [#CHANNEL] NAME` | add someone in the chat to a channel (the one you are in, if not named) |
+| `/remove [#CHANNEL] NAME` | remove someone from a channel                     |
+| `/members [#CHANNEL]` | who is in a channel                                 |
+| `/leave [NAME]`    | leave a channel (not `#general`)                        |
+| `/delete NAME`     | delete a channel you created; `#general` can never be removed |
 | `/whoami`          | show your name                                         |
 | `/nick NAME`       | change your name; it is saved and used next time too   |
 | `/forget`          | forget the saved name and get a new random one         |
@@ -70,8 +78,9 @@ While chatting:
 | `/ascii FILE`      | send a picture drawn with characters (blocks of color), for everyone |
 | `/ascii SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
 | `/ascii 30% FILE`  | the same with texture: from `0%`, blocks only (the default), to `100%`, symbols only; with a size too, in any order (`/ascii small 30% FILE`); `/image 30% FILE` does the same |
-| `/addemoji NAME [SIZE] [TEXTURE%] FILE` | save a picture as an emoji, drawn as `/image` would; the same name again replaces it |
-| `/emoji NAME`      | send a saved emoji; `/emoji` alone lists yours          |
+| `/addemoji NAME [SIZE] FILE` | save a picture as an emoji, sent as `/image` sends it (a GIF plays); the same name again replaces it |
+| `/addemoji NAME ascii [SIZE] [TEXTURE%] FILE` | save an emoji drawn with characters, as `/ascii` draws it (a `TEXTURE%` alone does too) |
+| `/emoji NAME`      | send a saved emoji; `/emoji NAME ascii` draws a picture emoji with characters instead; `/emoji` alone lists yours |
 | `/removeemoji NAME` | delete a saved emoji                                  |
 | drop an image      | drag an image file onto the window: the line becomes `/image PATH`, to send with Enter (or add a size first) |
 | `/file FILE`       | send a file of any kind (up to about 34 MB), for everyone to download |
@@ -190,9 +199,27 @@ they were sent at, and shown again when zchat starts, before the welcome (with t
 today). Pictures, joins and other notices are not kept. The file is plain text, one message per line: delete it to
 forget them.
 
-Emoji are saved in the `emoji` folder of the config folder (`%APPDATA%\zchat\emoji` on Windows), one `NAME.art`
-file each: the picture already drawn, as it is sent, so `/emoji NAME` sends it right away and the same every time,
-even if the image file is gone. Names are letters, digits, `-` and `_`, up to 32, and are not case-sensitive.
+Emoji are saved in the `emoji` folder of the config folder (`%APPDATA%\zchat\emoji` on Windows), one file each, as
+it is sent: `NAME.pic` for a real picture, `NAME.art` for one drawn with characters. So `/emoji NAME` sends it right
+away and the same every time, even if the image file is gone. Names are letters, digits, `-` and `_`, up to 32, and are not case-sensitive.
+
+### Channels
+
+Everybody is always in `#general`, which older versions see too. Other channels are made with `/create`: a public
+one anybody can `/join` (everyone is told it was made), a private one starts with just you, and only its members see
+it, and only people added to it can join. Anybody in a channel can `/add` or `/remove` people (by the name they have in
+the chat: they must be online); only whoever created it can `/delete` it. `/join` shows only that channel (the window
+empties, a terminal goes on below a line) with what was said there since zchat started; something new in another
+channel is told about once, and in the window its name gets a dot. In the window the channels are on the left: a click
+joins one (or its Join button), `×` leaves one, and `+` makes one; the current channel's Members button, at the
+top, lists who is in it, to remove them or add who is not, and Leave and Delete (for its creator) are beside it. Channels you know are kept in `channels` in the config folder.
+
+Private is not secret: like everything in zchat, their packets reach every computer on the network, only scrambled,
+and zchat just does not show them to whoever is not in the channel. Older versions do not know channels, and see
+only `#general`.
+
+To run zchat with another config folder (another name, avatar, channels...), for example a second person on one
+computer, set `ZCHAT_CONFIG_DIR` to it.
 
 ### Updating
 
@@ -295,6 +322,13 @@ the terminal version.)
   `avatar <hash> <bytes> <TCP port>`, and whoever does not have that avatar yet downloads it from the sender with
   `AVATAR <hash>`, as for big pictures; so newcomers get everyone's within a heartbeat, and a new one shows right
   away. Terminals do not show avatars.
+* **Channels** have no server either. Everybody has a user id that does not change (`user` in the config; the sender
+  id changes with the color), sent in heartbeats. A channel is its name, a version, public or private, its creator,
+  and its members' user ids; a change makes a new version, sent as a `CHANNEL STATE` packet (and, now and then, by
+  its members, for whoever missed it), and the newest one wins (the same version: the one from the higher user id).
+  Everybody checks who made it: a member (or joining a public one), and the creator alone to delete it. What is said
+  in a channel goes as `CHANNEL MESSAGE` packets (`<channel> m` or `<channel> a`, then the message or the drawing);
+  pictures and files as usual, with `channel <channel>` as their first line. Only members show them.
 * **Pictures** bigger than a packet are offered with an `OFFER` packet (`<picture id> <bytes> <pieces> <TCP port>`).
   Every zchat listens on a TCP port the system picks; whoever gets an offer connects to the address it came from,
   sends `GET <picture id>`, and reads the picture (scrambled like packets) until the sender closes the connection.
@@ -310,7 +344,7 @@ the terminal version.)
 Wire format, one datagram per packet (fields separated by `\n`):
 
 ```
-ZCHAT1 \n <J|H|M|L|P|G|I|O|K|R> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
+ZCHAT1 \n <J|H|M|L|P|G|I|O|K|R|N|C> \n <sender id, hex> \n <sequence number> \n <name> \n <text>
 ```
 
 which is sent scrambled (see `src/cipher.hpp`):

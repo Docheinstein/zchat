@@ -39,6 +39,13 @@ enum class PacketType : char {
     // Asks for pieces that did not arrive: "SENDER ID INDEX INDEX ...", SENDER in hex, as in packets. The sender of
     // the picture sends them again.
     Resend = 'R',
+    // What we know of a channel (see channel::encode()), sent by its members now and then, and on any change.
+    // Older versions do not know 'N' and ignore it.
+    ChannelState = 'N',
+    // A message or a drawing in a channel other than general: "CHANNEL m" or "CHANNEL a", then '\n' and the message
+    // or the drawing. (Pictures in a channel are Images whose text starts with "channel CHANNEL" and '\n'.) Older
+    // versions do not know 'C' and ignore it, so what is said in a channel stays out of their general.
+    ChannelMessage = 'C',
 };
 
 struct Packet {
@@ -70,6 +77,7 @@ inline constexpr std::size_t max_packet_image_bytes = 48'000;
 inline constexpr std::size_t max_chunk_bytes = 8'000;
 inline constexpr std::size_t max_chunks = (max_image_bytes + max_chunk_bytes - 1) / max_chunk_bytes;
 inline constexpr std::size_t max_resend_bytes = 4000;
+inline constexpr std::size_t max_channel_state_bytes = 1200;
 // The size of an avatar's text (a picture, see image::encode_avatar()), downloaded like an offered Image.
 inline constexpr std::size_t max_avatar_bytes = 4'000'000;
 

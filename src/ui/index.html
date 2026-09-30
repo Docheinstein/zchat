@@ -46,6 +46,70 @@
     text-overflow: ellipsis;
   }
   aside .item.active { background: #232833; }
+  /* Channels: clicked to join; private ones have a lock, those with something new a dot. */
+  aside h2 { display: flex; align-items: center; }
+  aside h2 .add {
+    margin-left: auto; width: 20px; height: 20px; border-radius: 5px; border: 1px solid var(--border);
+    background: var(--input); color: var(--text); cursor: pointer; font-size: 14px; line-height: 16px; padding: 0;
+  }
+  aside h2 .add:hover { border-color: var(--accent); }
+  #channels .item { cursor: pointer; border-radius: 0; }
+  #channels .item:hover { background: #20242d; }
+  #channels .item.active { background: #232833; color: #fff; font-weight: 600; }
+  #channels .item.away { color: var(--muted); }
+  #channels .lock { font-size: 11px; opacity: .8; }
+  #channels .dot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  /* Buttons on a channel in the list: join one we are not in, leave one we are (shown on hover). */
+  #channels .item .act {
+    margin-left: auto; flex: none; height: 20px; padding: 0 8px; border-radius: 10px; font: inherit; font-size: 11px;
+    cursor: pointer; border: 1px solid var(--border); background: var(--input); color: var(--text);
+  }
+  #channels .item .act.join { border-color: var(--accent); color: var(--accent); }
+  #channels .item .act.leave { display: none; width: 20px; padding: 0; border-radius: 50%; }
+  #channels .item:hover .act.leave { display: block; }
+  #channels .item:hover .dot { display: none; }
+  #channels .item .act:hover { background: var(--accent); border-color: var(--accent); color: #0b0d10; }
+  /* The current channel's buttons, in the header. */
+  header .channel-actions { display: flex; gap: 6px; }
+  header .channel-actions button[hidden] { display: none; }
+  header button.danger:hover { border-color: #e5534b; color: #e5534b; }
+  header button.armed { background: #e5534b; border-color: #e5534b; color: #fff; }
+  /* Who is in the current channel, and who can be added. */
+  #channel-panel {
+    position: fixed; top: 50px; left: 222px; width: 300px; max-height: calc(100vh - 70px); overflow-y: auto;
+    z-index: 15; display: none; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; box-shadow: 0 8px 28px #000a;
+  }
+  #channel-panel.open { display: block; }
+  #channel-panel .title { display: flex; align-items: center; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+  #channel-panel .title button { margin-left: auto; }
+  #channel-panel h3 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--muted);
+    margin: 12px 0 6px;
+  }
+  #channel-panel .person { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  #channel-panel .person .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #channel-panel .note { color: var(--muted); font-size: 12px; padding: 4px 0; }
+  #channel-panel button {
+    background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    height: 26px; padding: 0 10px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  #channel-panel button:hover { border-color: var(--accent); }
+  #channel-panel button.add { border-color: var(--accent); color: var(--accent); }
+  #channel-panel button.remove:hover { border-color: #e5534b; color: #e5534b; }
+  #new-channel { display: none; margin: 4px 14px 8px; }
+  #new-channel.open { display: block; }
+  #new-channel input, #new-channel select {
+    width: 100%; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 8px; font: inherit; outline: none; margin-bottom: 6px;
+  }
+  #new-channel input:focus { border-color: var(--accent); }
+  #new-channel .row { display: flex; gap: 6px; }
+  #new-channel button {
+    flex: 1; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    height: 28px; font: inherit; cursor: pointer;
+  }
+  #new-channel button.primary { background: var(--accent); border-color: var(--accent); color: #0b0d10; font-weight: 600; }
   .avatar {
     flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
     font-size: 11px; font-weight: 700; color: #111;
@@ -151,6 +215,11 @@
 <header>
   <span class="title">zchat</span>
   <span class="channel" id="channel"></span>
+  <span class="channel-actions">
+    <button id="channel-members" title="Who is in this channel; add or remove people">Members</button>
+    <button id="channel-leave" class="danger" title="Leave this channel" hidden>Leave</button>
+    <button id="channel-delete" class="danger" title="Delete this channel, for everybody" hidden>Delete</button>
+  </span>
   <span class="spacer"></span>
   <select id="font" title="Font"></select>
   <button id="smaller" title="Smaller text">A−</button>
@@ -159,8 +228,16 @@
 <aside>
   <div id="me" title="Change your name and color"><span class="avatar"></span>
     <div class="who"><div class="name"></div><div class="status">online</div></div></div>
-  <h2>Channels</h2>
-  <div class="item active" id="channel-item"># general</div>
+  <h2>Channels <button class="add" id="add-channel" title="New channel">+</button></h2>
+  <div id="new-channel">
+    <input type="text" id="new-channel-name" placeholder="name" maxlength="32" autocomplete="off" spellcheck="false">
+    <select id="new-channel-kind">
+      <option value="public">Public: anybody can join</option>
+      <option value="private">Private: only who you add</option>
+    </select>
+    <div class="row"><button id="new-channel-cancel">Cancel</button><button class="primary" id="new-channel-create">Create</button></div>
+  </div>
+  <div id="channels"></div>
   <h2>People</h2>
   <div id="people"></div>
 </aside>
@@ -191,12 +268,13 @@
   <div class="note" id="profile-note">Everybody sees it; a GIF plays. It changes right away.</div>
   <div class="buttons"><button id="profile-cancel">Cancel</button><button class="primary" id="profile-save">Save</button></div>
 </div>
+<div id="channel-panel"></div>
 <div id="drop">Drop a picture or a file to send it</div>
 <div id="viewer"><img alt="picture"></div>
 <script>
 "use strict";
 // The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
-// zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatRewrite(line), zchatDrop(name, base64), zchatSettings()
+// zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatChannels(), zchatChannelPeople(channel), zchatRewrite(line), zchatDrop(name, base64), zchatSettings()
 // and zchatSaveSettings(size, font).
 const log = document.getElementById("log");
 const input = document.getElementById("input");
@@ -358,10 +436,202 @@ window.zchat = {
     }
   },
   info(i) {
-    document.getElementById("channel").textContent = i.port ? `UDP port ${i.port}` : "";
-    document.getElementById("channel-item").textContent = "# " + (i.channel || "general");
+    port = i.port || 0;
+    showHeader();
+  },
+  // Another channel is joined: it shows only what is said there.
+  clear() {
+    log.textContent = "";
   },
 };
+
+// --- Channels: listed from zchatChannels() ([[name, public, member, current, unread], ...]); a click joins one.
+let port = 0, currentChannel = "general", channelsShown = "";
+function showHeader() {
+  document.getElementById("channel").textContent = "# " + currentChannel + (port ? `  ·  UDP port ${port}` : "");
+}
+async function refreshChannels() {
+  let channels = [];
+  try { channels = await window.zchatChannels(); } catch {}
+  const shown = JSON.stringify(channels);
+  if (shown === channelsShown) return;
+  channelsShown = shown;
+  const box = document.getElementById("channels");
+  box.textContent = "";
+  channelList = channels;
+  for (const [name, isPublic, member, current, unread] of channels) {
+    const item = document.createElement("div");
+    item.className = "item" + (current ? " active" : "") + (member ? "" : " away");
+    item.title = (isPublic ? "Public" : "Private") + (member ? "" : ": click to join");
+    const label = document.createElement("span");
+    label.textContent = "# " + name;
+    item.append(label);
+    if (!isPublic) {
+      const lock = document.createElement("span");
+      lock.className = "lock";
+      lock.textContent = "🔒";
+      item.append(lock);
+    }
+    if (unread && !current) {
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      item.append(dot);
+    }
+    if (!member) {
+      const join = document.createElement("button");
+      join.className = "act join";
+      join.textContent = "Join";
+      join.title = "Join #" + name;
+      item.append(join);
+    } else if (name !== "general") {
+      const leave = document.createElement("button");
+      leave.className = "act leave";
+      leave.textContent = "×";
+      leave.title = "Leave #" + name;
+      leave.onclick = e => { e.stopPropagation(); channelCommand("/leave " + name); };
+      item.append(leave);
+    }
+    item.onclick = () => channelCommand("/join " + name);
+    box.appendChild(item);
+    if (current) currentChannel = name;
+  }
+  showHeader();
+  showChannelActions();
+}
+// Runs a channel command, as typed; what it says shows in the chat.
+function channelCommand(line) {
+  window.zchatSend(line);
+  for (const ms of [150, 600]) setTimeout(() => { refreshChannels(); if (channelPanel.classList.contains("open")) showChannelPanel(); }, ms);
+}
+let channelList = [];
+function showChannelActions() {
+  const here = channelList.find(c => c[3]);
+  const general = !here || here[0] === "general";
+  document.getElementById("channel-leave").hidden = general;
+  document.getElementById("channel-delete").hidden = general || !here[5];
+}
+document.getElementById("channel-leave").onclick = () => channelCommand("/leave " + currentChannel);
+// Deleting asks for a second click.
+const deleteButton = document.getElementById("channel-delete");
+deleteButton.onclick = () => {
+  if (!deleteButton.classList.contains("armed")) {
+    deleteButton.classList.add("armed");
+    deleteButton.textContent = "Click again to delete";
+    clearTimeout(deleteButton._timer);
+    deleteButton._timer = setTimeout(() => { deleteButton.classList.remove("armed"); deleteButton.textContent = "Delete"; }, 3000);
+    return;
+  }
+  clearTimeout(deleteButton._timer);
+  deleteButton.classList.remove("armed");
+  deleteButton.textContent = "Delete";
+  channelCommand("/delete " + currentChannel);
+};
+
+// --- The members of the current channel (zchatChannelPeople), each with a button to remove them, and the others in
+// the chat, each with one to add them.
+const channelPanel = document.getElementById("channel-panel");
+let selfName = "";
+function personRow(name, style, hash, button) {
+  const row = document.createElement("div");
+  row.className = "person";
+  const avatar = document.createElement("span");
+  avatar.className = "avatar";
+  setAvatar(avatar, name, style, hash);
+  const who = document.createElement("span");
+  who.className = "who";
+  who.textContent = name + (name === selfName ? " (you)" : "");
+  who.style.color = styleColor(style);
+  row.append(avatar, who);
+  if (button) row.append(button);
+  return row;
+}
+function actionButton(text, cls, line) {
+  const b = document.createElement("button");
+  b.textContent = text;
+  b.className = cls;
+  b.onclick = () => channelCommand(line);
+  return b;
+}
+async function showChannelPanel() {
+  const channel = currentChannel;
+  let people = null;
+  try { people = await window.zchatChannelPeople(channel); } catch {}
+  channelPanel.textContent = "";
+  const title = document.createElement("div");
+  title.className = "title";
+  title.textContent = "# " + channel;
+  const close = document.createElement("button");
+  close.textContent = "×";
+  close.title = "Close";
+  close.onclick = () => channelPanel.classList.remove("open");
+  title.append(close);
+  channelPanel.append(title);
+  if (!people) {
+    channelPanel.append(Object.assign(document.createElement("div"), { className: "note", textContent: "Not available." }));
+    return;
+  }
+  const general = channel === "general";
+  const h = document.createElement("h3");
+  h.textContent = "Members (" + (people.members.length + people.away) + ")";
+  channelPanel.append(h);
+  for (const [name, style, hash] of people.members) {
+    const button = general ? null
+      : name === selfName ? actionButton("Leave", "remove", "/leave " + channel)
+      : actionButton("Remove", "remove", "/remove #" + channel + " " + name);
+    channelPanel.append(personRow(name, style, hash, button));
+  }
+  if (people.away) {
+    channelPanel.append(Object.assign(document.createElement("div"), { className: "note",
+      textContent: "and " + people.away + " not in the chat now" }));
+  }
+  if (general) {
+    channelPanel.append(Object.assign(document.createElement("div"), { className: "note",
+      textContent: "Everybody is always in #general." }));
+    return;
+  }
+  const h2 = document.createElement("h3");
+  h2.textContent = "Add people";
+  channelPanel.append(h2);
+  if (!people.others.length) {
+    channelPanel.append(Object.assign(document.createElement("div"), { className: "note",
+      textContent: "Everybody in the chat is in it (people with an older zchat cannot be added)." }));
+  }
+  for (const [name, style, hash] of people.others) {
+    channelPanel.append(personRow(name, style, hash, actionButton("Add", "add", "/add #" + channel + " " + name)));
+  }
+}
+document.getElementById("channel-members").onclick = () => {
+  if (channelPanel.classList.toggle("open")) showChannelPanel();
+};
+setInterval(() => { if (channelPanel.classList.contains("open")) showChannelPanel(); }, 2000);
+document.addEventListener("mousedown", e => {
+  if (channelPanel.classList.contains("open") && !channelPanel.contains(e.target) &&
+      e.target.id !== "channel-members") {
+    channelPanel.classList.remove("open");
+  }
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") channelPanel.classList.remove("open"); });
+setInterval(refreshChannels, 1000);
+const newChannel = document.getElementById("new-channel");
+const newChannelName = document.getElementById("new-channel-name");
+document.getElementById("add-channel").onclick = () => {
+  newChannel.classList.toggle("open");
+  if (newChannel.classList.contains("open")) { newChannelName.value = ""; newChannelName.focus(); }
+};
+function createChannel() {
+  const name = newChannelName.value.trim().replace(/^#/, "");
+  if (!name) return;
+  window.zchatSend("/create " + name + " " + document.getElementById("new-channel-kind").value);
+  newChannel.classList.remove("open");
+  input.focus();
+  setTimeout(refreshChannels, 150);
+}
+document.getElementById("new-channel-create").onclick = createChannel;
+document.getElementById("new-channel-cancel").onclick = () => { newChannel.classList.remove("open"); input.focus(); };
+newChannelName.addEventListener("keydown", e => {
+  if (e.key === "Enter") { createChannel(); e.preventDefault(); }
+  else if (e.key === "Escape") { newChannel.classList.remove("open"); input.focus(); e.preventDefault(); }
+});
 
 // --- Animations: the frames of an image element, shown one after the other for their delays, in a loop, while the
 // element is on the page.
@@ -440,6 +710,7 @@ async function refreshSelf() {
   if (!self) return;
   const [name, style, avatar] = self;
   selfAvatar = avatar || "";
+  selfName = name;
   const me = document.getElementById("me");
   setAvatar(me.querySelector(".avatar"), name, style, selfAvatar);
   if (profile.classList.contains("open")) showProfilePreview();

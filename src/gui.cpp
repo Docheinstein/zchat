@@ -197,6 +197,8 @@ struct Gui::Impl {
     std::function<std::vector<Mention>()> mention_source;
     std::function<Mention()> self_source;
     std::function<std::optional<std::string>(std::string_view)> avatar_source;
+    std::function<std::vector<ChannelItem>()> channel_source;
+    std::function<ChannelPeople(std::string_view)> people_source;
     std::function<std::optional<std::string>(std::string_view)> rewriter;
 
     // Runs JavaScript in the page, from any thread.
@@ -276,6 +278,46 @@ Gui::Gui() {
         }
         const Mention self = impl_->self_source();
         return "[" + json_string(self.name) + "," + json_string(self.style) + "," + json_string(self.avatar) + "]";
+    });
+    // Who is in a channel: {"members": [[name, style, avatar], ...], "others": [...], "away": N}.
+    view.bind("zchatChannelPeople", [this](const std::string& args) -> std::string {
+        const auto strings = json_strings(args);
+        std::function<ChannelPeople(std::string_view)> source;
+        {
+            std::scoped_lock lock(impl_->mutex);
+            source = impl_->people_source;
+        }
+        if (strings.empty() || !source) {
+            return "null";
+        }
+        const ChannelPeople people = source(strings.front());
+        const auto list = [](const std::vector<Mention>& ms) {
+            std::string out = "[";
+            for (const auto& m : ms) {
+                out += out.size() > 1 ? "," : "";
+                out += "[" + json_string(m.name) + "," + json_string(m.style) + "," + json_string(m.avatar) + "]";
+            }
+            return out + "]";
+        };
+        return std::format("{{\"members\":{},\"others\":{},\"away\":{}}}", list(people.members), list(people.others),
+                           people.away);
+    });
+    // The channels: [[name, public, member, current, unread, owner], ...].
+    view.bind("zchatChannels", [this](const std::string&) -> std::string {
+        std::vector<ChannelItem> channels;
+        {
+            std::scoped_lock lock(impl_->mutex);
+            if (impl_->channel_source) {
+                channels = impl_->channel_source();
+            }
+        }
+        std::string out = "[";
+        for (const auto& c : channels) {
+            out += out.size() > 1 ? "," : "";
+            out += std::format("[{},{},{},{},{},{}]", json_string(c.name), c.is_public, c.member, c.current, c.unread,
+                               c.owner);
+        }
+        return out + "]";
     });
     // An avatar, by hash: [[src, delay], ...] as for zchat.image(), or null when it is not here (yet).
     view.bind("zchatAvatar", [this](const std::string& args) -> std::string {
@@ -410,6 +452,25 @@ void Gui::set_self(std::function<Mention()> source) {
 void Gui::set_avatars(std::function<std::optional<std::string>(std::string_view hash)> source) {
     std::scoped_lock lock(impl_->mutex);
     impl_->avatar_source = std::move(source);
+}
+
+void Gui::set_channels(std::function<std::vector<ChannelItem>()> source) {
+    std::scoped_lock lock(impl_->mutex);
+    impl_->channel_source = std::move(source);
+}
+
+void Gui::set_channel_people(std::function<ChannelPeople(std::string_view channel)> source) {
+    std::scoped_lock lock(impl_->mutex);
+    impl_->people_source = std::move(source);
+}
+
+bool Gui::clear() {
+    std::scoped_lock lock(impl_->mutex);
+    if (!impl_->ready) {
+        return false;
+    }
+    impl_->eval("zchat.clear()");
+    return true;
 }
 
 void Gui::set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter) {
