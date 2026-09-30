@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <format>
@@ -13,6 +14,8 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <random>
+#include <utility>
 #include <vector>
 
 // stb_image, built right here: only the decoders zchat needs, reading from memory (the file is read by zchat, so
@@ -166,10 +169,10 @@ namespace {
         return std::nullopt;
     }
 
-    // How much closer to its pixels a character with two colors must be than one of a single color, as the squared
+    // How much closer to its pixels a character with two colors must be than one of a single color, as the absolute
     // difference of their colors (0 to 3 for each of the 64 points): a shape only for real detail, which also saves
     // bytes.
-    constexpr double detail_margin = 64 * 0.004;
+    constexpr double detail_margin = 64 * 0.03;
 
     // Contrast is stretched only for washed out pictures, whose brightness spans less than this, and brightened at
     // most so much: a dark picture stays darker than a bright one, and a picture with good contrast as it is.
@@ -265,6 +268,92 @@ namespace {
             return static_cast<std::uint8_t>(l * 255 / (color_levels - 1));
         };
         return Color {level(index / 25), level(index / 5 % 5), level(index % 5)};
+    }
+
+    // A picture comes with its own palette: a first row of palette_code followed by 3 characters per color (one per
+    // channel, 64 levels, see palette_digits), in the order of color_codes. The color codes of the drawing then refer
+    // to it instead of to the fixed hues, which gives each picture the colors it needs (skin, the white of an eye).
+    constexpr char palette_code = '$';
+    constexpr std::string_view palette_digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    // The colors that represent a picture best: k-means over the points of its characters, leaving out the black
+    // ones (black is always there), rounded to what the palette row can say.
+    std::vector<std::array<double, 3>> make_palette(const std::vector<std::array<std::array<double, 3>, 64>>& cells) {
+        using Rgb = std::array<double, 3>;
+        std::vector<Rgb> samples;
+        for (const auto& points : cells) {
+            for (const Rgb& p : points) {
+                if (std::max({p[0], p[1], p[2]}) >= blank_below) {
+                    samples.push_back(p);
+                }
+            }
+        }
+        // Enough of them to find the colors, few enough to be quick.
+        constexpr std::size_t max_samples = 24000;
+        if (samples.size() > max_samples) {
+            std::vector<Rgb> fewer;
+            for (std::size_t i = 0; i < max_samples; ++i) {
+                fewer.push_back(samples[i * samples.size() / max_samples]);
+            }
+            samples = std::move(fewer);
+        }
+        if (samples.empty()) {
+            return {};
+        }
+        const auto distance = [](const Rgb& a, const Rgb& b) {
+            return (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]);
+        };
+        // k-means++: each new center far from the others, with a fixed seed so a picture always gives the same.
+        std::mt19937 rng(12345);
+        const std::size_t k = std::min(color_codes.size(), samples.size());
+        std::vector<Rgb> centers {samples[rng() % samples.size()]};
+        std::vector<double> nearest(samples.size(), std::numeric_limits<double>::infinity());
+        while (centers.size() < k) {
+            double sum = 0;
+            for (std::size_t i = 0; i < samples.size(); ++i) {
+                nearest[i] = std::min(nearest[i], distance(samples[i], centers.back()));
+                sum += nearest[i];
+            }
+            if (sum <= 0) {
+                break;
+            }
+            double pick = std::uniform_real_distribution<double>(0, sum)(rng);
+            std::size_t chosen = 0;
+            while (chosen + 1 < samples.size() && (pick -= nearest[chosen]) > 0) {
+                ++chosen;
+            }
+            centers.push_back(samples[chosen]);
+        }
+        std::vector<std::size_t> owner(samples.size());
+        for (int iteration = 0; iteration < 12; ++iteration) {
+            std::vector<Rgb> sums(centers.size());
+            std::vector<double> counts(centers.size());
+            for (std::size_t i = 0; i < samples.size(); ++i) {
+                std::size_t best = 0;
+                for (std::size_t c = 1; c < centers.size(); ++c) {
+                    if (distance(samples[i], centers[c]) < distance(samples[i], centers[best])) {
+                        best = c;
+                    }
+                }
+                owner[i] = best;
+                for (std::size_t ch = 0; ch < 3; ++ch) {
+                    sums[best][ch] += samples[i][ch];
+                }
+                counts[best] += 1;
+            }
+            for (std::size_t c = 0; c < centers.size(); ++c) {
+                if (counts[c] > 0) {
+                    centers[c] = {sums[c][0] / counts[c], sums[c][1] / counts[c], sums[c][2] / counts[c]};
+                }
+            }
+        }
+        const double top = static_cast<double>(palette_digits.size() - 1);
+        for (Rgb& c : centers) {
+            for (double& v : c) {
+                v = std::round(std::clamp(v, 0.0, 1.0) * top) / top;
+            }
+        }
+        return centers;
     }
 
     // The brightness of a pixel, from 0 to 1, as if it were on a black background. It is that of its strongest
@@ -392,6 +481,8 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
     std::vector<double> cells(rows * cols);
     std::vector<std::array<double, 4>> quarters(rows * cols);
     std::vector<char> codes(rows * cols);
+    // How bright the color of each code is (1 for the fixed hues; palette colors can be darker).
+    std::vector<double> code_values(rows * cols, 1.0);
     for (std::size_t r = 0; r < rows; ++r) {
         const std::size_t y0 = r * height / rows;
         const std::size_t y1 = std::max(y0 + 1, (r + 1) * height / rows);
@@ -468,8 +559,10 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
 
         // An even area: the ramp character bright enough for it (so the picture reads as ASCII art without colors),
         // dimmed to the right brightness.
-        const auto step = std::clamp<std::size_t>(static_cast<std::size_t>(std::ceil(cells[i] * last)), 1, ramp.size() - 1);
-        const double wanted = std::min(1.0, cells[i] * last / static_cast<double>(step));
+        const double v = code_values[i];
+        const auto step =
+            std::clamp<std::size_t>(static_cast<std::size_t>(std::ceil(std::min(1.0, cells[i] / v) * last)), 1, ramp.size() - 1);
+        const double wanted = std::min(1.0, cells[i] * last / static_cast<double>(step) / v);
         // The nearest level, or the one already set when it is close enough, which saves a code.
         std::size_t dim = state.dim;
         if (std::abs(dim_levels[dim].level - wanted) > keep_level_within) {
@@ -479,7 +572,7 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
                                            dim_levels.begin());
         }
         const Choice uniform {ramp_char(step), dim};
-        const double uniform_error = spread(dim_levels[dim].level * static_cast<double>(step) / last);
+        const double uniform_error = spread(dim_levels[dim].level * static_cast<double>(step) / last * v);
 
         // Bright and dark parts: quadrants, the lit quarters in the color at some level, the others dark, when they
         // look clearly better. (15, all lit, is an even block.)
@@ -489,7 +582,7 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
             for (std::size_t d = 0; d < dim_levels.size(); ++d) {
                 double error = 0;
                 for (std::size_t k = 0; k < 4; ++k) {
-                    error += std::abs((lit >> k & 1 ? dim_levels[d].level : 0.0) - q[k]);
+                    error += std::abs((lit >> k & 1 ? dim_levels[d].level * v : 0.0) - q[k]);
                 }
                 if (error / 4 < quadrant_error) {
                     quadrant_error = error / 4;
@@ -502,43 +595,23 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
 
     // The best way: two colors per character, and the block that makes them look the most like its pixels. Each
     // character is looked at as 8 x 8 points, with the average color of the pixels under each.
-    struct Paint {
-        char hue = 0;
-        // Index in dim_levels, or nullopt for black.
-        std::optional<std::size_t> dim;
-        bool operator==(const Paint&) const = default;
-    };
-    const auto paint_of = [&](const std::array<double, 3>& rgb) {
-        const double strongest = std::max({rgb[0], rgb[1], rgb[2]});
-        if (strongest < blank_below) {
-            return Paint {};
-        }
-        const auto dim = static_cast<std::size_t>(std::ranges::min_element(dim_levels, {}, [&](const DimLevel& l) {
-                                                      return std::abs(l.level - strongest);
-                                                  }) -
-                                                  dim_levels.begin());
-        return Paint {color_code(rgb), dim};
-    };
-    const auto two_color_row = [&](std::size_t r) {
+    using Rgb = std::array<double, 3>;
+    using Points = std::array<Rgb, 64>;
+    std::vector<Points> cell_points(rows * cols);
+    for (std::size_t r = 0; r < rows; ++r) {
         const std::size_t y0 = r * height / rows;
         const std::size_t y1 = std::max(y0 + 1, (r + 1) * height / rows);
-        std::string line;
-        // Each row starts over without a color, at full brightness and without a background.
-        char hue = 0;
-        std::size_t dim = full_level;
-        bool black = false;
-        std::optional<Paint> background;
         for (std::size_t c = 0; c < cols; ++c) {
             const std::size_t x0 = c * width / cols;
             const std::size_t x1 = std::max(x0 + 1, (c + 1) * width / cols);
-            std::array<std::array<double, 3>, 64> points {};
+            Points& points = cell_points[r * cols + c];
             for (std::size_t py = 0; py < 8; ++py) {
                 const std::size_t ya = y0 + py * (y1 - y0) / 8;
                 const std::size_t yb = std::max(ya + 1, y0 + (py + 1) * (y1 - y0) / 8);
                 for (std::size_t px = 0; px < 8; ++px) {
                     const std::size_t xa = x0 + px * (x1 - x0) / 8;
                     const std::size_t xb = std::max(xa + 1, x0 + (px + 1) * (x1 - x0) / 8);
-                    auto& point = points[py * 8 + px];
+                    Rgb& point = points[py * 8 + px];
                     for (std::size_t y = ya; y < yb; ++y) {
                         for (std::size_t x = xa; x < xb; ++x) {
                             const unsigned char* pixel = pixels.get() + (y * width + x) * 4;
@@ -553,32 +626,111 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
                     }
                 }
             }
-            // For a set of points in one color and the others in another, the best colors are their averages, and
-            // what is left is how much the points differ from them.
-            double squares = 0;
-            std::array<double, 3> total {};
-            for (const auto& p : points) {
+        }
+    }
+
+    const auto distance = [](const Rgb& a, const Rgb& b) {
+        return (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]);
+    };
+    // The colors of this picture: the palette the color codes refer to, sent before the drawing.
+    const std::vector<Rgb> palette = make_palette(cell_points);
+
+    struct Paint {
+        char code = 0;
+        // Index in dim_levels, or nullopt for black.
+        std::optional<std::size_t> dim;
+        bool operator==(const Paint&) const = default;
+    };
+    // The palette color at some brightness closest to a color, and the color it gives.
+    const auto paint_of = [&](const Rgb& rgb) {
+        Paint best;
+        Rgb shown {};
+        double best_distance = distance(rgb, shown);
+        for (std::size_t p = 0; p < palette.size(); ++p) {
+            for (std::size_t d = 0; d < dim_levels.size(); ++d) {
+                const double l = dim_levels[d].level;
+                const Rgb color {palette[p][0] * l, palette[p][1] * l, palette[p][2] * l};
+                if (const double e = distance(rgb, color); e < best_distance) {
+                    best_distance = e;
+                    best = {color_codes[p], d};
+                    shown = color;
+                }
+            }
+        }
+        return std::pair {best, shown};
+    };
+
+    const auto two_color_row = [&](std::size_t r, double margin) {
+        std::string line;
+        // Each row starts over without a color, at full brightness and without a background.
+        char code = 0;
+        std::size_t dim = full_level;
+        bool black = false;
+        std::optional<Paint> background;
+        for (std::size_t c = 0; c < cols; ++c) {
+            const Points& points = cell_points[r * cols + c];
+            // Each candidate is scored by how far its colors are from the points, as the sum of the absolute
+            // differences: unlike their squares, it does not favor averaging a thin line with what is around it into
+            // a muddy color over keeping it crisp, a little off its place.
+            Rgb total {};
+            for (const Rgb& p : points) {
                 for (std::size_t k = 0; k < 3; ++k) {
-                    squares += p[k] * p[k];
                     total[k] += p[k];
                 }
             }
-            const auto norm = [](const std::array<double, 3>& s) {
-                return s[0] * s[0] + s[1] * s[1] + s[2] * s[2];
-            };
-            const auto average = [](std::array<double, 3> s, double n) {
-                for (double& v : s) {
-                    v /= n;
+            const auto error_of = [&](std::uint64_t mask, const Rgb& ink, const Rgb& rest) {
+                double error = 0;
+                for (std::size_t b = 0; b < 64; ++b) {
+                    const Rgb& q = mask >> b & 1 ? ink : rest;
+                    error += std::abs(points[b][0] - q[0]) + std::abs(points[b][1] - q[1]) + std::abs(points[b][2] - q[2]);
                 }
-                return s;
+                return error;
             };
-            const double even_error = squares - norm(total) / 64;
-            double best_error = even_error;
+            const auto [even_paint, even_shown] = paint_of({total[0] / 64, total[1] / 64, total[2] / 64});
+            double best_error = error_of(0, even_shown, even_shown);
             const Block* best = nullptr;
-            std::array<double, 3> ink {};
-            std::array<double, 3> rest {};
+            Paint fg = even_paint;
+            Paint bg;
+            const auto consider = [&](const Block& block, const std::pair<Paint, Rgb>& ink, const std::pair<Paint, Rgb>& rest) {
+                if (ink.first == rest.first) {
+                    return;
+                }
+                if (const double error = error_of(block.mask, ink.second, rest.second) + margin; error < best_error) {
+                    best_error = error;
+                    best = &block;
+                    fg = ink.first;
+                    bg = rest.first;
+                }
+            };
+
+            // The two main colors of the character, which keep a white and a black crisp where the averages of a
+            // block's parts would mix them: 2-means, from its darkest and brightest points.
+            const auto luma = [](const Rgb& p) {
+                return 0.3 * p[0] + 0.59 * p[1] + 0.11 * p[2];
+            };
+            std::array<Rgb, 2> centers {*std::ranges::min_element(points, {}, luma), *std::ranges::max_element(points, {}, luma)};
+            for (int iteration = 0; iteration < 4; ++iteration) {
+                std::array<Rgb, 2> sums {};
+                std::array<double, 2> counts {};
+                for (const Rgb& p : points) {
+                    const std::size_t j = distance(p, centers[0]) <= distance(p, centers[1]) ? 0 : 1;
+                    for (std::size_t k = 0; k < 3; ++k) {
+                        sums[j][k] += p[k];
+                    }
+                    counts[j] += 1;
+                }
+                for (std::size_t j = 0; j < 2; ++j) {
+                    if (counts[j] > 0) {
+                        centers[j] = {sums[j][0] / counts[j], sums[j][1] / counts[j], sums[j][2] / counts[j]};
+                    }
+                }
+            }
+            const auto dark = paint_of(centers[0]);
+            const auto bright = paint_of(centers[1]);
+
             for (const auto& block : blocks) {
-                std::array<double, 3> in {};
+                // The averages of the block's two parts.
+                Rgb in {};
                 for (std::size_t b = 0; b < 64; ++b) {
                     if (block.mask >> b & 1) {
                         for (std::size_t k = 0; k < 3; ++k) {
@@ -587,28 +739,19 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
                     }
                 }
                 const auto n_in = static_cast<double>(std::popcount(block.mask));
-                const std::array<double, 3> out {total[0] - in[0], total[1] - in[1], total[2] - in[2]};
-                const double error = squares - norm(in) / n_in - norm(out) / (64 - n_in);
-                if (error + detail_margin < best_error) {
-                    best_error = error + detail_margin;
-                    best = &block;
-                    ink = average(in, n_in);
-                    rest = average(out, 64 - n_in);
-                }
+                const Rgb out {total[0] - in[0], total[1] - in[1], total[2] - in[2]};
+                consider(block, paint_of({in[0] / n_in, in[1] / n_in, in[2] / n_in}),
+                         paint_of({out[0] / (64 - n_in), out[1] / (64 - n_in), out[2] / (64 - n_in)}));
+                // The character's two main colors, either way around.
+                consider(block, dark, bright);
+                consider(block, bright, dark);
             }
 
-            Paint fg = paint_of(best ? ink : average(total, 64));
-            std::optional<Paint> bg;
             std::string_view glyph = "@"; // an even character: '@', a full block when shown (see render())
             if (best) {
                 glyph = best->glyph;
-                if (const Paint p = paint_of(rest); p.dim) {
-                    bg = p;
-                } else if (!fg.dim) {
-                    // Both black.
-                    glyph = " ";
-                }
-            } else if (!fg.dim) {
+            }
+            if ((!best && !fg.dim) || (best && !fg.dim && !bg.dim)) {
                 glyph = " ";
             }
 
@@ -627,9 +770,9 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
                     black = true;
                 }
             } else {
-                if (fg.hue != hue) {
-                    hue = fg.hue;
-                    line += hue;
+                if (fg.code != code) {
+                    code = fg.code;
+                    line += code;
                 }
                 if (black || *fg.dim != dim) {
                     dim = *fg.dim;
@@ -638,15 +781,18 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
                 }
             }
             // A full character hides its background, which then stays as it is.
-            if (best && bg != background) {
-                if (bg) {
-                    line += background_code;
-                    line += bg->hue;
-                    line += dim_levels[*bg->dim].code;
-                } else {
-                    line += no_background_code;
+            if (best) {
+                const std::optional<Paint> wanted = bg.dim ? std::optional(bg) : std::nullopt;
+                if (wanted != background) {
+                    if (wanted) {
+                        line += background_code;
+                        line += wanted->code;
+                        line += dim_levels[*wanted->dim].code;
+                    } else {
+                        line += no_background_code;
+                    }
+                    background = wanted;
                 }
-                background = bg;
             }
             line += glyph;
         }
@@ -658,10 +804,38 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
         return line;
     };
 
+    // The simpler ways (see Style) take the palette color with the hue closest to each character's.
+    for (std::size_t i = 0; i < codes.size(); ++i) {
+        Rgb mean {};
+        for (const Rgb& p : cell_points[i]) {
+            for (std::size_t k = 0; k < 3; ++k) {
+                mean[k] += p[k] / 64;
+            }
+        }
+        const auto normalized = [](Rgb v) {
+            const double m = std::max({v[0], v[1], v[2], 1e-6});
+            return Rgb {v[0] / m, v[1] / m, v[2] / m};
+        };
+        std::size_t best = 0;
+        for (std::size_t p = 1; p < palette.size(); ++p) {
+            if (distance(normalized(mean), normalized(palette[p])) < distance(normalized(mean), normalized(palette[best]))) {
+                best = p;
+            }
+        }
+        codes[i] = palette.empty() ? 0 : color_codes[best];
+        code_values[i] = palette.empty() ? 1.0 : std::max({palette[best][0], palette[best][1], palette[best][2], 0.05});
+    }
+
     std::vector<std::string> lines(rows);
     for (std::size_t r = 0; r < rows; ++r) {
-        lines[r] = two_color_row(r);
-        if (lines[r].size() <= max_art_row_bytes) {
+        // A row with a lot of detail can be too long for a packet: then only its clearest details keep their
+        // blocks, the others get a single color, until it fits.
+        bool fits = false;
+        for (double margin = detail_margin; margin <= detail_margin * 256 && !fits; margin *= 2) {
+            lines[r] = two_color_row(r, margin);
+            fits = lines[r].size() <= max_art_row_bytes;
+        }
+        if (fits) {
             continue;
         }
         for (const Style style : {Style::Rich, Style::Plain}) {
@@ -708,9 +882,16 @@ std::expected<std::string, std::string> to_ascii(const std::filesystem::path& pa
             indent = std::min(indent, line.find_first_not_of(' '));
         }
     }
-    std::string art;
+    // The palette first (see palette_code), then the drawing.
+    std::string art(1, palette_code);
+    const double top = static_cast<double>(palette_digits.size() - 1);
+    for (const Rgb& color : palette) {
+        for (const double v : color) {
+            art += palette_digits[static_cast<std::size_t>(std::lround(v * top))];
+        }
+    }
     for (const auto& line : lines) {
-        art += art.empty() ? "" : "\n";
+        art += "\n";
         art += line.empty() ? line : line.substr(indent);
     }
     return art;
@@ -723,6 +904,30 @@ std::string render(std::string_view art, bool colors) {
     // dim it further, and the blocks keep their shape, in their color on their background color. Without colors,
     // each character becomes the ASCII symbol as bright as it looks, which gives the black and white ASCII art.
     std::string out;
+    // A palette row first (see palette_code): the color codes are then its colors, instead of the fixed hues.
+    std::vector<Color> palette;
+    if (art.starts_with(palette_code)) {
+        const auto end = art.find('\n');
+        const std::string_view row = art.substr(1, end == std::string_view::npos ? std::string_view::npos : end - 1);
+        const auto channel = [](char digit) {
+            const auto v = palette_digits.find(digit);
+            return static_cast<std::uint8_t>(v == std::string_view::npos ? 0 : v * 255 / (palette_digits.size() - 1));
+        };
+        for (std::size_t i = 0; i + 2 < row.size(); i += 3) {
+            palette.push_back({channel(row[i]), channel(row[i + 1]), channel(row[i + 2])});
+        }
+        art = end == std::string_view::npos ? std::string_view() : art.substr(end + 1);
+    }
+    const auto is_code = [&](char c) {
+        return palette.empty() ? color_of_code(c).has_value() : color_codes.find(c) != std::string_view::npos;
+    };
+    const auto color_of = [&](char c) -> std::optional<Color> {
+        if (palette.empty()) {
+            return color_of_code(c);
+        }
+        const auto i = color_codes.find(c);
+        return i < palette.size() ? std::optional(palette[i]) : std::nullopt;
+    };
     std::optional<Color> hue;
     double level = 1.0;
     std::optional<Color> background;
@@ -759,15 +964,15 @@ std::string render(std::string_view art, bool colors) {
         const char c = art[i];
         if (reading_background) {
             // '&': a color code, then a brightness code.
-            if (const auto color = color_of_code(c); color && i + 1 < art.size()) {
+            if (const auto color = color_of(c); color && i + 1 < art.size()) {
                 background = scaled(*color, dim_of_code(art[i + 1]).value_or(1.0));
                 ++i;
             }
             reading_background = false;
             continue;
         }
-        if (const auto color = color_of_code(c)) {
-            hue = color;
+        if (is_code(c)) {
+            hue = color_of(c);
             continue;
         }
         if (const auto dim = dim_of_code(c)) {

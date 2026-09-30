@@ -24,7 +24,8 @@ namespace {
             return text::sanitize(text, max_text_bytes);
         }
         std::string out;
-        for (std::size_t row = 0; row < max_art_rows && !text.empty(); ++row) {
+        // The rows of the drawing, and the palette row before them.
+        for (std::size_t row = 0; row < max_art_rows + 1 && !text.empty(); ++row) {
             const auto nl = text.find('\n');
             out += row == 0 ? "" : "\n";
             out += text::sanitize(text.substr(0, nl), max_art_row_bytes);
