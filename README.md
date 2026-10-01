@@ -88,6 +88,7 @@ While chatting:
 | `/save N`          | save file N of the chat in your downloads folder; `/save` alone lists them (windows have a Download button) |
 | `/trill [SOUND] [PICTURE]` | trill everybody else: 3 seconds to catch a STOP button running around their screen, or their window shakes, the sound (MP3, WAV) plays at full volume and the picture flies around the screen; `/trill` alone sends the built-in *Fahhh* |
 | `/stop`            | stop the trills coming at you (or playing)             |
+| `/kick NAME`       | ask the rest of the chat to vote NAME out: nobody is kicked right away. The others (not NAME) have 20 seconds to answer `/kick yes` to kick them or `/kick no` to grace them (in the window, a card pops up with Kick and Grace buttons); asking counts as a vote to kick. When the time is up, or everybody voted, NAME is out if at least as many voted to kick as to grace (who does not answer does not count), and their zchat closes. It takes someone else in the chat to vote; with several votes on, `/kick yes NAME` says which; `/kick` alone shows the votes on |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
 | `/game`            | list the games everyone in the chat can play           |
@@ -332,6 +333,9 @@ The window is built too (`-DZCHAT_GUI=OFF` leaves it out, for the terminal versi
   obfuscation, not real encryption: anyone with zchat, or this code, can read the packets. Plaintext packets from
   older versions are still understood, but older versions cannot read the scrambled ones, so they don't see newer
   peers: everybody should `/update`.
+* **Kicks** (`/kick NAME`) travel as `GAME` packets too (`kick vote`, `kick ballot`, `kick voted`, `kick result`):
+  whoever asks counts the votes, says each one it counts (so voters send theirs again until it is counted), and sends
+  the result a few times, as the one kicked has to get it; their own zchat then closes. Older versions ignore it.
 * **Games** (`/game NAME`) have no server either: whoever starts a round is its referee, and sends everybody what
   happens in it as `GAME` packets, whose text starts with the game's name (`race go <round> <words>`). In the race
   the referee picks the words, and the first message with them that reaches it wins. One letter of each

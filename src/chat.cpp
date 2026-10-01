@@ -1558,6 +1558,15 @@ std::vector<std::string> Chat::peers() const {
     return names;
 }
 
+std::vector<std::pair<std::uint64_t, std::string>> Chat::people() const {
+    std::vector<std::pair<std::uint64_t, std::string>> people;
+    std::scoped_lock lock(peers_mutex_);
+    for (const auto& [id, peer] : peers_) {
+        people.emplace_back(id, peer.name);
+    }
+    return people;
+}
+
 std::vector<Screen::Mention> Chat::mentionable() const {
     std::vector<Screen::Mention> people;
     {

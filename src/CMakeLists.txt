@@ -11,6 +11,7 @@ target_sources(zchat PUBLIC
     game.cpp
     history.cpp
     image.cpp
+    kick.cpp
     main.cpp
     markup.cpp
     names.cpp

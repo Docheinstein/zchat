@@ -172,6 +172,10 @@
     border: 1px solid var(--border); background: var(--input); color: var(--text); }
   .challenge button.accept { background: var(--accent); border-color: var(--accent); color: #0b0d10; }
   .challenge button:hover { filter: brightness(1.12); }
+  #pk-challenges, #kick-votes { display: flex; flex-direction: column; gap: 8px; }
+  #pk-challenges:empty, #kick-votes:empty { display: none; }
+  .challenge.kick { border-color: #ff6b6b; }
+  .challenge button.kick { background: #ff6b6b; border-color: #ff6b6b; color: #0b0d10; }
   .challenge .left { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
   #log {
     flex: 1; overflow-y: auto; padding: 10px 14px; font-family: var(--font); font-size: var(--size);
@@ -317,7 +321,7 @@
   <div id="people"></div>
 </aside>
 <main>
-  <div id="challenges"></div>
+  <div id="challenges"><div id="pk-challenges"></div><div id="kick-votes"></div></div>
   <div id="log"></div>
   <div id="inputbar">
     <div id="mentions"></div>
@@ -1578,7 +1582,7 @@ document.getElementById("pk-float-close").onclick = closePokemon;
 
 // --- Pokémon challenges to us, waiting for an answer (zchat.game("pokemon-challenge", {challenges: [...]})): a card
 // each over the chat, with buttons for /game pokemon accept and decline, and the seconds left to answer.
-const challengesBox = document.getElementById("challenges");
+const challengesBox = document.getElementById("pk-challenges");
 let challengeTimer = null;
 function pokemonChallenges(state) {
   challengesBox.textContent = "";
@@ -1626,6 +1630,60 @@ function pokemonChallenges(state) {
   };
   update();
   if (lefts.length) challengeTimer = setInterval(update, 1000);
+}
+
+// --- Votes on kicking someone out of the chat (zchat.game("kick", {votes: [...]})), the ones we have not voted in
+// yet: a card each over the chat, with buttons for /kick yes NAME and /kick no NAME, and the seconds left to vote.
+const kickBox = document.getElementById("kick-votes");
+let kickTimer = null;
+function kickVotes(state) {
+  kickBox.textContent = "";
+  clearInterval(kickTimer);
+  const since = Date.now();
+  const lefts = [];
+  for (const v of state.votes || []) {
+    const card = document.createElement("div");
+    card.className = "challenge kick";
+    const what = document.createElement("div");
+    what.className = "what";
+    const name = document.createElement("b");
+    name.textContent = v.name;
+    name.style.color = v.color;
+    const sub = document.createElement("span");
+    sub.className = "sub";
+    sub.textContent = `Asked by ${v.by} · out if at least as many vote to kick as to grace`;
+    what.append("👢 Kick ", name, " out of the chat?", sub);
+    const row = document.createElement("div");
+    row.className = "row";
+    const answer = choice => {
+      card.remove();
+      window.zchatSend(`/kick ${choice} ${v.name}`);
+      input.focus();
+    };
+    const kick = document.createElement("button");
+    kick.className = "kick";
+    kick.textContent = "Kick";
+    kick.onclick = () => answer("yes");
+    const grace = document.createElement("button");
+    grace.textContent = "Grace";
+    grace.onclick = () => answer("no");
+    const left = document.createElement("span");
+    left.className = "left";
+    row.append(kick, grace, left);
+    card.append(what, row);
+    kickBox.append(card);
+    lefts.push([left, v.left, card]);
+  }
+  // The seconds left, counted here: the C++ side only tells when the votes change.
+  const update = () => {
+    const gone = Math.floor((Date.now() - since) / 1000);
+    for (const [el, left, card] of lefts) {
+      el.textContent = Math.max(0, left - gone) + "s";
+      if (left - gone < 0) card.remove();
+    }
+  };
+  update();
+  if (lefts.length) kickTimer = setInterval(update, 1000);
 }
 
 // --- Challenging someone to a Pokémon battle: whom, among the people in the chat, and in which generation's Random
@@ -1697,6 +1755,7 @@ zchat.game = (game, state) => {
   if (game === "dice") diceGame(state);
   else if (game === "pokemon") pokemonGame(state);
   else if (game === "pokemon-challenge") pokemonChallenges(state);
+  else if (game === "kick") kickVotes(state);
 };
 
 // --- Animations: the frames of an image element, shown one after the other for their delays, in a loop, while the
