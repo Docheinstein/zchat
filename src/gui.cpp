@@ -369,6 +369,11 @@ Gui::Gui() {
         const auto u8 = file.u8string();
         return json_string(std::string(u8.begin(), u8.end()));
     });
+    // A dropped file the page was not given (see WebviewWindow::dropped_file()): its path, or null.
+    view.bind("zchatDroppedFile", [this](const std::string&) -> std::string {
+        const auto path = impl_->view.dropped_file();
+        return path.empty() ? "null" : json_string(path);
+    });
     // The text size and font of the window, in the config file with the other settings.
     view.bind("zchatSettings", [](const std::string&) -> std::string {
         return "[" + json_string(config::get("window_text_size").value_or("")) + "," +

@@ -365,7 +365,7 @@
 <script>
 "use strict";
 // The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
-// zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatChannels(), zchatChannelPeople(channel), zchatRewrite(line), zchatDrop(name, base64), zchatSettings()
+// zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatChannels(), zchatChannelPeople(channel), zchatRewrite(line), zchatDrop(name, base64), zchatDroppedFile(), zchatSettings()
 // and zchatSaveSettings(size, font).
 const log = document.getElementById("log");
 const input = document.getElementById("input");
@@ -1998,23 +1998,29 @@ let dragDepth = 0;
 window.addEventListener("dragenter", e => { e.preventDefault(); dragDepth++; document.body.classList.add("dragging"); });
 window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
 window.addEventListener("dragover", e => e.preventDefault());
+// The command for the file at path, in the input box.
+async function typeDropped(path) {
+  const quoted = /\s/.test(path) ? '"' + path + '"' : path;
+  input.value = (await window.zchatRewrite(quoted)) || "/file " + quoted;
+  input.focus();
+}
 window.addEventListener("drop", e => {
   e.preventDefault();
   dragDepth = 0;
   document.body.classList.remove("dragging");
   const file = e.dataTransfer.files[0];
-  if (!file) return;
+  if (!file) {
+    // WebKitGTK (on Linux) gives the page no file, but zchat has its path.
+    (async () => { try { const path = await window.zchatDroppedFile(); if (path) await typeDropped(path); } catch {} })();
+    return;
+  }
   if (file.size > 34 * 1024 * 1024) { zchat.print("That file is too big to send."); return; }
   const reader = new FileReader();
   reader.onload = async () => {
     const base64 = String(reader.result).replace(/^data:[^,]*,/, "");
     try {
       const path = await window.zchatDrop(file.name, base64);
-      if (path) {
-        const quoted = /\s/.test(path) ? '"' + path + '"' : path;
-        input.value = (await window.zchatRewrite(quoted)) || "/file " + quoted;
-        input.focus();
-      }
+      if (path) await typeDropped(path);
     } catch {}
   };
   reader.readAsDataURL(file);
