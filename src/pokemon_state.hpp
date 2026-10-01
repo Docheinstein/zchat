@@ -66,6 +66,9 @@ public:
     // |error| from the simulator brings it back.
     int rqid() const;
     void chosen();
+    // The choice is taken back, before the other player chose (the turn has not been played): the request that was
+    // answered waits for a choice again.
+    void unchoose();
 
     bool over() const {
         return over_;

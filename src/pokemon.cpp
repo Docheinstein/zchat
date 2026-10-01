@@ -32,8 +32,12 @@
 //   pokemon want B STREAM FROM             someone missed messages of a stream (log, p1 or p2): sent again from
 //                                          FROM, a few at a time (a player's stream only to them)
 //   pokemon do B N ACTION                  a player's N-th action: "choose RQID CHOICE" (CHOICE as Showdown takes
-//                                          it), "timer" (turns the timer on or off) or "forfeit"; sent again until
-//   pokemon done B SIDE N                  the referee has it
+//                                          it; choosing again replaces it, until the other player chose too),
+//                                          "undo RQID" (takes the choice back, while the other has not chosen),
+//                                          "timer" (turns the timer on or off) or "forfeit"; done in order, and sent
+//                                          again until
+//   pokemon done B SIDE N [RESULT]         the referee has done it: for an undo, RESULT is ok, or late when the
+//                                          other player had chosen too (the turn is being played)
 // and from anybody in the battle (players and those watching):
 //   pokemon say B TEXT                     something said in the battle's chat
 
@@ -244,6 +248,7 @@ namespace {
                 {"decline [NAME]", "decline a challenge"},
                 {"move N [tera|mega|ultra|z|max]", "use move N, with Terastallization, Mega Evolution..."},
                 {"switch N", "switch to Pokémon N"},
+                {"cancel", "take your choice back, until the other player chooses"},
                 {"say TEXT", "say something in the battle's chat"},
                 {"timer", "turn the timer on or off"},
                 {"forfeit", "give up the battle"},
@@ -296,6 +301,8 @@ namespace {
                 choose(std::string(args));
             } else if (verb == "say") {
                 say(arg);
+            } else if (verb == "cancel" || verb == "undo") {
+                cancel();
             } else if (verb == "timer") {
                 act("timer");
             } else if (verb == "forfeit") {
@@ -416,7 +423,11 @@ namespace {
             std::array<bool, 2> waiting {false, false};
             std::array<clock::time_point, 2> asked;
             std::array<std::set<int>, 2> warned;
-            std::array<std::set<std::uint64_t>, 2> done;
+            // Each player's actions are done in order: the next one, and those that came before it.
+            std::array<std::uint64_t, 2> next_action {1, 1};
+            std::array<std::map<std::uint64_t, std::string>, 2> early_actions;
+            // What the last ones did ("ok" or "late" for an undo, else empty), for the dones sent again.
+            std::array<std::map<std::uint64_t, std::string>, 2> results;
             std::array<clock::time_point, 2> heard;
             bool timer = false;
             clock::time_point last_head;
@@ -453,7 +464,14 @@ namespace {
             std::uint64_t head_count = 0;
             std::deque<Action> actions;
             std::uint64_t next_action = 1;
+            // We chose, for the request rqid, what label says ("Earthquake", "Gholdengo"): it can be taken back
+            // until the turn is played.
             bool chose = false;
+            int chose_rqid = 0;
+            std::string chose_label;
+            // Taking it back, until the referee says whether it could (the other player may have chosen already).
+            bool cancelling = false;
+            std::uint64_t cancel_n = 0;
             // The timer, from the last head: whether it is on and our seconds left then.
             bool timer = false;
             int left = -1;
@@ -738,10 +756,76 @@ namespace {
                 chat_.notice(error.empty() ? std::string("You cannot do that now.") : error);
                 return;
             }
+            b->chose_label = choice_label(*b->view, *choice);
             b->view->chosen();
             b->chose = true;
+            b->chose_rqid = rqid;
             do_action(*b, std::format("choose {} {}", rqid, *choice));
             show(*b);
+            if (!b->window) {
+                chat_.notice(std::format("⚔ You chose {}: waiting for the other player (/game pokemon cancel to change "
+                                         "it).",
+                                         b->chose_label));
+            }
+        }
+
+        // What a choice does, in words, from the menu of the request it answers: "Earthquake", "Earthquake, with
+        // Mega Evolution", "Gholdengo".
+        static std::string choice_label(const pokemon::Battle& view, std::string_view choice) {
+            std::string_view rest = choice;
+            const std::string_view kind = next_field(rest);
+            const std::string_view slot = next_field(rest);
+            const std::string prefix = std::format("{} {}  ", kind, slot);
+            std::string label = std::format("{} {}", kind, slot);
+            for (const auto& line : view.menu()) {
+                if (line.starts_with(prefix)) {
+                    const std::string_view name = std::string_view(line).substr(prefix.size());
+                    label = std::string(name.substr(0, name.find("  ")));
+                    break;
+                }
+            }
+            const std::string_view gimmick = rest;
+            return gimmick == "terastallize" ? label + ", Terastallizing"
+                   : gimmick == "mega"       ? label + ", with Mega Evolution"
+                   : gimmick == "ultra"      ? label + ", with Ultra Burst"
+                   : gimmick == "zmove"      ? label + ", as a Z-Move"
+                   : gimmick == "dynamax"    ? label + ", Dynamaxing"
+                                             : label;
+        }
+
+        // Takes our choice back, while the other player has not chosen: the turn is played only once both have.
+        void cancel() {
+            Battle* b = own_battle();
+            if (!b || !b->chose || b->view->rqid() != 0) {
+                chat_.notice("There is no choice to take back now.");
+                return;
+            }
+            if (b->cancelling) {
+                return;
+            }
+            b->cancelling = true;
+            b->cancel_n = b->next_action;
+            show(*b);
+            do_action(*b, std::format("undo {}", b->chose_rqid));
+        }
+
+        // The referee's answer to our undo: taken back, or too late.
+        void cancelled(Battle& b, std::uint64_t n, std::string_view result) {
+            if (!b.cancelling || n != b.cancel_n) {
+                return;
+            }
+            b.cancelling = false;
+            if (result == "ok" && b.chose && b.view->rqid() == 0) {
+                b.view->unchoose();
+                b.chose = false;
+                show(b);
+                if (!b.window) {
+                    chat_.notice("⚔ Choice taken back: choose again.");
+                }
+                return;
+            }
+            show(b);
+            chat_.notice("⚔ Too late to take it back: the other player had chosen too.");
         }
 
         void act(std::string_view action) {
@@ -757,7 +841,8 @@ namespace {
         void do_action(Battle& b, std::string text) {
             const std::uint64_t n = b.next_action++;
             if (b.referee) {
-                referee_action(b, side_index(b.side), n, text);
+                const std::string result = referee_action(b, side_index(b.side), n, text);
+                cancelled(b, n, result);
                 return;
             }
             send(std::format("do {:x} {} {}", b.id, n, text));
@@ -884,6 +969,7 @@ namespace {
                     std::erase_if(b.actions, [&](const Action& a) {
                         return a.n == *n;
                     });
+                    cancelled(b, *n, next_field(text));
                 }
             } else if (event == "say" && b.view) {
                 const std::string clean = text::sanitize(text, max_said_bytes);
@@ -1059,14 +1145,17 @@ namespace {
             const std::string extra = std::format(
                 "\"battle\":\"{:x}\",\"format\":{},\"title\":{},\"phase\":\"{}\",\"setup\":{},\"colors\":{{\"p1\":\"{}\",\"p2\":\"{}"
                 "\"}},"
-                "\"timer\":{{\"on\":{},\"left\":{}}},\"chosen\":{},\"watching\":{},\"result\":{},\"open\":{}",
+                "\"timer\":{{\"on\":{},\"left\":{}}},\"chosen\":{},\"choice\":{},\"cancelling\":{},\"watching\":{},\"result\":{},"
+                "\"open\":{}",
                 b.id, json(format_name(b.gen)), json(std::format("{} vs {}", b.names[0], b.names[1])),
                 b.over  ? "over"
                 : setup ? "setup"
                         : "battle",
                 json(setup_text), hex_color(b.ids[0]), hex_color(b.ids[1]), b.timer,
                 seconds_left(b) < 0 ? std::string("null") : std::to_string(seconds_left(b)),
-                b.chose && v.rqid() == 0 && !b.over, b.side.empty(), json(result), b.window_open);
+                b.chose && v.rqid() == 0 && !b.over, json(b.chose && v.rqid() == 0 ? b.chose_label : std::string()),
+                b.cancelling,
+                b.side.empty(), json(result), b.window_open);
             b.window = terminal_.show_game(game_name, v.json(extra));
             if (b.window) {
                 b.printed = v.log().size();
@@ -1253,7 +1342,9 @@ namespace {
         void note_request(Battle& b, int side, const std::string& message) {
             Referee& r = *b.referee;
             if (message.find("|error|") != std::string::npos && r.rqid[side] != 0) {
-                r.waiting[side] = true;
+                // A choice refused: to be made again. But an undo refused (it would tell something of the other
+                // side) leaves the choice made.
+                r.waiting[side] = message.find("Can't undo") == std::string::npos;
                 return;
             }
             const auto at = message.find("|request|");
@@ -1340,29 +1431,74 @@ namespace {
         }
 
         // A player's action, which comes once, though it may be sent many times.
-        void referee_action(Battle& b, int side, std::uint64_t n, const std::string& action) {
+        // A player's N-th action, which comes once, though it may be sent many times, and in the order they did them:
+        // a choice made again after taking one back must not come before the undo, which would undo it.
+        // Returns what our own action did (see referee_do()).
+        std::string referee_action(Battle& b, int side, std::uint64_t n, const std::string& action) {
             Referee& r = *b.referee;
-            const bool remote = side_index(b.side) != side;
-            if (remote) {
-                send(std::format("done {:x} {} {}", b.id, side_name(side), n));
-                if (!r.done[side].insert(n).second) {
-                    return;
-                }
+            if (side_index(b.side) == side) {
+                // Ours, which come right away, in order.
+                return referee_do(b, side, action);
             }
+            if (n < r.next_action[side]) {
+                // Done already: they did not hear it.
+                const auto it = r.results[side].find(n);
+                send(std::format("done {:x} {} {} {}", b.id, side_name(side), n,
+                                 it == r.results[side].end() ? std::string() : it->second));
+                return {};
+            }
+            // Those that come too early wait for the ones before them (they are sent again until done).
+            if (n >= r.next_action[side] + 64) {
+                return {};
+            }
+            r.early_actions[side].emplace(n, action);
+            for (auto it = r.early_actions[side].find(r.next_action[side]); it != r.early_actions[side].end();
+                 it = r.early_actions[side].find(r.next_action[side])) {
+                const std::uint64_t done = it->first;
+                const std::string next = std::move(it->second);
+                r.early_actions[side].erase(it);
+                ++r.next_action[side];
+                const std::string result = referee_do(b, side, next);
+                if (!b.referee) {
+                    return {};
+                }
+                r.results[side][done] = result;
+                if (r.results[side].size() > 64) {
+                    r.results[side].erase(r.results[side].begin());
+                }
+                send(std::format("done {:x} {} {} {}", b.id, side_name(side), done, result));
+            }
+            return {};
+        }
+
+        // Does a player's action; for an undo, returns ok, or late when it could not be (else empty).
+        std::string referee_do(Battle& b, int side, const std::string& action) {
+            Referee& r = *b.referee;
             if (b.over || !r.child) {
-                return;
+                return action.starts_with("undo") ? "late" : "";
             }
             std::string_view rest = action;
             const std::string_view verb = next_field(rest);
             const std::string player = battle_name(b.names[side]);
             if (verb == "choose") {
                 const auto rqid = parse_int(next_field(rest));
-                // An old choice, for a request that was answered already.
+                // An old choice, for a request answered already: choosing again takes an undo first (or else, the
+                // other player having chosen, it would go to the next turn).
                 if (!rqid || *rqid != r.rqid[side] || !r.waiting[side] || rest.empty()) {
-                    return;
+                    return {};
                 }
                 r.waiting[side] = false;
                 r.child->write(std::format("{} {}", side_name(side), rest));
+            } else if (verb == "undo") {
+                // Only while the other player is still choosing: once they have (or have nothing to choose), the
+                // simulator plays the turn with the choice, even if its next request has not come out yet.
+                const auto rqid = parse_int(next_field(rest));
+                if (!rqid || *rqid != r.rqid[side] || r.waiting[side] || !r.waiting[1 - side]) {
+                    return "late";
+                }
+                r.waiting[side] = true;
+                r.child->write(std::format("{} undo", side_name(side)));
+                return "ok";
             } else if (verb == "forfeit") {
                 inject(b, std::format("|message|{} forfeited.", player));
                 r.child->write(std::format("forcewin {}", side_name(1 - side)));
@@ -1379,6 +1515,7 @@ namespace {
                                   : std::format("|inactiveoff|Battle timer is now OFF. (turned off by {})", player));
                 send_head(b);
             }
+            return {};
         }
 
         int referee_left(const Battle& b, int side) const {

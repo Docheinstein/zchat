@@ -1335,7 +1335,8 @@ function pkRenderSide(v, pos, side, color, ours, gen) {
 // What we can do: our moves and switches, or what we wait for.
 function pkRenderControls(v, s, player) {
   const el = v.el, rq = s.request;
-  const key = JSON.stringify([s.phase, s.setup, s.watching, player, s.chosen, rq, s.error, s.result]);
+  const key = JSON.stringify([s.phase, s.setup, s.watching, player, s.chosen, s.choice, s.cancelling, rq, s.error,
+                              s.result]);
   pkPart(v, v.controls, key, node => {
     if (s.phase === "setup") { node.append(el("div", "wait", s.setup || "Getting ready…")); return; }
     if (s.phase === "over") {
@@ -1350,7 +1351,19 @@ function pkRenderControls(v, s, player) {
     }
     if (!player) { node.append(el("div", "wait", "Watching")); return; }
     if (s.error) node.append(el("div", "err", s.error));
-    if (!rq || s.chosen) { node.append(el("div", "wait", "Waiting for opponent…")); return; }
+    // Chosen: it can be taken back, as on Showdown, until the opponent chooses too and the turn is played.
+    if (s.chosen) {
+      node.append(el("div", "wait", (s.choice ? "You chose " + s.choice + ". " : "") + "Waiting for opponent…"));
+      // Until the battle says whether it could: the opponent may have chosen just now.
+      const cancel = el("button", "btn", s.cancelling ? "Cancelling…" : "Cancel");
+      cancel.disabled = !!s.cancelling;
+      cancel.style.width = "fit-content";
+      cancel.title = "Take your choice back and choose again";
+      cancel.onclick = () => window.zchatSend("/game pokemon cancel");
+      node.append(cancel);
+      return;
+    }
+    if (!rq) { node.append(el("div", "wait", "Waiting for opponent…")); return; }
     if (pkGimmick.rqid !== rq.rqid) pkGimmick = { rqid: rq.rqid, on: "" };
     const me = (s.sides || []).find(x => x.id === s.you) || { team: [] };
     if (rq.kind === "move") {

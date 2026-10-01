@@ -1182,3 +1182,21 @@ TEST(pokemon_forced_moves_have_no_pp) {
         }));
     }
 }
+
+// A choice taken back (the Cancel button), before the other player chose: the same request waits again.
+TEST(pokemon_unchoose) {
+    Replay replay("battle-weather.log", "p1");
+    Battle& b = replay.battle;
+    replay.until("|request|", [&] {
+        const int rqid = b.rqid();
+        REQUIRE(rqid > 0);
+        b.chosen();
+        CHECK_EQ(b.rqid(), 0);
+        CHECK(parsed(b)["request"].is_null());
+        b.unchoose();
+        CHECK_EQ(b.rqid(), rqid);
+        CHECK_EQ(parsed(b)["request"]["rqid"].integer(), rqid);
+        std::string error;
+        CHECK(b.parse_choice("move 2", error).has_value());
+    });
+}
