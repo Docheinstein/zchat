@@ -26,6 +26,7 @@ Games::Games(Chat& chat, Screen& terminal) :
     games_.push_back(make_dice(chat, terminal, *this));
     games_.push_back(make_paint(chat, terminal, *this));
     games_.push_back(make_wordle(chat, terminal, *this));
+    games_.push_back(make_pokemon(chat, terminal, *this));
 
     chat_.set_game_hooks({
         .packet =
@@ -85,7 +86,7 @@ void Games::command(std::string_view arg) {
     }
     if (args.empty()) {
         (*it)->start();
-    } else if (!(*it)->command(lowercase(args))) {
+    } else if (!(*it)->command((*it)->keeps_case() ? std::string(args) : lowercase(args))) {
         const std::string_view commands = (*it)->commands();
         chat_.notice(commands.empty() ? std::format("{} has no commands: /game {} starts a round.", name, name)
                                       : std::format("Unknown command {} for {} (its commands: {})",

@@ -14,6 +14,12 @@ build:
     cmake -S . -B {{build_dir}} -DCMAKE_BUILD_TYPE={{config}}
     cmake --build {{build_dir}} --config {{config}} --parallel
 
+# Configure, build and run the tests
+test:
+    cmake -S . -B {{build_dir}} -DCMAKE_BUILD_TYPE={{config}}
+    cmake --build {{build_dir}} --config {{config}} --target zchat_tests --parallel
+    ctest --test-dir {{build_dir}} --output-on-failure -C {{config}}
+
 # Build and run zchat, passing any extra arguments (e.g. `just run -n Rex`)
 [unix]
 run *args: build

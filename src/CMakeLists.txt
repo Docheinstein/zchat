@@ -17,6 +17,9 @@ target_sources(zchat PUBLIC
     net.cpp
     paint.cpp
     popup.cpp
+    pokemon.cpp
+    pokemon_engine.cpp
+    pokemon_state.cpp
     process.cpp
     race.cpp
     protocol.cpp
@@ -75,6 +78,16 @@ add_custom_command(
     DEPENDS "${zchat_words}" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     VERBATIM)
 target_sources(zchat PRIVATE "${zchat_generated}/wordle_words.hpp")
+
+# The bridge between zchat and the Pokémon Showdown simulator, for /game pokemon, built into the executable: zchat
+# writes it next to the simulator when it runs a battle (see pokemon_engine.hpp).
+add_custom_command(
+    OUTPUT "${zchat_generated}/pokemon_bridge.hpp"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/pokemon/bridge.js"
+            "-DOUTPUT=${zchat_generated}/pokemon_bridge.hpp" -DNAME=pokemon_bridge -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/pokemon/bridge.js" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    VERBATIM)
+target_sources(zchat PRIVATE "${zchat_generated}/pokemon_bridge.hpp")
 target_compile_definitions(zchat PRIVATE
     ZCHAT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
     ZCHAT_BUILD_DIR="${CMAKE_BINARY_DIR}"
