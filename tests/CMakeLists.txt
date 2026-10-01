@@ -3,6 +3,7 @@
 file(GLOB zchat_test_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 add_executable(zchat_tests
     ${zchat_test_sources}
+    "${PROJECT_SOURCE_DIR}/src/coins.cpp"
     "${PROJECT_SOURCE_DIR}/src/elo.cpp"
     "${PROJECT_SOURCE_DIR}/src/pokemon_state.cpp"
     "${PROJECT_SOURCE_DIR}/src/process.cpp"

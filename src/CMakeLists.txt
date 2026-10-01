@@ -4,6 +4,7 @@ target_sources(zchat PUBLIC
     channel.cpp
     chat.cpp
     cipher.cpp
+    coins.cpp
     color.cpp
     config.cpp
     dice.cpp
