@@ -38,6 +38,10 @@ public:
     // Ends run(). On the window's thread.
     void terminate();
 
+    // The file of the latest drag on the window, its full path; empty when none. Where the page cannot have the
+    // file: WebKitGTK gives a page no file dropped on it, only GTK has it. On the window's thread.
+    std::string dropped_file() const;
+
     // The window of the system: an HWND on Windows, a GtkWindow* on Linux, an NSWindow* on macOS; or null.
     void* native_window();
 
