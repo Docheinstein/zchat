@@ -1370,8 +1370,9 @@ function pkRenderControls(v, s, player) {
           b.disabled = !!m.disabled || m.pp === 0 || (on === "z" && !m.zmove);
           b.append(el("span", "n", shown.name));
           const sub = el("span", "sub");
-          sub.append(el("span", "", shown.type + (shown !== m && shown.basePower ? " · " + shown.basePower : "")),
-                     el("span", "", "PP " + m.pp + "/" + m.maxpp));
+          // No PP (null) for the only thing left to do: Recharge, a locked Outrage, Struggle, Gen 1's sleepy "Fight".
+          sub.append(el("span", "", (shown.type || "") + (shown !== m && shown.basePower ? " · " + shown.basePower : "")),
+                     el("span", "", m.pp === null ? "" : "PP " + m.pp + "/" + m.maxpp));
           b.append(sub);
           b.onclick = () => window.zchatSend("/game pokemon move " + m.slot + (on ? " " + pkGimmickWords[on] : ""));
           pkTip(v, b, () => {
