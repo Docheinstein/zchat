@@ -312,6 +312,7 @@ namespace {
                 }
                 return true;
             });
+            show_challenges();
             for (auto& [id, b] : battles_) {
                 if (b.referee) {
                     referee_tick(b);
@@ -477,6 +478,32 @@ namespace {
                                      "accept, or /game pokemon decline",
                                      colored));
             terminal_.bell();
+        }
+
+        // The challenges to us waiting for an answer, for the window to show them with buttons to accept or decline
+        // (see the Pokémon challenges in src/ui/index.html), each time they change:
+        //   {"challenges": [{"battle": "ab12", "name": "Ash", "color": "#rrggbb", "left": seconds}...]}
+        void show_challenges() {
+            std::string list;
+            std::string shown;
+            const auto now = clock::now();
+            for (const Challenge& c : challenges_) {
+                if (c.ours || c.accepted) {
+                    continue;
+                }
+                const auto left = std::chrono::duration_cast<std::chrono::seconds>(challenge_time - (now - c.at));
+                list += std::format("{}{{\"battle\":\"{:x}\",\"name\":{},\"color\":\"{}\",\"left\":{}}}",
+                                    list.empty() ? "" : ",", c.battle, json(c.name), hex_color(c.from),
+                                    std::max<long long>(0, left.count()));
+                shown += std::format("{:x} ", c.battle);
+            }
+            if (shown == shown_challenges_) {
+                return;
+            }
+            // Until the window is there to show them (a terminal never is: there they are typed).
+            if (terminal_.show_game("pokemon-challenge", std::format("{{\"challenges\":[{}]}}", list))) {
+                shown_challenges_ = shown;
+            }
         }
 
         // The challenge to us from who (any, when empty), still waiting for an answer.
@@ -1400,6 +1427,8 @@ namespace {
         pokemon::Engine engine_;
         bool updating_ = false;
         std::vector<Challenge> challenges_;
+        // The challenges last shown in the window, see show_challenges().
+        std::string shown_challenges_;
         std::map<std::uint64_t, Battle> battles_;
     };
 
