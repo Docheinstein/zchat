@@ -125,6 +125,13 @@ namespace {
             return "typing race: some words show up, the first to type them exactly wins";
         }
 
+        std::vector<Help> help() const override {
+            return {
+                {"", "start a race: a few words show up, and the first to type them exactly wins (pasting them is "
+                     "out)"},
+            };
+        }
+
         void start() override {
             if (stage_ != Stage::Idle) {
                 chat_.notice(stage_ == Stage::Ready

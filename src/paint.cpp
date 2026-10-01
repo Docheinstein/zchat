@@ -297,8 +297,14 @@ namespace {
             return true;
         }
 
-        std::string_view commands() const override {
-            return "SQUARE [COLOR], FROM-TO [COLOR], color COLOR, undo";
+        std::vector<Help> help() const override {
+            return {
+                {"", "show the canvas, and its colors"},
+                {"c7 [COLOR]", "color a square (with your brush, without a color; none empties it)"},
+                {"c7-f9 [COLOR]", "color a rectangle"},
+                {"color COLOR", "pick your brush: red, #ff8800 (the closest canvas color)..."},
+                {"undo", "take back your last change"},
+            };
         }
 
     private:

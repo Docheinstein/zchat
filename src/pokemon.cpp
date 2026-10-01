@@ -236,9 +236,21 @@ namespace {
             return "Pokémon Showdown's random battles against someone in the chat (needs Node.js on one of you)";
         }
 
-        std::string_view commands() const override {
-            return "challenge NAME [gen1..gen9], accept, decline, move N, switch N, say TEXT, timer, forfeit, "
-                   "watch NAME, unwatch, update";
+        std::vector<Help> help() const override {
+            return {
+                {"", "show your battle, or the ones going on"},
+                {"challenge NAME [genN]", "challenge someone to a battle, of Gen 9 or gen1 to gen9"},
+                {"accept [NAME]", "accept a challenge (the last one, without a name)"},
+                {"decline [NAME]", "decline a challenge"},
+                {"move N [tera|mega|ultra|z|max]", "use move N, with Terastallization, Mega Evolution..."},
+                {"switch N", "switch to Pokémon N"},
+                {"say TEXT", "say something in the battle's chat"},
+                {"timer", "turn the timer on or off"},
+                {"forfeit", "give up the battle"},
+                {"watch NAME", "watch someone's battle"},
+                {"unwatch", "stop watching it"},
+                {"update", "update Pokémon Showdown (needs Node.js)"},
+            };
         }
 
         bool keeps_case() const override {

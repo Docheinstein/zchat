@@ -79,6 +79,10 @@ void Games::command(std::string_view arg) {
         print_scores();
         return;
     }
+    if (name == "help") {
+        print_help(lowercase(args));
+        return;
+    }
     const auto it = std::ranges::find(games_, name, &Game::name);
     if (it == games_.end()) {
         chat_.notice(std::format("Unknown game {} (try /game)", text::sanitize(arg.substr(0, space), 32)));
@@ -87,10 +91,8 @@ void Games::command(std::string_view arg) {
     if (args.empty()) {
         (*it)->start();
     } else if (!(*it)->command((*it)->keeps_case() ? std::string(args) : lowercase(args))) {
-        const std::string_view commands = (*it)->commands();
-        chat_.notice(commands.empty() ? std::format("{} has no commands: /game {} starts a round.", name, name)
-                                      : std::format("Unknown command {} for {} (its commands: {})",
-                                                    text::sanitize(args, 32), name, commands));
+        chat_.notice(std::format("Unknown command {} for {} (try /game help {})", text::sanitize(args, 32), name,
+                                 name));
     }
 }
 
@@ -103,21 +105,44 @@ int Games::add_win(std::string_view game, std::uint64_t id, std::string_view nam
 }
 
 void Games::list() const {
-    chat_.notice("Games everyone in the chat can play: /game NAME starts one.");
+    chat_.notice("Games everyone in the chat can play:");
     for (const auto& g : games_) {
         chat_.notice(std::format("  {:<8} {}", g->name(), g->summary()));
-        if (!g->commands().empty()) {
-            // "roll, stop" becomes "/game dice roll, /game dice stop".
-            std::string line;
-            for (std::string_view rest = g->commands(); !rest.empty();) {
-                const auto comma = rest.find(", ");
-                line += std::format("{}/game {} {}", line.empty() ? "" : ", ", g->name(), rest.substr(0, comma));
-                rest.remove_prefix(comma == std::string_view::npos ? rest.size() : comma + 2);
-            }
-            chat_.notice(std::format("           then {}", line));
+    }
+    chat_.notice("  /game NAME        start one, like /game race");
+    chat_.notice("  /game help NAME   how to play one, and its commands");
+    chat_.notice("  /game scores      who won what in this session");
+}
+
+void Games::print_help(std::string_view name) const {
+    if (name.empty()) {
+        list();
+        return;
+    }
+    const auto it = std::ranges::find(games_, name, &Game::name);
+    if (it == games_.end()) {
+        chat_.notice(std::format("Unknown game {} (try /game)", text::sanitize(name, 32)));
+        return;
+    }
+    const Game& game = **it;
+    chat_.notice(std::format("{}: {}", game.name(), game.summary()));
+    auto help = game.help();
+    if (help.empty()) {
+        help.push_back({"", "start a round"});
+    }
+    // The commands in a column, after the longest that is not too long.
+    std::vector<std::string> usages;
+    std::size_t width = 0;
+    for (const Help& h : help) {
+        usages.push_back(h.args.empty() ? std::format("/game {}", game.name())
+                                        : std::format("/game {} {}", game.name(), h.args));
+        if (usages.back().size() <= 28) {
+            width = std::max(width, usages.back().size());
         }
     }
-    chat_.notice("  /game scores  who won what in this session");
+    for (std::size_t i = 0; i < help.size(); ++i) {
+        chat_.notice(std::format("  {:<{}}  {}", usages[i], width, help[i].what));
+    }
 }
 
 void Games::print_scores() const {
