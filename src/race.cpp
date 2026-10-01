@@ -201,6 +201,10 @@ namespace {
         }
 
         void message(std::uint64_t sender, std::string_view name, std::string_view text) override {
+            // Whoever types something while the words are up takes part, for the ratings: the winner beats them.
+            if (stage_ == Stage::Go && std::ranges::find(racers_, sender, &Placing::id) == racers_.end()) {
+                racers_.push_back({sender, std::string(name), 1});
+            }
             if (!referee_ || stage_ != Stage::Go || std::ranges::find(out_, sender) != out_.end()) {
                 return;
             }
@@ -233,6 +237,7 @@ namespace {
                 stage_ = Stage::Go;
                 started_ = clock::now();
                 deadline_ = started_ + answer_time;
+                racers_.clear();
                 send(std::format("go {:x} {}", round_, phrase_));
                 announce_go();
             } else {
@@ -258,6 +263,7 @@ namespace {
             phrase_.clear();
             deadline_ = clock::now() + wait;
             referee_name_ = chat_.colored_name(referee, referee_name);
+            racers_.clear();
         }
 
         // Picks the words to type, and the way they are shown.
@@ -309,6 +315,15 @@ namespace {
             chat_.notice(std::format("🏆 {} wins the race in {:.1f} seconds!{}", chat_.colored_name(id, name),
                                      static_cast<double>(time.count()) / 1000,
                                      wins > 1 ? std::format(" That's {} wins.", wins) : ""));
+            // The winner first, then everybody else who typed, tied.
+            std::vector<Placing> placings {{id, std::string(name), 0}};
+            for (const Placing& p : racers_) {
+                if (p.id != id) {
+                    placings.push_back(p);
+                }
+            }
+            games_.rate(game_name, placings);
+            racers_.clear();
         }
 
         void announce_paste(std::uint64_t id, std::string_view name) {
@@ -335,6 +350,8 @@ namespace {
         // For the referee: the phrase as typed, and who is out of the round for pasting it.
         std::string answer_;
         std::vector<std::uint64_t> out_;
+        // Who typed something while the words were up, as we saw: they raced, for the ratings.
+        std::vector<Placing> racers_;
         // When the stage ends: the phrase shows up, or nobody typed it (for the others, when they stop waiting).
         clock::time_point deadline_;
         // When the phrase showed up, for the referee.

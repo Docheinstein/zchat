@@ -58,6 +58,30 @@ public:
     virtual bool listed() const {
         return true;
     }
+    // Whether its rounds have winners, and so Elo ratings (see Ratings).
+    virtual bool rated() const {
+        return listed();
+    }
+};
+
+// Where a player finished a round of a game: place 0 is the first, and players with the same place tied.
+struct Placing {
+    std::uint64_t id = 0; // sender id
+    std::string name;
+    int place = 0;
+};
+
+// The Elo ratings of the games, one per game and a general one of them all, and their leaderboards (see
+// ratings.cpp). There is no server to keep them: each zchat keeps its user's own, in the config, works them out from
+// the results it sees, and tells the others, who keep what they hear for the leaderboards (also of who left).
+class Ratings : public Game {
+public:
+    // A round of a game ended, with these players where they finished: rates them, and shows the new ratings.
+    virtual void rate(std::string_view game, const std::vector<Placing>& placings) = 0;
+    // /game leaderboard [GAME|all]: the general leaderboard, a game's, or all of them.
+    virtual void leaderboard(std::string_view game) = 0;
+    // /game elo [NAME]: somebody's ratings (ours without a name).
+    virtual void profile(std::string_view name) = 0;
 };
 
 // The games that can be played with /game NAME. All calls are safe from any thread.
@@ -69,13 +93,18 @@ public:
     Games(const Games&) = delete;
     Games& operator=(const Games&) = delete;
 
-    // /game ARG: without a game's name, lists them; "scores" shows who won what, "help NAME" how to play a game.
+    // /game ARG: without a game's name, lists them; "scores" shows who won what, "help NAME" how to play a game,
+    // "leaderboard [GAME]" the Elo leaderboards and "elo [NAME]" somebody's ratings.
     // /game NAME starts a round of a game, and /game NAME ARGS is one of its own commands, like /game dice roll.
     void command(std::string_view arg);
 
     // Counts a win of a round of a game; returns how many that player has won in this session. Every zchat
     // counts the wins it sees.
     int add_win(std::string_view game, std::uint64_t id, std::string_view name);
+
+    // A round of a game ended, with these players where they finished: changes their Elo ratings (see Ratings).
+    // Rounds of fewer than two players are not rated.
+    void rate(std::string_view game, const std::vector<Placing>& placings);
 
     // /kick ARGS: asks the others to vote someone out of the chat, or votes (see kick.cpp).
     void kick(std::string_view args);
@@ -97,6 +126,8 @@ private:
     // Recursive, as games count their wins while one of their calls holds it.
     mutable std::recursive_mutex mutex_;
     std::vector<std::unique_ptr<Game>> games_;
+    // One of games_.
+    Ratings* ratings_ = nullptr;
     // By lowercase name: the id changes with the color.
     std::map<std::string, Score> scores_;
 };
@@ -107,6 +138,8 @@ std::unique_ptr<Game> make_dice(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_paint(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_wordle(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_pokemon(Chat& chat, Screen& terminal, Games& games);
+// Not a game: the Elo ratings, told around as Game packets; rated_games are the names of the games they are for.
+std::unique_ptr<Ratings> make_ratings(Chat& chat, std::vector<std::string> rated_games);
 // Not a game: the votes of /kick, which travel as Game packets too.
 std::unique_ptr<Game> make_kick(Chat& chat, Screen& terminal, std::function<void()> kicked);
 

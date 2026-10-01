@@ -1616,8 +1616,11 @@ namespace {
                 chat_.notice(std::format("🏆 {} won the Pokémon battle against {}!{}", winner == 0 ? p1 : p2,
                                          winner == 0 ? p2 : p1,
                                          wins > 1 ? std::format(" ({} wins)", wins) : std::string()));
+                games_.rate(game_name,
+                            {{b.ids[winner], b.names[winner], 0}, {b.ids[1 - winner], b.names[1 - winner], 1}});
             } else if (outcome == "tie") {
                 chat_.notice(std::format("⚔ The Pokémon battle between {} and {} is a tie!", p1, p2));
+                games_.rate(game_name, {{b.ids[0], b.names[0], 0}, {b.ids[1], b.names[1], 0}});
             } else {
                 chat_.notice(std::format("⚔ The Pokémon battle between {} and {} ended{}.", p1, p2,
                                          reason.empty() ? std::string() : std::format(": {}", reason)));

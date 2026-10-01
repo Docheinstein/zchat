@@ -361,6 +361,16 @@ namespace {
             result_ = std::format("{} win{} with {}!", plain_winners, tied == 1 ? "s" : "", plural(best, "point"));
             chat_.notice(std::format("🏆 {} win{} dice with {}!{}", winners, tied == 1 ? "s" : "",
                                      plural(best, "point"), others.empty() ? "" : std::format(" Then: {}", others)));
+            // For the ratings, by the points kept: those who lost them all are last, tied.
+            std::vector<Placing> placings;
+            for (const Player& p : players_) {
+                const std::uint64_t points = p.status == Status::Stopped ? p.points : 0;
+                const auto better = std::ranges::count_if(players_, [&](const Player& o) {
+                    return (o.status == Status::Stopped ? o.points : 0) > points;
+                });
+                placings.push_back({p.id, p.name, static_cast<int>(better)});
+            }
+            games_.rate(game_name, placings);
         }
 
         // The round, for a window of its own (see Screen::show_game()): the time left, us, and the players, whose

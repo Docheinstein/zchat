@@ -99,6 +99,8 @@ While chatting:
 | `/game pokemon`    | Pokémon battles as on [Pokémon Showdown](https://pokemonshowdown.com), its Random Battles of any generation: `/game pokemon challenge NAME` challenges someone in the chat to Gen 9, `/game pokemon challenge NAME gen3` to Gen 3 (`gen1` to `gen9`), and they answer `/game pokemon accept` (or `decline`). In the window, ⚔ Battle at the top picks who and which generation, and a challenge to you pops up with Accept and Decline buttons. In the window the battle opens in a window of its own, like Showdown's: the field with both sides' Pokémon (sprites from Showdown's site, when online), buttons for the moves (with a box for the generation's own: Terastallize, Mega Evolve, Ultra Burst, Z-Power, Dynamax) and to switch, the battle log and its own chat, the timer and Forfeit (⚔ at the top opens it again). In the terminal it is played with `/game pokemon move N` (`move N tera` to Terastallize, `mega`, `ultra`, `z` and `max` for the others), `/game pokemon switch N` and `/game pokemon say TEXT`. `/game pokemon timer` turns on Showdown's timer (150 seconds to choose, or lose), `/game pokemon forfeit` gives up, and anybody can `/game pokemon watch NAME` a battle (`unwatch` stops). It is Showdown's own simulator, so it needs [Node.js](https://nodejs.org) on one of the two players' computers (zchat works without it, only not the battles): the first battle installs Pokémon Showdown with npm in the config folder (about 150 MB, a minute), and `/game pokemon update` gets its newest version, with the latest random battle sets |
 | `/game help NAME`  | how to play a game, and its commands (`/help game NAME` works too) |
 | `/game scores`     | who won what in this session                           |
+| `/game leaderboard` | the Elo leaderboard of all the games together (`/game top` works too); `/game leaderboard NAME` is a game's own, like `/game leaderboard race`, and `/game leaderboard all` shows each of them. Who left is on them too |
+| `/game elo [NAME]` | somebody's Elo ratings, in all games and in each, with where they are on the leaderboards; yours without a name |
 | `/update`          | get the latest zchat from git, build it and restart (see below) |
 | `/help`            | list commands, by topic; the games' own are under `/game` |
 | `/quit`, Ctrl+C, Ctrl+D | leave                                             |
@@ -349,6 +351,19 @@ The window is built too (`-DZCHAT_GUI=OFF` leaves it out, for the terminal versi
   square carries a clock and a tag from the painter's id, and a square keeps the newest change, so changes lost or
   heard out of order do not matter. Every 15 seconds each zchat sends a hash of its canvas, and whoever has a
   different one sends the changes it has, so newcomers and whoever missed a packet catch up. Older versions ignore `GAME` packets, so they just see people typing funny words.
+* **Elo ratings** have no server to keep them either: every round of a game with a winner (race, dice, wordle,
+  pokemon; not paint) is rated, in that game and in a general rating of all games together. Everybody starts at 1500;
+  each pair of players of a round counts as a game, won by whoever finished better (half each for a tie), and with
+  more players each pair counts less, so a race of five moves ratings about as much as a duel. K is 40 for the first
+  10 games (marked `?`, still settling) and 20 after. In a race whoever typed something while the words were up took
+  part; in dice the points kept rank the players, those who lost them all tied last; in wordle the guesses, those who
+  did not find the word tied last. Each zchat keeps its user's own ratings, in `elo` in the config, and works out how
+  they change from the results it sees, with the others' ratings as it last heard them; then it tells everybody
+  (`elo ratings <user> <ratings>`), and also every minute and to whoever comes. The others keep what they hear in the
+  `ratings` file of the config folder, by the user id that stays the same through changes of name and color, so the
+  leaderboards show who left too. Everybody works out a round's new ratings to show them at once, but what a player's
+  own zchat says is what counts. Who was not online for a round is not rated for it (a Wordle day is rated at
+  midnight, by whoever is there). People with older versions are rated by name, for the session only.
 * **Pokémon battles** are run by one of the two players' zchat, the referee: the challenger's if it has Node.js, or else the
   other's. It runs Pokémon Showdown's simulator with node and `src/pokemon/bridge.js` (built into zchat, written next to
   the simulator), which prints what the battle says in three streams: what everyone sees, and what each player sees

@@ -611,6 +611,17 @@ namespace {
                 chat_.notice(std::format("🏆 {} win{} {} in {}!{}{}", winners, tied == 1 ? "s" : "", title,
                                          guesses(best), word,
                                          others.empty() ? "" : std::format(" Then: {}.", others)));
+                // For the ratings, by the guesses it took: those who did not find the word are last, tied.
+                std::vector<Placing> placings;
+                for (const Player& p : players_) {
+                    const std::ptrdiff_t better = p.status != Status::Solved
+                                                      ? std::ssize(solved)
+                                                      : std::ranges::count_if(solved, [&](const Player* o) {
+                                                            return o->guesses < p.guesses;
+                                                        });
+                    placings.push_back({p.id, p.name, static_cast<int>(better)});
+                }
+                games_.rate(game_name, placings);
             } else if (!players_.empty()) {
                 chat_.notice(std::format("🟩 Nobody found {}.{}", title, word));
             }
