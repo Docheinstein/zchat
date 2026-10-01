@@ -37,6 +37,10 @@ public:
         (void)args;
         return false;
     }
+    // Whether command() gets its args as typed; or else lowercase, as most games want them.
+    virtual bool keeps_case() const {
+        return false;
+    }
     // Its commands, like "roll, stop", for the list of games; empty when it has none.
     virtual std::string_view commands() const {
         return {};
@@ -82,5 +86,6 @@ std::unique_ptr<Game> make_race(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_dice(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_paint(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_wordle(Chat& chat, Screen& terminal, Games& games);
+std::unique_ptr<Game> make_pokemon(Chat& chat, Screen& terminal, Games& games);
 
 } // namespace zchat::game

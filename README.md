@@ -95,6 +95,7 @@ While chatting:
 | `/game dice`       | push your luck: `/game dice roll` a die as often as you dare, each roll adds to points only you see, but a 1 loses them all; `/game dice stop` keeps them (the others see only that you stopped: the points are shown when the round ends). The highest points kept in 60 seconds win; not stopped in time, and they are lost. In the window a round opens a dice window, with Roll and Stop buttons, the players and the time left (🎲 at the top opens it again) |
 | `/game paint`      | a shared canvas of 16×16 squares: `/game paint c7 red` colors a square, `/game paint c7-f9 blue` a rectangle, `/game paint c7 none` empties it and `/game paint undo` takes back your last change. Without a color, squares get your brush's: `/game paint color red` picks it, and it starts as the canvas color closest to your name color. Each square painted takes a second before the next change, so the chat has to draw together |
 | `/game wordle`     | the New York Times' Wordle of the day, for the whole chat: `/game wordle WORD` guesses the five-letter word whenever you like until midnight, showing you which letters are in it (green: right place, yellow: elsewhere) while the others only see your colors. Six guesses each; `/game wordle` shows your board and how everyone is doing. At midnight, when the Times has a new word, the fewest guesses win the day (ties share it). As on the Times, one a day: your guesses are saved, so coming back later goes on from them, and once done it is done until tomorrow. Guesses must be words of the built-in list (the five-letter words of ENABLE, public domain, in `third_party/enable`); the day's word always counts. Everyone gets the word from `nytimes.com/svc/wordle/v2/DATE.json`, with `curl` |
+| `/game pokemon`    | Pokémon battles as on [Pokémon Showdown](https://pokemonshowdown.com), Gen 9 Random Battle: `/game pokemon challenge NAME` challenges someone in the chat, who answers `/game pokemon accept` (or `decline`). In the window the battle opens in a window of its own, like Showdown's: the field with both sides' Pokémon (sprites from Showdown's site, when online), buttons for the moves (with a Terastallize box) and to switch, the battle log and its own chat, the timer and Forfeit (⚔ at the top opens it again). In the terminal it is played with `/game pokemon move N` (`move N tera` to Terastallize), `/game pokemon switch N` and `/game pokemon say TEXT`. `/game pokemon timer` turns on Showdown's timer (150 seconds to choose, or lose), `/game pokemon forfeit` gives up, and anybody can `/game pokemon watch NAME` a battle (`unwatch` stops). It is Showdown's own simulator, so it needs [Node.js](https://nodejs.org) on one of the two players' computers (zchat works without it, only not the battles): the first battle installs Pokémon Showdown with npm in the config folder (about 150 MB, a minute), and `/game pokemon update` gets its newest version, with the latest random battle sets |
 | `/game scores`     | who won what in this session                           |
 | `/update`          | get the latest zchat from git, build it and restart (see below) |
 | `/help`            | list commands                                          |
@@ -212,6 +213,8 @@ as they are, and may not receive the biggest pictures at all (they took at most 
 Images are decoded with [stb_image](https://github.com/nothings/stb) (public domain / MIT), in `third_party/stb`.
 
 The words `/game wordle` accepts are those of five letters of ENABLE (public domain), in `third_party/enable`.
+
+Pokémon battles are those of [Pokémon Showdown](https://github.com/smogon/pokemon-showdown)'s simulator (MIT), which zchat installs with npm the first time it is needed; the sprites shown in the battle window come from `play.pokemonshowdown.com`. Pokémon is © Nintendo, Game Freak and Creatures: this is a game among friends.
 
 The name set with `/nick` is saved in the `zchat` config folder: `%APPDATA%\zchat\config` on Windows,
 `~/.config/zchat/config` on Linux (or `$XDG_CONFIG_HOME/zchat/config`). On start, `--name` wins over the saved
@@ -341,6 +344,15 @@ the terminal version.)
   square carries a clock and a tag from the painter's id, and a square keeps the newest change, so changes lost or
   heard out of order do not matter. Every 15 seconds each zchat sends a hash of its canvas, and whoever has a
   different one sends the changes it has, so newcomers and whoever missed a packet catch up. Older versions ignore `GAME` packets, so they just see people typing funny words.
+* **Pokémon battles** are run by one of the two players' zchat, the referee: the challenger's if it has Node.js, or else the
+  other's. It runs Pokémon Showdown's simulator with node and `src/pokemon/bridge.js` (built into zchat, written next to
+  the simulator), which prints what the battle says in three streams: what everyone sees, and what each player sees
+  (their own team, their choices). The referee numbers the messages of each stream and sends them in parts that fit
+  in a `GAME` packet; each player acknowledges theirs, and is sent again what they did not, and those watching ask for
+  what they missed, as every second or two the referee tells how many messages each stream has. The players' choices
+  go to the referee until it says it has them. A player's stream travels like everything else, so another zchat could
+  read it: battles are for fun. If the referee goes silent the battle ends with no winner; a player silent for a
+  minute loses. `src/pokemon_state.cpp` turns Showdown's protocol into what the window and the terminal show.
 * **Avatars** are square pictures (a still image cropped to its middle, 256 pixels; a GIF as it is up to 2 MB, or
   else as 128-pixel frames), saved in the config folder as `avatar`. Heartbeats (`JOIN` and `HERE`) carry
   `avatar <hash> <bytes> <TCP port>`, and whoever does not have that avatar yet downloads it from the sender with

@@ -108,6 +108,17 @@
     font-size: 12px; user-select: none;
   }
   #dice-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  /* The same for the Pokémon battle. */
+  #pk-float {
+    position: fixed; top: 54px; right: 20px; width: min(1000px, calc(100vw - 40px)); z-index: 18; display: none;
+    background: #111317; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px #000b; overflow: hidden;
+  }
+  #pk-float.open { display: block; }
+  #pk-float-title {
+    display: flex; align-items: center; padding: 6px 10px; background: var(--panel); cursor: move; color: var(--muted);
+    font-size: 12px; user-select: none;
+  }
+  #pk-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
   #new-channel { display: none; margin: 4px 14px 8px; }
   #new-channel.open { display: block; }
   #new-channel input, #new-channel select {
@@ -222,6 +233,7 @@
   body.dragging #drop { display: grid; }
 </style>
 <style id="dice-style"></style>
+<style id="pk-style"></style>
 </head>
 <body>
 <header>
@@ -234,6 +246,7 @@
   </span>
   <span class="spacer"></span>
   <button id="dice-open" title="Dice" hidden>🎲</button>
+  <button id="pk-open" title="Pokémon battle" hidden>⚔</button>
   <select id="font" title="Font"></select>
   <button id="smaller" title="Smaller text">A−</button>
   <button id="bigger" title="Bigger text">A+</button>
@@ -284,6 +297,8 @@
 <div id="channel-panel"></div>
 <div id="dice-float"><div id="dice-float-title">zchat · dice<button id="dice-float-close" title="Close">×</button></div>
   <div class="dice" id="dice-body"></div></div>
+<div id="pk-float"><div id="pk-float-title">zchat · Pokémon<button id="pk-float-close" title="Close">×</button></div>
+  <div class="pk" id="pk-body"></div></div>
 <div id="drop">Drop a picture or a file to send it</div>
 <div id="viewer"><img alt="picture"></div>
 <script>
@@ -808,8 +823,7 @@ function renderDice() {
   }
   root.append(list);
 }
-zchat.game = (game, state) => {
-  if (game !== "dice") return;
+function diceGame(state) {
   const fresh = !diceState || diceState.round !== state.round;
   diceState = state;
   document.getElementById("dice-open").hidden = false;
@@ -819,7 +833,7 @@ zchat.game = (game, state) => {
   } else {
     renderDice();
   }
-};
+}
 document.getElementById("dice-open").onclick = () => { diceClosedRound = null; openDice(true); };
 document.getElementById("dice-float-close").onclick = closeDice;
 // The floating one can be dragged by its title.
@@ -840,6 +854,612 @@ document.getElementById("dice-float-close").onclick = closeDice;
   });
   document.addEventListener("mouseup", () => { dragging = false; });
 })();
+
+// --- Pokémon battle, in a window of its own (zchat.game("pokemon", state)): Pokémon Showdown's battle room, more or
+// less. Like the dice: a real window when the web view allows one, or else one floating over the chat. The state is
+// the battle's whole, sent again whenever something changes (and every second while the timer runs), so the window is
+// built once and then only what changed is redone: the log only gets its new lines, and a sprite's picture is not
+// loaded again (a GIF would start over) while it is the same Pokémon.
+const pkStyle = `
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #111317; color: #d6d9df; font: 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  .pk { display: grid; grid-template-columns: minmax(0, 1fr) 340px; height: 100vh; }
+  .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid #262a33; }
+  .head { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: #181b21; border-bottom: 1px solid #262a33; }
+  .head .title { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .head .turn { color: #7d8491; font-size: 12px; }
+  .head .close { margin-left: auto; background: none; border: 0; color: #7d8491; font-size: 18px; cursor: pointer; }
+  .field { position: relative; height: 360px; flex: none; overflow: hidden;
+    background: radial-gradient(ellipse 150px 34px at 76% 54%, #6f9a4c 0 70%, transparent 72%),
+      radial-gradient(ellipse 190px 40px at 26% 93%, #6f9a4c 0 70%, transparent 72%),
+      linear-gradient(#8ec5ee 0%, #cfe8f7 38%, #a6d27a 39%, #7fb556 70%, #5e9a3f 100%); }
+  .field.rain { filter: saturate(.75) brightness(.85); }
+  .field.sand { filter: sepia(.5); }
+  .field.sun { filter: saturate(1.25) brightness(1.08); }
+  .field.snow { filter: saturate(.6) brightness(1.1); }
+  .weather { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; max-width: 60%; }
+  .weather span { background: #000a; color: #fff; border-radius: 9px; padding: 1px 8px; font-size: 11px; }
+  .sprite { position: absolute; display: flex; align-items: flex-end; justify-content: center; }
+  .sprite.far { right: 70px; top: 40px; width: 200px; height: 170px; }
+  .sprite.near { left: 40px; bottom: 14px; width: 240px; height: 210px; }
+  .sprite img { max-width: 100%; max-height: 100%; image-rendering: auto; }
+  .sprite img.small { width: 144px; height: 144px; image-rendering: pixelated; }
+  .sprite.fainted img, .sprite.fainted .ph { opacity: .25; filter: grayscale(1); }
+  .ph { width: 120px; height: 120px; border-radius: 50%; background: #0006; border: 2px dashed #fff8; color: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center; padding: 8px; }
+  .ph .n { font-weight: 700; font-size: 13px; }
+  .stat { position: absolute; width: 220px; background: #181b21e6; border: 1px solid #000; border-radius: 6px; padding: 5px 7px; color: #eee; box-shadow: 0 2px 6px #0006; }
+  .stat.far { left: 40px; top: 46px; }
+  .stat.near { right: 40px; bottom: 96px; }
+  .stat .nm { display: flex; align-items: baseline; gap: 4px; font-weight: 700; white-space: nowrap; }
+  .stat .nm .n { overflow: hidden; text-overflow: ellipsis; }
+  .stat .lv { font-weight: 400; font-size: 11px; color: #aab; }
+  .m { color: #6ea8ff; } .f { color: #f78fb3; }
+  .hpbar { height: 7px; border-radius: 4px; background: #333a; border: 1px solid #000; overflow: hidden; margin: 3px 0 2px; }
+  .hpbar div { height: 100%; transition: width .5s, background .5s; }
+  .hpline { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #ccd; gap: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
+  .chip { font-size: 10px; border-radius: 3px; padding: 0 4px; line-height: 15px; background: #2a2f3a; color: #ddd; white-space: nowrap; }
+  .chip.up { background: #2f5d34; color: #d8ffd8; } .chip.down { background: #6a2a2a; color: #ffd8d8; }
+  .chip.vol { background: #3b3550; color: #e0d8ff; }
+  .chip.cond { background: #000a; color: #fff; }
+  .st { font-size: 10px; font-weight: 700; border-radius: 3px; padding: 0 4px; line-height: 15px; color: #fff; }
+  .st.brn { background: #e8662f; } .st.par { background: #c9a50a; } .st.slp { background: #8c8c7a; }
+  .st.frz { background: #39a9d0; } .st.psn { background: #a040a0; } .st.tox { background: #6c2590; } .st.fnt { background: #555; }
+  .type { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; border-radius: 3px; padding: 0 5px; line-height: 15px;
+    border: 1px solid #0005; }
+  .tera { font-size: 10px; font-weight: 700; border-radius: 3px; padding: 0 5px; line-height: 15px; border: 1px solid #fff9; }
+  .teambar { position: absolute; display: flex; align-items: center; gap: 4px; background: #000a; border-radius: 12px; padding: 3px 8px; }
+  .teambar.far { top: 8px; right: 8px; }
+  .teambar.near { bottom: 8px; right: 8px; }
+  .teambar .who { font-weight: 700; font-size: 12px; margin-right: 4px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ball { width: 15px; height: 15px; border-radius: 50%; border: 1px solid #111; flex: none;
+    background: linear-gradient(#e5534b 0 42%, #111 42% 58%, #f4f4f4 58%); }
+  .ball.fnt { filter: grayscale(1); opacity: .35; }
+  .ball.unknown { background: linear-gradient(#888 0 42%, #111 42% 58%, #bbb 58%); opacity: .6; }
+  .ball.active { box-shadow: 0 0 0 2px #f2c94c; }
+  .conds { position: absolute; display: flex; flex-wrap: wrap; gap: 3px; max-width: 300px; }
+  .conds.far { top: 34px; right: 8px; justify-content: flex-end; }
+  .conds.near { bottom: 34px; right: 8px; justify-content: flex-end; }
+  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+  .overlay div { background: #111317e6; border: 1px solid #262a33; border-radius: 12px; padding: 14px 24px; font-size: 16px; max-width: 80%; text-align: center; }
+  .overlay .result { font-size: 26px; font-weight: 800; color: #f2c94c; }
+  .controls { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .err { color: #e5534b; font-weight: 600; }
+  .wait { color: #7d8491; font-size: 15px; padding: 8px 0; }
+  h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: #7d8491; margin: 0; }
+  .moves { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .mv { height: 50px; border-radius: 8px; border: 1px solid #0007; font: inherit; cursor: pointer; text-align: left; padding: 4px 10px;
+    box-shadow: inset 0 -10px 16px #0003; display: flex; flex-direction: column; justify-content: center; }
+  .mv:hover:not(:disabled) { filter: brightness(1.12); box-shadow: inset 0 -10px 16px #0003, 0 0 0 2px #fff6; }
+  .mv:disabled { filter: grayscale(1) brightness(.6); cursor: default; }
+  .mv .n { font-weight: 700; font-size: 14px; }
+  .mv .sub { display: flex; justify-content: space-between; font-size: 11px; opacity: .85; }
+  .teracheck { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; width: fit-content; }
+  .switches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+  .sw { height: 64px; border-radius: 8px; border: 1px solid #262a33; background: #1e222a; color: #d6d9df; font: inherit; font-size: 11px;
+    cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding: 2px; overflow: hidden; }
+  .sw:hover:not(:disabled) { border-color: #6ea8ff; }
+  .sw:disabled { opacity: .4; cursor: default; }
+  .sw.active { border-color: #f2c94c55; }
+  .sw img { width: 40px; height: 40px; object-fit: cover; image-rendering: pixelated; }
+  .sw .n { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sw .hp { display: flex; gap: 3px; align-items: center; color: #9aa; }
+  .bottom { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid #262a33; background: #181b21; }
+  .bottom .left-s { font-variant-numeric: tabular-nums; font-weight: 700; }
+  .bottom .left-s.low { color: #e5534b; }
+  .bottom .grow { flex: 1; }
+  .btn { height: 28px; padding: 0 12px; border-radius: 6px; border: 1px solid #262a33; background: #1e222a; color: #d6d9df; font: inherit; cursor: pointer; }
+  .btn:hover { border-color: #6ea8ff; }
+  .btn.on { border-color: #3fb950; color: #3fb950; }
+  .btn.danger:hover { border-color: #e5534b; color: #e5534b; }
+  .btn.primary { background: #6ea8ff; border-color: #6ea8ff; color: #0b0d10; font-weight: 600; }
+  .right { display: flex; flex-direction: column; min-height: 0; }
+  .log { flex: 1; overflow-y: auto; padding: 8px 10px; line-height: 1.4; overflow-wrap: anywhere; }
+  .log .turn { font-weight: 700; font-size: 14px; margin: 10px 0 4px; padding-top: 6px; border-top: 1px solid #262a33; }
+  .log .move { font-weight: 700; margin-top: 3px; }
+  .log .minor { font-size: 11px; color: #7d8491; }
+  .log .notice { font-style: italic; color: #7d8491; }
+  .log .error { color: #e5534b; }
+  .log .result { font-weight: 800; font-size: 16px; color: #f2c94c; margin: 8px 0; }
+  .log .chat .who { font-weight: 700; }
+  .say { margin: 8px; background: #1e222a; color: #d6d9df; border: 1px solid #262a33; border-radius: 8px; padding: 8px 10px; font: inherit; outline: none; }
+  .say:focus { border-color: #6ea8ff; }
+  .tip { position: fixed; z-index: 30; display: none; max-width: 300px; background: #0d0f13f2; border: 1px solid #3a404c; border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; line-height: 1.45; pointer-events: none; box-shadow: 0 6px 20px #000a; }
+  .tip .t { font-weight: 700; font-size: 13px; }
+  .tip .d { color: #9aa3b2; }
+`;
+let pkState = null, pkPopup = null, pkClosedBattle = null, pkClosing = false, pkTera = { rqid: 0, on: false };
+document.getElementById("pk-style").textContent = pkStyle.replace(/:root \{[^}]*\}/, "").replace(/(^|\})\s*([^{}@]+)\{/g,
+  (m, end, sel) => end + " " + sel.split(",").map(x => x.trim() === "body" ? "#pk-float" : "#pk-float " + x.trim()).join(", ") + " {")
+  + " #pk-float .pk { height: min(620px, calc(100vh - 100px)); }";
+const pkFloat = document.getElementById("pk-float");
+
+// Showdown's colors of the types, and the text that reads on them.
+const pkTypeColors = {
+  Normal: "#a8a878", Fire: "#f08030", Water: "#6890f0", Electric: "#f8d030", Grass: "#78c850", Ice: "#98d8d8",
+  Fighting: "#c03028", Poison: "#a040a0", Ground: "#e0c068", Flying: "#a890f0", Psychic: "#f85888", Bug: "#a8b820",
+  Rock: "#b8a038", Ghost: "#705898", Dragon: "#7038f8", Dark: "#705848", Steel: "#b8b8d0", Fairy: "#ee99ac",
+  Stellar: "#40b5a5",
+};
+function pkTypeColor(type) { return pkTypeColors[type] || "#68a090"; }
+function pkInk(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 150 ? "#16181c" : "#fff";
+}
+const pkStatNames = { hp: "HP", atk: "Atk", def: "Def", spa: "SpA", spd: "SpD", spe: "Spe", accuracy: "Accuracy", evasion: "Evasion" };
+
+// The name of a species' sprite, Showdown's way: toID(baseSpecies) + "-" + toID(forme). The base species is what is
+// before the first hyphen, but for those with one in their name.
+const pkHyphenated = ["Ho-Oh", "Porygon-Z", "Jangmo-o", "Hakamo-o", "Kommo-o", "Wo-Chien", "Chien-Pao", "Ting-Lu", "Chi-Yu",
+  "Nidoran-F", "Nidoran-M"];
+function pkToID(s) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+function pkSpriteId(species) {
+  species = String(species || "");
+  let base = species, forme = "";
+  const known = pkHyphenated.find(b => species === b || species.startsWith(b + "-"));
+  if (known) {
+    base = known; forme = species.slice(known.length + 1);
+  } else if (species.indexOf("-") > 0) {
+    base = species.slice(0, species.indexOf("-")); forme = species.slice(species.indexOf("-") + 1);
+  }
+  return pkToID(base) + (forme && pkToID(forme) ? "-" + pkToID(forme) : "");
+}
+function pkSpriteUrls(species, shiny, back) {
+  const id = pkSpriteId(species), s = shiny ? "-shiny" : "", b = back ? "-back" : "";
+  return ["https://play.pokemonshowdown.com/sprites/ani" + b + s + "/" + id + ".gif",
+          "https://play.pokemonshowdown.com/sprites/gen5" + b + s + "/" + id + ".png"];
+}
+function pkPercent(mon) {
+  if (!mon || !mon.maxhp) return 0;
+  const p = mon.hp / mon.maxhp * 100;
+  return mon.hp > 0 ? Math.max(1, Math.round(p)) : 0;
+}
+function pkFainted(mon) { return mon.status === "fnt" || mon.hp <= 0; }
+function pkHpColor(p) { return p > 50 ? "#3fd16b" : p > 20 ? "#f2c94c" : "#e5534b"; }
+
+function pkDoc() {
+  if (pkPopup && !pkPopup.closed) return pkPopup.document;
+  return null;
+}
+function openPokemon(focus) {
+  if (!pkDoc()) {
+    let w = null;
+    try { w = window.open("", "zchat-pokemon", "popup,width=1000,height=640"); } catch {}
+    if (w && w.document) {
+      w.document.open();
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · Pokémon</title><style>${pkStyle}</style></head><body><div class="pk" id="pk"></div></body></html>`);
+      w.document.close();
+      pkPopup = w;
+      // Closed by its own window's close button: the same as ours.
+      w.addEventListener("pagehide", () => { if (pkPopup === w && !pkClosing) { pkPopup = null; pokemonClosed(); } });
+    } else {
+      pkPopup = null;
+      pkFloat.classList.add("open");
+    }
+  }
+  if (focus) try { if (pkPopup) pkPopup.focus(); } catch {}
+  renderPokemon();
+}
+// Closed during a battle: it stays closed for the rest of it, and a spectator stops watching.
+function pokemonClosed() {
+  if (!pkState) return;
+  pkClosedBattle = pkState.battle;
+  if (pkState.watching) window.zchatSend("/game pokemon unwatch");
+}
+function closePokemon() {
+  pkClosing = true;
+  if (pkPopup && !pkPopup.closed) pkPopup.close();
+  pkClosing = false;
+  pkPopup = null;
+  pkFloat.classList.remove("open");
+  pokemonClosed();
+}
+
+// The parts of the window, made once in each document.
+function pkBuild(doc, root, popup) {
+  const el = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const v = { doc, el, root };
+  const left = el("div", "left"), right = el("div", "right");
+  const head = el("div", "head");
+  v.title = el("span", "title");
+  v.turn = el("span", "turn");
+  head.append(v.title, v.turn);
+  if (popup) {
+    const close = el("button", "close", "×");
+    close.title = "Close";
+    close.onclick = closePokemon;
+    head.append(close);
+  }
+  v.field = el("div", "field");
+  v.weather = el("div", "weather");
+  v.field.append(v.weather);
+  for (const pos of ["far", "near"]) {
+    const p = v[pos] = {};
+    p.sprite = el("div", "sprite " + pos);
+    p.img = el("img");
+    p.img.alt = "";
+    p.img.onerror = () => {
+      // The animated one, then the still one, then (offline) a placeholder.
+      if (p.stage === 0 && p.urls) { p.stage = 1; p.img.className = "small"; p.img.src = p.urls[1]; }
+      else { p.stage = 2; p.img.style.display = "none"; p.ph.style.display = ""; }
+    };
+    p.ph = el("div", "ph");
+    p.ph.style.display = "none";
+    p.sprite.append(p.img, p.ph);
+    p.stat = el("div", "stat " + pos);
+    p.team = el("div", "teambar " + pos);
+    p.conds = el("div", "conds " + pos);
+    v.field.append(p.sprite, p.stat, p.team, p.conds);
+  }
+  v.overlay = el("div", "overlay");
+  v.field.append(v.overlay);
+  v.controls = el("div", "controls");
+  v.bottom = el("div", "bottom");
+  left.append(head, v.field, v.controls, v.bottom);
+  v.log = el("div", "log");
+  v.log.addEventListener("scroll", () => { v.stick = v.log.scrollHeight - v.log.scrollTop - v.log.clientHeight < 30; });
+  v.stick = true;
+  v.say = el("input", "say");
+  v.say.placeholder = "Chat in the battle";
+  v.say.maxLength = 300;
+  v.say.addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+    const text = v.say.value.trim();
+    if (text) window.zchatSend("/game pokemon say " + text);
+    v.say.value = "";
+    e.preventDefault();
+  });
+  right.append(v.log, v.say);
+  v.tip = el("div", "tip");
+  root.textContent = "";
+  root.append(left, right, v.tip);
+  return v;
+}
+
+// A part redone only when what it shows changed.
+function pkPart(v, node, key, build) {
+  if (node._key === key) return;
+  node._key = key;
+  v.tip.style.display = "none";
+  node.textContent = "";
+  build(node);
+}
+// The hover box: lines made by make() when the mouse comes over node.
+function pkTip(v, node, make) {
+  const win = v.doc.defaultView;
+  const place = e => {
+    const r = v.tip.getBoundingClientRect();
+    let x = e.clientX + 14, y = e.clientY + 14;
+    if (x + r.width > win.innerWidth - 6) x = Math.max(6, e.clientX - r.width - 14);
+    if (y + r.height > win.innerHeight - 6) y = Math.max(6, e.clientY - r.height - 14);
+    v.tip.style.left = x + "px"; v.tip.style.top = y + "px";
+  };
+  node.addEventListener("mouseenter", e => {
+    v.tip.textContent = "";
+    v.tip.append(...make());
+    v.tip.style.display = "block";
+    place(e);
+  });
+  node.addEventListener("mousemove", place);
+  node.addEventListener("mouseleave", () => { v.tip.style.display = "none"; });
+}
+function pkTypeBadge(v, type) {
+  const b = v.el("span", "type", type);
+  b.style.background = pkTypeColor(type);
+  b.style.color = pkInk(pkTypeColor(type));
+  return b;
+}
+// What is known of a Pokémon, for its hover box.
+function pkMonTip(v, mon) {
+  const el = v.el, out = [];
+  const t = el("div", "t", mon.species + (mon.name && mon.name !== mon.species ? " (" + mon.name + ")" : "") + " L" + mon.level);
+  out.push(t);
+  const types = el("div", "chips");
+  for (const ty of mon.tera ? [mon.tera] : mon.types || []) types.append(pkTypeBadge(v, ty));
+  if (mon.tera) types.append(el("span", "d", "Terastallized"));
+  else if (mon.teraType) types.append(el("span", "d", "Tera: " + mon.teraType));
+  out.push(types);
+  out.push(el("div", "", "HP: " + (mon.exact ? mon.hp + "/" + mon.maxhp + " (" + pkPercent(mon) + "%)" : pkPercent(mon) + "%")
+    + (mon.status && mon.status !== "fnt" ? " · " + mon.status.toUpperCase() : pkFainted(mon) ? " · fainted" : "")));
+  if (mon.ability) out.push(el("div", "", "Ability: " + mon.ability));
+  if (mon.item) out.push(el("div", "", "Item: " + mon.item));
+  const stats = Object.entries(mon.stats || {}).filter(([k]) => k !== "hp");
+  if (stats.length) out.push(el("div", "d", stats.map(([k, n]) => (pkStatNames[k] || k) + " " + n).join(" / ")));
+  const boosts = Object.entries(mon.boosts || {}).filter(([, n]) => n);
+  if (boosts.length) out.push(el("div", "d", boosts.map(([k, n]) => (n > 0 ? "+" : "") + n + " " + (pkStatNames[k] || k)).join(", ")));
+  if (mon.moves && mon.moves.length) for (const m of mon.moves) out.push(el("div", "", "• " + m));
+  else if (!mon.exact) out.push(el("div", "d", "No moves seen yet"));
+  return out;
+}
+
+// One side of the field: its Pokémon in, its stat bar, its team and its conditions.
+function pkRenderSide(v, pos, side, color, ours) {
+  const el = v.el, p = v[pos];
+  const team = side.team || [];
+  const mon = side.active >= 0 ? team[side.active] : null;
+  // The sprite, loaded again only for another Pokémon.
+  const urls = mon ? pkSpriteUrls(mon.species, mon.shiny, pos === "near") : null;
+  const spriteKey = urls ? urls[0] : "";
+  if (p.spriteKey !== spriteKey) {
+    p.spriteKey = spriteKey;
+    p.urls = urls;
+    p.stage = 0;
+    p.ph.style.display = "none";
+    p.img.className = "";
+    if (urls) { p.img.style.display = ""; p.img.src = urls[0]; } else { p.img.style.display = "none"; p.img.removeAttribute("src"); }
+  }
+  p.sprite.classList.toggle("fainted", !!mon && pkFainted(mon));
+  pkPart(v, p.ph, mon ? JSON.stringify([mon.name, mon.types, mon.tera]) : "", node => {
+    if (!mon) return;
+    node.append(el("div", "n", mon.name || mon.species));
+    const types = el("div", "chips");
+    for (const ty of mon.tera ? [mon.tera] : mon.types || []) types.append(pkTypeBadge(v, ty));
+    node.append(types);
+  });
+  if (!p.sprite._tipped) {
+    p.sprite._tipped = true;
+    pkTip(v, p.sprite, () => p.sprite._mon ? pkMonTip(v, p.sprite._mon) : []);
+  }
+  p.sprite._mon = mon;
+
+  pkPart(v, p.stat, JSON.stringify([mon, ours]), node => {
+    node.style.display = mon ? "" : "none";
+    if (!mon) return;
+    const nm = el("div", "nm");
+    nm.append(el("span", "n", mon.name || mon.species));
+    if (mon.gender === "M") nm.append(el("span", "m", "♂"));
+    if (mon.gender === "F") nm.append(el("span", "f", "♀"));
+    nm.append(el("span", "lv", "L" + mon.level));
+    if (mon.tera) {
+      const t = el("span", "tera", "Tera " + mon.tera);
+      t.style.background = pkTypeColor(mon.tera);
+      t.style.color = pkInk(pkTypeColor(mon.tera));
+      nm.append(t);
+    }
+    node.append(nm);
+    const pct = pkPercent(mon);
+    const bar = el("div", "hpbar"), fill = el("div");
+    fill.style.width = pct + "%";
+    fill.style.background = pkHpColor(pct);
+    bar.append(fill);
+    node.append(bar);
+    const line = el("div", "hpline");
+    line.append(el("span", "", mon.exact ? mon.hp + "/" + mon.maxhp : pct + "%"));
+    if (mon.status) line.append(el("span", "st " + mon.status, mon.status.toUpperCase()));
+    node.append(line);
+    const chips = el("div", "chips");
+    for (const [k, n] of Object.entries(mon.boosts || {}))
+      if (n) chips.append(el("span", "chip " + (n > 0 ? "up" : "down"), (n > 0 ? "+" : "") + n + " " + (pkStatNames[k] || k)));
+    for (const x of mon.volatiles || []) chips.append(el("span", "chip vol", x));
+    if (chips.childElementCount) node.append(chips);
+    pkTip(v, node, () => pkMonTip(v, mon));
+  });
+
+  pkPart(v, p.team, JSON.stringify([side.name, color, team, side.active, side.teamSize]), node => {
+    const who = el("span", "who", side.name || "");
+    who.style.color = color || "#fff";
+    node.append(who);
+    const size = Math.max(side.teamSize || 6, team.length);
+    for (let i = 0; i < size; i++) {
+      const m = team[i];
+      const ball = el("span", "ball" + (!m ? " unknown" : pkFainted(m) ? " fnt" : "") + (m && i === side.active ? " active" : ""));
+      if (m) pkTip(v, ball, () => pkMonTip(v, m));
+      else ball.title = "Not seen yet";
+      node.append(ball);
+    }
+  });
+  pkPart(v, p.conds, JSON.stringify(side.conditions || []), node => {
+    for (const c of side.conditions || []) node.append(el("span", "chip cond", c));
+  });
+}
+
+// What we can do: our moves and switches, or what we wait for.
+function pkRenderControls(v, s, player) {
+  const el = v.el, rq = s.request;
+  const key = JSON.stringify([s.phase, s.setup, s.watching, player, s.chosen, rq, s.error, s.result]);
+  pkPart(v, v.controls, key, node => {
+    if (s.phase === "setup") { node.append(el("div", "wait", s.setup || "Getting ready…")); return; }
+    if (s.phase === "over") {
+      node.append(el("div", "wait", s.result || "The battle is over."));
+      if (player) {
+        const again = el("button", "btn primary", "New battle");
+        again.style.width = "fit-content";
+        again.onclick = () => window.zchatSend("/game pokemon");
+        node.append(again);
+      }
+      return;
+    }
+    if (!player) { node.append(el("div", "wait", "Watching")); return; }
+    if (s.error) node.append(el("div", "err", s.error));
+    if (!rq || s.chosen) { node.append(el("div", "wait", "Waiting for opponent…")); return; }
+    if (pkTera.rqid !== rq.rqid) pkTera = { rqid: rq.rqid, on: false };
+    const me = (s.sides || []).find(x => x.id === s.you) || { team: [] };
+    if (rq.kind === "move") {
+      node.append(el("h3", "", "Attack"));
+      const moves = el("div", "moves");
+      for (const m of rq.moves || []) {
+        const b = el("button", "mv");
+        const c = pkTypeColor(m.type);
+        b.style.background = c;
+        b.style.color = pkInk(c);
+        b.disabled = !!m.disabled || m.pp === 0;
+        b.append(el("span", "n", m.name));
+        const sub = el("span", "sub");
+        sub.append(el("span", "", m.type), el("span", "", "PP " + m.pp + "/" + m.maxpp));
+        b.append(sub);
+        b.onclick = () => window.zchatSend("/game pokemon move " + m.slot + (pkTera.on ? " tera" : ""));
+        pkTip(v, b, () => {
+          const head = el("div", "chips");
+          head.append(pkTypeBadge(v, m.type), el("span", "", m.category));
+          const out = [el("div", "t", m.name), head,
+            el("div", "", "Power: " + (m.basePower ? m.basePower : "—") + " · Accuracy: " + (m.accuracy === true ? "—" : m.accuracy + "%"))];
+          if (m.desc) out.push(el("div", "d", m.desc));
+          if (m.disabled) out.push(el("div", "err", "Disabled"));
+          return out;
+        });
+        moves.append(b);
+      }
+      node.append(moves);
+      if (rq.canTera) {
+        const label = el("label", "teracheck");
+        const box = el("input");
+        box.type = "checkbox";
+        box.checked = pkTera.on;
+        box.onchange = () => { pkTera.on = box.checked; };
+        label.append(box, el("span", "", "Terastallize "), pkTypeBadge(v, rq.canTera));
+        node.append(label);
+      }
+      node.append(el("h3", "", rq.trapped ? "Switch (trapped)" : "Switch"));
+    } else {
+      node.append(el("h3", "", "Choose a Pokémon to send in"));
+    }
+    const row = el("div", "switches");
+    for (const w of rq.switches || []) {
+      const b = el("button", "sw" + (w.active ? " active" : ""));
+      // Revival Blessing brings back a fainted one: only those can be picked.
+      b.disabled = (rq.reviving ? !w.fainted : !!w.fainted) || !!w.active || (!!rq.trapped && rq.kind === "move");
+      const img = el("img");
+      img.alt = "";
+      img.onerror = () => { img.style.visibility = "hidden"; };
+      img.src = pkSpriteUrls(w.species, false, false)[1];
+      const hp = el("span", "hp");
+      const pct = w.fainted ? 0 : pkPercent(w);
+      hp.append(el("span", "", w.fainted ? "fainted" : pct + "%"));
+      if (w.status && w.status !== "fnt") hp.append(el("span", "st " + w.status, w.status.toUpperCase()));
+      b.append(img, el("span", "n", w.name), hp);
+      b.onclick = () => window.zchatSend("/game pokemon switch " + w.slot);
+      const mon = (me.team || [])[w.slot - 1];
+      pkTip(v, b, () => mon ? pkMonTip(v, mon) : [el("div", "t", w.name), el("div", "", w.hp + "/" + w.maxhp)]);
+      row.append(b);
+    }
+    node.append(row);
+  });
+
+  // The timer and forfeiting, for the players; only the seconds change every second.
+  const playing = player && s.phase !== "over";
+  const timer = s.timer || {};
+  pkPart(v, v.bottom, JSON.stringify([playing, !!timer.on]), node => {
+    node.style.display = playing ? "" : "none";
+    if (!playing) return;
+    const t = el("button", "btn" + (timer.on ? " on" : ""), timer.on ? "Timer: on" : "Timer");
+    t.title = timer.on ? "Stop the timer" : "Start the timer: each choice has to be made in time";
+    t.onclick = () => window.zchatSend("/game pokemon timer");
+    v.left = el("span", "left-s");
+    const forfeit = el("button", "btn danger", "Forfeit");
+    forfeit.onclick = () => { if (v.doc.defaultView.confirm("Forfeit the battle?")) window.zchatSend("/game pokemon forfeit"); };
+    node.append(t, v.left, el("span", "grow"), forfeit);
+  });
+  if (playing && v.left) {
+    const left = timer.left;
+    v.left.textContent = left === null || left === undefined ? "" : "⏱ " + left + "s";
+    v.left.classList.toggle("low", left !== null && left !== undefined && left <= 30);
+  }
+}
+
+// The log: only the new lines are added, unless it is another battle or it got shorter.
+function pkRenderLog(v, s) {
+  const el = v.el, lines = s.log || [];
+  if (v.log._battle !== s.battle || lines.length < (v.log._count || 0)) {
+    v.log.textContent = "";
+    v.log._battle = s.battle;
+    v.log._count = 0;
+    v.stick = true;
+  }
+  if (lines.length === v.log._count) return;
+  const stick = v.stick;
+  for (let i = v.log._count; i < lines.length; i++) {
+    const l = lines[i];
+    const div = el("div", l.k);
+    if (l.k === "chat") {
+      const who = el("span", "who", l.n || "");
+      if (l.c) who.style.color = l.c;
+      div.append(who, v.doc.createTextNode(": " + (l.t || "")));
+    } else {
+      div.textContent = l.t || "";
+    }
+    v.log.append(div);
+  }
+  v.log._count = lines.length;
+  if (stick) v.log.scrollTop = v.log.scrollHeight;
+}
+
+function renderPokemon() {
+  const s = pkState;
+  const popup = !!pkDoc();
+  const doc = popup ? pkDoc() : document;
+  const root = popup ? doc.getElementById("pk") : document.getElementById("pk-body");
+  if (!s || !root || (!popup && !pkFloat.classList.contains("open"))) return;
+  if (!root._pk) root._pk = pkBuild(doc, root, popup);
+  const v = root._pk;
+  const player = !s.watching && (s.you === "p1" || s.you === "p2");
+  if (popup) doc.title = s.title || "zchat · Pokémon";
+  v.title.textContent = s.title || "Pokémon battle";
+  v.turn.textContent = s.phase === "battle" && s.turn ? "Turn " + s.turn : s.watching ? "watching" : "";
+
+  // Our side near, at the bottom; for a spectator, p1.
+  const sides = s.sides || [];
+  const nearIndex = s.you === "p2" ? 1 : 0;
+  const colors = s.colors || {};
+  for (const [pos, i] of [["near", nearIndex], ["far", 1 - nearIndex]]) {
+    const side = sides[i] || { id: "p" + (i + 1), team: [], active: -1, conditions: [], teamSize: 6 };
+    pkRenderSide(v, pos, side, colors[side.id || "p" + (i + 1)], player && i === nearIndex);
+  }
+  const f = s.field || {};
+  const weather = (f.weather || "").toLowerCase();
+  v.field.className = "field" + (/rain/.test(weather) ? " rain" : /sand/.test(weather) ? " sand" : /sun/.test(weather) ? " sun"
+    : /snow|hail/.test(weather) ? " snow" : "");
+  pkPart(v, v.weather, JSON.stringify(f), node => {
+    for (const x of [f.weather, f.terrain, ...(f.other || [])]) if (x) node.append(v.el("span", "", x));
+  });
+  pkPart(v, v.overlay, JSON.stringify([s.phase, s.setup, s.result]), node => {
+    if (s.phase === "setup") node.append(v.el("div", "", s.setup || "Getting ready…"));
+    else if (s.phase === "over" && s.result) node.append(v.el("div", "result", s.result));
+  });
+  pkRenderControls(v, s, player);
+  pkRenderLog(v, s);
+}
+function pokemonGame(state) {
+  const fresh = !pkState || pkState.battle !== state.battle;
+  pkState = state;
+  document.getElementById("pk-open").hidden = false;
+  // A new battle opens it, unless it was closed during this one.
+  if (fresh && state.phase !== "over" && pkClosedBattle !== state.battle) {
+    openPokemon(true);
+  } else {
+    renderPokemon();
+  }
+}
+document.getElementById("pk-open").onclick = () => { pkClosedBattle = null; openPokemon(true); };
+document.getElementById("pk-float-close").onclick = closePokemon;
+(() => {
+  const handle = document.getElementById("pk-float-title");
+  let dx = 0, dy = 0, dragging = false;
+  handle.addEventListener("mousedown", e => {
+    if (e.target !== handle) return;
+    dragging = true;
+    const r = pkFloat.getBoundingClientRect();
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    pkFloat.style.left = Math.max(0, e.clientX - dx) + "px";
+    pkFloat.style.top = Math.max(0, e.clientY - dy) + "px";
+    pkFloat.style.right = "auto";
+  });
+  document.addEventListener("mouseup", () => { dragging = false; });
+})();
+
+// --- The games' windows: the C++ side calls zchat.game(game, state) with each game's state.
+zchat.game = (game, state) => {
+  if (game === "dice") diceGame(state);
+  else if (game === "pokemon") pokemonGame(state);
+};
 
 // --- Animations: the frames of an image element, shown one after the other for their delays, in a loop, while the
 // element is on the page.
