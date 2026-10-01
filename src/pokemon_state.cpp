@@ -1518,6 +1518,11 @@ void Battle::chosen() {
     error_.clear();
 }
 
+void Battle::unchoose() {
+    answered_ = false;
+    error_.clear();
+}
+
 void Battle::line(std::string_view text) {
     if (text.size() < 2 || text[0] != '|') {
         return;
