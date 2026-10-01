@@ -142,6 +142,12 @@ namespace {
         return std::string(s);
     }
 
+    // A name as typed: the window's '@' list types it after an '@', which is not part of it.
+    std::string person(std::string_view s) {
+        std::string out = trim(s);
+        return out.starts_with('@') ? trim(std::string_view(out).substr(1)) : out;
+    }
+
     std::string json(std::string_view s) {
         std::string out = "\"";
         for (const char c : s) {
@@ -293,9 +299,9 @@ namespace {
             if (verb == "challenge" || verb == "c") {
                 challenge(arg);
             } else if (verb == "accept") {
-                accept(arg);
+                accept(person(arg));
             } else if (verb == "decline") {
-                decline(arg);
+                decline(person(arg));
             } else if (verb == "move" || verb == "switch" || verb == "tera" ||
                        (!verb.empty() && verb.find_first_not_of("0123456789") == std::string::npos)) {
                 choose(std::string(args));
@@ -308,7 +314,7 @@ namespace {
             } else if (verb == "forfeit") {
                 act("forfeit");
             } else if (verb == "watch") {
-                watch(arg);
+                watch(person(arg));
             } else if (verb == "unwatch") {
                 unwatch();
             } else if (verb == "update") {
@@ -502,6 +508,7 @@ namespace {
                 chat_.notice("Who? /game pokemon challenge NAME gen3 (/who lists the people in the chat).");
                 return;
             }
+            who = person(who);
             if (who.empty()) {
                 chat_.notice("Who? /game pokemon challenge NAME (/who lists the people in the chat).");
                 return;
