@@ -167,8 +167,12 @@ namespace {
             return false;
         }
 
-        std::string_view commands() const override {
-            return "roll, stop";
+        std::vector<Help> help() const override {
+            return {
+                {"", "start a round: everyone has some time to join it, with a roll"},
+                {"roll", "roll your die: it adds to your points, which only you see, but a 1 loses them all"},
+                {"stop", "keep your points: the highest kept when time is up win"},
+            };
         }
 
     private:

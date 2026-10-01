@@ -280,8 +280,11 @@ namespace {
             return true;
         }
 
-        std::string_view commands() const override {
-            return "WORD";
+        std::vector<Help> help() const override {
+            return {
+                {"", "get today's word, or show how the day is going"},
+                {"WORD", "guess the five-letter word: you see which letters are in it, the others only the colors"},
+            };
         }
 
     private:

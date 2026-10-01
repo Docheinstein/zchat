@@ -260,49 +260,48 @@ void channel_command(zchat::Chat& chat, std::string_view command, std::string_vi
 }
 
 void print_help(zchat::Chat& chat) {
-    chat.notice("Commands:");
+    chat.notice("People:");
     chat.notice("  /who         list the people in the chat");
-    chat.notice("  /channels    list the channels; /join NAME goes to one (and joins it, if public)");
-    chat.notice("  /create NAME [public|private]  make a channel: public anybody can join, private only who you add");
-    chat.notice("  /add [#CHANNEL] NAME, /remove [#CHANNEL] NAME  add or remove someone (the current channel if none)");
-    chat.notice("  /members [#CHANNEL]  who is in a channel; /leave [NAME] leaves one; /delete NAME deletes yours");
+    chat.notice("  @NAME        tag someone in a message: they hear a sound");
+    chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
+    chat.notice("  @everyone    tag all the people in the chat: they all hear a sound");
+    chat.notice("You:");
     chat.notice("  /whoami      show your name");
     chat.notice("  /nick NAME   change your name, and keep it for next time");
     chat.notice("  /forget      forget the saved name and get a new random one");
     chat.notice("  /avatar FILE set your avatar, which everybody sees (a GIF plays); /avatar none removes it");
     chat.notice("  /color NAME  change the color of your name, and keep it for next time");
-    chat.notice("               (a name from /color, #rrggbb, or r,g,b)");
-    chat.notice("  /color random  pick a random color (not kept)");
-    chat.notice("  /tags        list the tags for messages, like <color=red>text</color>");
-    chat.notice("  /tags NAME   explain a tag, with an example");
+    chat.notice("               (a name from /color, #rrggbb, or r,g,b; /color random picks one, not kept)");
+    chat.notice("Channels:");
+    chat.notice("  /channels    list the channels; /join NAME goes to one (and joins it, if public)");
+    chat.notice("  /create NAME [public|private]  make a channel: public anybody can join, private only who you add");
+    chat.notice("  /add [#CHANNEL] NAME, /remove [#CHANNEL] NAME  add or remove someone (the current channel if none)");
+    chat.notice("  /members [#CHANNEL]  who is in a channel; /leave [NAME] leaves one; /delete NAME deletes yours");
+    chat.notice("Messages, pictures and files:");
+    chat.notice("  /tags [NAME] list the tags for messages, like <color=red>text</color>, or explain one");
     chat.notice("  /image [SIZE] FILE  send a picture (windows show it, terminals draw it with characters)");
     chat.notice("  /ascii [SIZE] [TEXTURE%] FILE  send a picture drawn with characters, for everyone");
     chat.notice("               (SIZE: small, medium, large, a width like 40, or 40x20;");
     chat.notice("                TEXTURE%: 0% blocks only, the default, to 100% symbols only)");
+    chat.notice("               (or drop an image file on the window, then press Enter)");
     chat.notice("  /addemoji NAME [SIZE] FILE  save a picture as an emoji (a GIF plays)");
     chat.notice("  /addemoji NAME ascii [SIZE] [TEXTURE%] FILE  save one drawn with characters");
     chat.notice("  /emoji NAME [ascii]  send a saved emoji, or draw it with characters (/emoji alone lists yours)");
     chat.notice("  /removeemoji NAME  delete a saved emoji");
-    chat.notice("               (or drop an image file on the window, then press Enter)");
     chat.notice("  /file FILE   send a file of any kind, for everyone to download");
     chat.notice("               (or drop any other file on the window, then press Enter)");
     chat.notice("  /save N      save file N from the chat in your downloads folder (/save alone lists them)");
+    chat.notice("Fun:");
     chat.notice("  /trill [SOUND] [PICTURE]  trill everybody else: they have 3 seconds to catch a STOP button running");
     chat.notice(std::format("               around the screen, or they hear the sound (MP3, WAV, up to {}) at full "
                             "volume",
                             zchat::file::format_size(zchat::sound::max_bytes)));
     chat.notice("               and see the picture flying around (/trill alone: Fahhh)");
     chat.notice("  /stop        stop the trills coming at you");
-    chat.notice("  @NAME        tag someone in a message: they hear a sound");
-    chat.notice("               (type @ to pick from the list with Up/Down, then Enter or Tab)");
-    chat.notice("  @everyone    tag all the people in the chat: they all hear a sound");
-    chat.notice("  /game        list the games everyone in the chat can play");
-    chat.notice("  /game NAME   start one, like /game race: the first to type the words shown wins");
-    chat.notice("  /game dice roll, /game dice stop  roll the die or keep your points, in a round of dice");
-    chat.notice("  /game paint c7 red  color a square of the shared canvas (/game paint shows it)");
-    chat.notice("  /game paint color red  pick your brush, for /game paint c7 without a color");
+    chat.notice("  /game        list the games everyone in the chat can play (/game help NAME: how to play one)");
+    chat.notice("zchat:");
     chat.notice("  /update      get the latest zchat, build it and restart");
-    chat.notice("  /help        show this help");
+    chat.notice("  /help        show this help (/help game: the games)");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
 }
 
@@ -1186,6 +1185,18 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             }
         } else if (input == "/help" || input == "/?") {
             print_help(chat);
+        } else if (input.starts_with("/help ")) {
+            // /help game [NAME]: the games' own help (see Games::command()).
+            std::string_view topic = input.substr(std::string_view("/help ").size());
+            while (!topic.empty() && topic.front() == ' ') {
+                topic.remove_prefix(1);
+            }
+            if (topic == "game" || topic.starts_with("game ")) {
+                games.command(std::format("help {}", topic.substr(std::min(topic.size(), std::size_t {5}))));
+            } else {
+                chat.notice(std::format("No help about {}: /help lists the commands, /help game the games.",
+                                        zchat::text::sanitize(topic, 32)));
+            }
         } else if (zchat::image::is_dropped_image(input)) {
             // Dropping a file on a terminal types its path: send the picture instead of the path. Checked before
             // the unknown commands, as a path can start with '/' too.

@@ -13,6 +13,12 @@
 
 namespace zchat::game {
 
+// A command of a game, for /game help NAME: /game NAME args, and what it does.
+struct Help {
+    std::string_view args;
+    std::string_view what;
+};
+
 // A mini-game everyone in the chat plays together. There is no server: whoever starts a round is its referee,
 // and sends everybody what happens in it (as Game packets whose text starts with the game's name).
 class Game {
@@ -41,8 +47,9 @@ public:
     virtual bool keeps_case() const {
         return false;
     }
-    // Its commands, like "roll, stop", for the list of games; empty when it has none.
-    virtual std::string_view commands() const {
+    // Its commands, for /game help NAME: what follows /game NAME, like "roll", and what it does. Empty when /game
+    // NAME is all there is.
+    virtual std::vector<Help> help() const {
         return {};
     }
 };
@@ -55,8 +62,8 @@ public:
     Games(const Games&) = delete;
     Games& operator=(const Games&) = delete;
 
-    // /game ARG: without a game's name, lists them; "scores" shows who won what. /game NAME starts a round of a
-    // game, and /game NAME ARGS is one of its own commands, like /game dice roll.
+    // /game ARG: without a game's name, lists them; "scores" shows who won what, "help NAME" how to play a game.
+    // /game NAME starts a round of a game, and /game NAME ARGS is one of its own commands, like /game dice roll.
     void command(std::string_view arg);
 
     // Counts a win of a round of a game; returns how many that player has won in this session. Every zchat
@@ -71,6 +78,7 @@ private:
     };
 
     void list() const;
+    void print_help(std::string_view name) const;
     void print_scores() const;
 
     Chat& chat_;
