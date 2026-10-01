@@ -20,13 +20,14 @@ namespace {
 
 } // namespace
 
-Games::Games(Chat& chat, Screen& terminal) :
+Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
     chat_(chat) {
     games_.push_back(make_race(chat, terminal, *this));
     games_.push_back(make_dice(chat, terminal, *this));
     games_.push_back(make_paint(chat, terminal, *this));
     games_.push_back(make_wordle(chat, terminal, *this));
     games_.push_back(make_pokemon(chat, terminal, *this));
+    games_.push_back(make_kick(chat, terminal, std::move(kicked)));
 
     chat_.set_game_hooks({
         .packet =
@@ -83,14 +84,14 @@ void Games::command(std::string_view arg) {
         print_help(lowercase(args));
         return;
     }
-    const auto it = std::ranges::find(games_, name, &Game::name);
-    if (it == games_.end()) {
+    Game* game = find(name);
+    if (!game) {
         chat_.notice(std::format("Unknown game {} (try /game)", text::sanitize(arg.substr(0, space), 32)));
         return;
     }
     if (args.empty()) {
-        (*it)->start();
-    } else if (!(*it)->command((*it)->keeps_case() ? std::string(args) : lowercase(args))) {
+        game->start();
+    } else if (!game->command(game->keeps_case() ? std::string(args) : lowercase(args))) {
         chat_.notice(std::format("Unknown command {} for {} (try /game help {})", text::sanitize(args, 32), name,
                                  name));
     }
@@ -104,9 +105,29 @@ int Games::add_win(std::string_view game, std::uint64_t id, std::string_view nam
     return ++score.wins[std::string(game)];
 }
 
+void Games::kick(std::string_view args) {
+    std::scoped_lock lock(mutex_);
+    const auto it = std::ranges::find(games_, "kick", &Game::name);
+    if (args.empty()) {
+        (*it)->start();
+    } else {
+        (*it)->command(args);
+    }
+}
+
+Game* Games::find(std::string_view name) const {
+    const auto it = std::ranges::find_if(games_, [&](const auto& g) {
+        return g->listed() && g->name() == name;
+    });
+    return it == games_.end() ? nullptr : it->get();
+}
+
 void Games::list() const {
     chat_.notice("Games everyone in the chat can play:");
     for (const auto& g : games_) {
+        if (!g->listed()) {
+            continue;
+        }
         chat_.notice(std::format("  {:<8} {}", g->name(), g->summary()));
     }
     chat_.notice("  /game NAME        start one, like /game race");
@@ -119,12 +140,12 @@ void Games::print_help(std::string_view name) const {
         list();
         return;
     }
-    const auto it = std::ranges::find(games_, name, &Game::name);
-    if (it == games_.end()) {
+    const Game* found = find(name);
+    if (!found) {
         chat_.notice(std::format("Unknown game {} (try /game)", text::sanitize(name, 32)));
         return;
     }
-    const Game& game = **it;
+    const Game& game = *found;
     chat_.notice(std::format("{}: {}", game.name(), game.summary()));
     auto help = game.help();
     if (help.empty()) {

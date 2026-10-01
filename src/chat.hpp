@@ -136,6 +136,9 @@ public:
     // The names of the other peers currently in the chat.
     std::vector<std::string> peers() const;
 
+    // The other peers currently in the chat, by id, with their names as they are (not colored).
+    std::vector<std::pair<std::uint64_t, std::string>> people() const;
+
     // The other peers, sorted by name, for the list shown when typing '@'.
     std::vector<Screen::Mention> mentionable() const;
 

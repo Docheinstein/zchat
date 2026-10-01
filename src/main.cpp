@@ -24,6 +24,7 @@
 #include <atomic>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -35,6 +36,7 @@
 #include <random>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -298,6 +300,8 @@ void print_help(zchat::Chat& chat) {
                             zchat::file::format_size(zchat::sound::max_bytes)));
     chat.notice("               and see the picture flying around (/trill alone: Fahhh)");
     chat.notice("  /stop        stop the trills coming at you");
+    chat.notice("  /kick NAME   ask the others to vote NAME out of the chat: /kick yes kicks, /kick no graces;");
+    chat.notice("               they are out (their zchat closes) if at least as many vote to kick as to grace");
     chat.notice("  /game        list the games everyone in the chat can play (/game help NAME: how to play one)");
     chat.notice("zchat:");
     chat.notice("  /update      get the latest zchat, build it and restart");
@@ -1083,7 +1087,12 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
         }
         return std::format("{} {}", picture ? "/image" : "/file", line);
     });
-    zchat::game::Games games(chat, terminal);
+    // Voted out of the chat with /kick: zchat closes.
+    std::atomic<bool> kicked {false};
+    zchat::game::Games games(chat, terminal, [&] {
+        kicked = true;
+        terminal.interrupt();
+    });
     chat.start();
     // After the Join, which must come first: the others learn about it from the heartbeat it sends.
     if (auto avatar = load_avatar()) {
@@ -1101,7 +1110,7 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             terminal.interrupt();
         });
 
-    while (!updated) {
+    while (!updated && !kicked) {
         const auto line = terminal.read_line();
         if (!line) {
             break;
@@ -1165,6 +1174,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             const std::size_t stopped = chat.stop_trills();
             chat.notice(stopped == 0 ? std::string("No trill to stop.")
                                      : std::format("Stopped {} trill{}.", stopped, stopped == 1 ? "" : "s"));
+        } else if (input == "/kick" || input.starts_with("/kick ")) {
+            games.kick(input.substr(std::min(input.size(), std::string_view("/kick ").size())));
         } else if (input == "/ascii" || input.starts_with("/ascii ")) {
             send_ascii(chat, input.substr(std::min(input.size(), std::string_view("/ascii ").size())));
         } else if (input == "/addemoji" || input.starts_with("/addemoji ")) {
@@ -1216,7 +1227,10 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
     active_chat = nullptr;
 #endif
     restart = updated;
-    if (!restart) {
+    if (kicked) {
+        // Long enough to read why, before the window closes.
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    } else if (!restart) {
         chat.notice("Bye!");
     }
     return 0;

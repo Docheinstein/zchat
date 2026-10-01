@@ -4,6 +4,7 @@
 #include "screen.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -52,12 +53,18 @@ public:
     virtual std::vector<Help> help() const {
         return {};
     }
+    // Whether it is one of the games of /game; or else it only rides on their packets, with a command of its own (see
+    // /kick).
+    virtual bool listed() const {
+        return true;
+    }
 };
 
 // The games that can be played with /game NAME. All calls are safe from any thread.
 class Games {
 public:
-    Games(Chat& chat, Screen& terminal);
+    // kicked is called when the others voted us out of the chat (see /kick): zchat must quit.
+    Games(Chat& chat, Screen& terminal, std::function<void()> kicked = {});
     ~Games();
     Games(const Games&) = delete;
     Games& operator=(const Games&) = delete;
@@ -70,6 +77,9 @@ public:
     // counts the wins it sees.
     int add_win(std::string_view game, std::uint64_t id, std::string_view name);
 
+    // /kick ARGS: asks the others to vote someone out of the chat, or votes (see kick.cpp).
+    void kick(std::string_view args);
+
 private:
     struct Score {
         std::string name;                             // colored, as last seen
@@ -77,6 +87,8 @@ private:
         int total = 0;
     };
 
+    // A game of /game, by lowercase name; nullptr for none.
+    Game* find(std::string_view name) const;
     void list() const;
     void print_help(std::string_view name) const;
     void print_scores() const;
@@ -95,5 +107,7 @@ std::unique_ptr<Game> make_dice(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_paint(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_wordle(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_pokemon(Chat& chat, Screen& terminal, Games& games);
+// Not a game: the votes of /kick, which travel as Game packets too.
+std::unique_ptr<Game> make_kick(Chat& chat, Screen& terminal, std::function<void()> kicked);
 
 } // namespace zchat::game
