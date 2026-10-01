@@ -4,6 +4,7 @@
 #include "image.hpp"
 #include "popup.hpp"
 #include "ui_html.hpp"
+#include "webview_window.hpp"
 
 #include <cctype>
 #include <condition_variable>
@@ -16,13 +17,8 @@
 #include <string>
 #include <system_error>
 
-// The web view library: third party code, whose warnings are not ours to fix.
-#ifdef _MSC_VER
-#pragma warning(push, 0)
-#endif
-#include <webview/webview.h>
-#ifdef _MSC_VER
-#pragma warning(pop)
+#ifdef _WIN32
+#include <windows.h>
 #endif
 
 namespace zchat {
@@ -183,7 +179,7 @@ namespace {
 } // namespace
 
 struct Gui::Impl {
-    webview::webview view {false, nullptr};
+    WebviewWindow view;
 
     std::mutex mutex;
     std::condition_variable typed;
@@ -234,8 +230,8 @@ Gui::Gui() {
     impl_ = std::make_unique<Impl>();
     auto& view = impl_->view;
     view.set_title("zchat");
-    view.set_size(1000, 700, WEBVIEW_HINT_NONE);
-    view.set_size(560, 360, WEBVIEW_HINT_MIN);
+    view.set_size(1000, 700);
+    view.set_min_size(560, 360);
 
     // The bound functions run on the window's thread, and must not wait for the chat.
     view.bind("zchatReady", [this](const std::string&) -> std::string {
@@ -534,8 +530,8 @@ bool Gui::show_file(std::string_view line, std::size_t index, std::string_view n
 }
 
 void Gui::nudge() {
-    if (const auto window = impl_->view.window(); window.ok()) {
-        popup::nudge(window.value());
+    if (void* const window = impl_->view.native_window()) {
+        popup::nudge(window);
     }
 }
 
