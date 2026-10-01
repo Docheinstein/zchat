@@ -433,9 +433,10 @@ namespace {
                 return;
             }
             std::string target;
-            for (const auto& peer : chat_.peers()) {
-                if (lowercase(peer) == lowercase(who)) {
-                    target = peer;
+            // Their names as they are (peers() has them colored).
+            for (const auto& peer : chat_.mentionable()) {
+                if (lowercase(peer.name) == lowercase(who)) {
+                    target = peer.name;
                 }
             }
             if (target.empty()) {
