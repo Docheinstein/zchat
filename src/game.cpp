@@ -27,14 +27,17 @@ Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
     games_.push_back(make_paint(chat, terminal, *this));
     games_.push_back(make_wordle(chat, terminal, *this));
     games_.push_back(make_pokemon(chat, terminal, *this));
-    games_.push_back(make_kick(chat, terminal, std::move(kicked)));
+    // Kicks cost coins, which the ratings keep (made next).
+    games_.push_back(make_kick(chat, terminal, std::move(kicked), [this](std::string_view item) {
+        return ratings_->spend(item);
+    }));
     std::vector<std::string> rated;
     for (const auto& g : games_) {
         if (g->rated()) {
             rated.emplace_back(g->name());
         }
     }
-    auto ratings = make_ratings(chat, std::move(rated));
+    auto ratings = make_ratings(chat, terminal, std::move(rated));
     ratings_ = ratings.get();
     games_.push_back(std::move(ratings));
 
@@ -93,6 +96,10 @@ void Games::command(std::string_view arg) {
         print_help(lowercase(args));
         return;
     }
+    if ((name == "leaderboard" || name == "leaderboards" || name == "top") && lowercase(args) == "coins") {
+        ratings_->richest();
+        return;
+    }
     if (name == "leaderboard" || name == "leaderboards" || name == "top") {
         ratings_->leaderboard(lowercase(args));
         return;
@@ -137,6 +144,23 @@ void Games::kick(std::string_view args) {
     }
 }
 
+void Games::coins(std::string_view args) {
+    std::scoped_lock lock(mutex_);
+    const std::string word = lowercase(args);
+    if (word == "top" || word == "leaderboard") {
+        ratings_->richest();
+    } else if (word == "shop" || word == "prices") {
+        ratings_->shop();
+    } else {
+        ratings_->wallet(args);
+    }
+}
+
+bool Games::spend(std::string_view item) {
+    std::scoped_lock lock(mutex_);
+    return ratings_->spend(item);
+}
+
 Game* Games::find(std::string_view name) const {
     const auto it = std::ranges::find_if(games_, [&](const auto& g) {
         return g->listed() && g->name() == name;
@@ -158,6 +182,7 @@ void Games::list() const {
     chat_.notice("  /game top [NAME]  the Elo leaderboard of all games, or of one (all: each of them); also "
                  "/game leaderboard");
     chat_.notice("  /game elo [NAME]  somebody's Elo ratings, yours without a name");
+    chat_.notice("  /game top coins   who has the most coins, won in the games (/coins: yours, /shop: what they buy)");
 }
 
 void Games::print_help(std::string_view name) const {

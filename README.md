@@ -86,9 +86,12 @@ While chatting:
 | `/file FILE`       | send a file of any kind (up to about 34 MB), for everyone to download |
 | drop a file        | drag any other file onto the window (or a terminal): the line becomes `/file PATH`, to send with Enter |
 | `/save N`          | save file N of the chat in your downloads folder; `/save` alone lists them (windows have a Download button) |
-| `/trill [SOUND] [PICTURE]` | trill everybody else: 3 seconds to catch a STOP button running around their screen, or their window shakes, the sound (MP3, WAV) plays at full volume and the picture flies around the screen; `/trill` alone sends the built-in *Fahhh* |
+| `/trill [SOUND] [PICTURE]` | trill everybody else: 3 seconds to catch a STOP button running around their screen, or their window shakes, the sound (MP3, WAV) plays at full volume and the picture flies around the screen; `/trill` alone sends the built-in *Fahhh*. It costs coins (see below): 5, or 8 with your own sound or picture |
 | `/stop`            | stop the trills coming at you (or playing)             |
-| `/kick NAME`       | ask the rest of the chat to vote NAME out: nobody is kicked right away. The others (not NAME) have 20 seconds to answer `/kick yes` to kick them or `/kick no` to grace them (in the window, a card pops up with Kick and Grace buttons); asking counts as a vote to kick. When the time is up, or everybody voted, NAME is out if at least as many voted to kick as to grace (who does not answer does not count), and their zchat closes. It takes someone else in the chat to vote; with several votes on, `/kick yes NAME` says which; `/kick` alone shows the votes on |
+| `/kick NAME`       | ask the rest of the chat to vote NAME out: nobody is kicked right away. The others (not NAME) have 20 seconds to answer `/kick yes` to kick them or `/kick no` to grace them (in the window, a card pops up with Kick and Grace buttons); asking counts as a vote to kick. When the time is up, or everybody voted, NAME is out if at least as many voted to kick as to grace (who does not answer does not count), and their zchat closes. It takes someone else in the chat to vote; with several votes on, `/kick yes NAME` says which; `/kick` alone shows the votes on. Asking costs 20 coins, paid when the vote starts, whatever the chat says; voting is free |
+| `/coins [NAME]`    | your coins, or somebody's: won in the games, spent on `/trill` and `/kick`. In the window they are by your name (💰), and a click on them shows `/shop` |
+| `/coins top`       | who has the most coins (`/game top coins` works too). Who left is on it too |
+| `/shop`            | what coins buy, and how to win them (`/coins shop` works too) |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
 | `/game`            | list the games everyone in the chat can play           |
@@ -174,6 +177,24 @@ macOS, `pactl` on Linux), then put back as they were once it is over (once the l
 at once). The popups are Windows' own, and GTK's in the Linux window (not tested yet); elsewhere (macOS, Linux
 terminals) the chat says who is trilling you, with `/stop`, and shows the picture in the chat instead. Versions from
 before trills show nothing; the ones with sound-only trills play the sound of trills without a picture.
+
+### Coins
+
+Winning games is not only for the leaderboards: every round of a game with a winner (the same rounds that change Elo
+ratings: race, dice, wordle and pokemon) pays its players coins, which buy the annoying commands. Each player gets 2
+for playing, and 4 more for each player they beat (2 for each they tied with): the winner of a duel gets 6 and the
+loser 2, and the winner of a race of five 18. Everybody starts with 50, enough to trill and kick right away, and the
+chat shows what each player of a round won, with their new balance.
+
+| Costs | What                                                    |
+|------:|---------------------------------------------------------|
+|     5 | `/trill`: *Fahhh* at everybody else                     |
+|     8 | `/trill SOUND PICTURE`: your own sound, picture, or both |
+|    20 | `/kick NAME`: paid when the vote starts, whatever the chat says (voting is free) |
+|    15 | `/spy`: coming soon                                     |
+
+Without enough coins, the command is not sent, and zchat says what it costs and how many you have. The prices are in
+`src/coins.hpp`, with what a round pays.
 
 `/ascii` sends a picture as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
 with more ink, in the color of the picture. They are shown as solid blocks of color, as dark or bright as the
@@ -364,6 +385,12 @@ The window is built too (`-DZCHAT_GUI=OFF` leaves it out, for the terminal versi
   leaderboards show who left too. Everybody works out a round's new ratings to show them at once, but what a player's
   own zchat says is what counts. Who was not online for a round is not rated for it (a Wordle day is rated at
   midnight, by whoever is there). People with older versions are rated by name, for the session only.
+* **Coins** are kept like the ratings: each zchat keeps its user's own, in `coins` in the config, adds what they win
+  in the rounds it sees and takes what they spend, and tells everybody (`elo coins <user> <coins>`) along with the
+  ratings. The others keep what they hear in the `coins` file of the config folder, by user id, for `/coins top`;
+  they work out what a round pays everybody too, to show it at once. With no server, nothing stops someone from
+  editing their own config to be rich, as with the ratings: it is a game among colleagues. Older versions ignore the
+  coins, and trill and kick for free.
 * **Pokémon battles** are run by one of the two players' zchat, the referee: the challenger's if it has Node.js, or else the
   other's. It runs Pokémon Showdown's simulator with node and `src/pokemon/bridge.js` (built into zchat, written next to
   the simulator), which prints what the battle says in three streams: what everyone sees, and what each player sees

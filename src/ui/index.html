@@ -147,6 +147,9 @@
   #me .who { min-width: 0; }
   #me .name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #me .status { color: var(--muted); font-size: 11px; }
+  #me .coins { margin-left: 6px; color: #e3b341; cursor: pointer; }
+  #me .coins:empty { display: none; }
+  #me .coins:hover { text-decoration: underline; }
   #me .status::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     background: #3fb950; margin-right: 5px; vertical-align: 1px; }
   /* An avatar picture fills its circle, cropped to it. */
@@ -306,7 +309,7 @@
 </header>
 <aside>
   <div id="me" title="Change your name and color"><span class="avatar"></span>
-    <div class="who"><div class="name"></div><div class="status">online</div></div></div>
+    <div class="who"><div class="name"></div><div class="status">online<span class="coins" title="Your coins, won in the games: click for what they buy"></span></div></div></div>
   <h2>Channels <button class="add" id="add-channel" title="New channel">+</button></h2>
   <div id="new-channel">
     <input type="text" id="new-channel-name" placeholder="name" maxlength="32" autocomplete="off" spellcheck="false">
@@ -1756,7 +1759,16 @@ zchat.game = (game, state) => {
   else if (game === "pokemon") pokemonGame(state);
   else if (game === "pokemon-challenge") pokemonChallenges(state);
   else if (game === "kick") kickVotes(state);
+  else if (game === "coins") showCoins(state);
 };
+
+// --- Our coins (zchat.game("coins", {coins: N})), by our name: clicking them shows what they buy (/shop).
+const coinsLabel = document.querySelector("#me .coins");
+function showCoins(state) {
+  coinsLabel.textContent = `💰 ${state.coins}`;
+  coinsLabel.title = `${state.coins} coin${state.coins === 1 ? "" : "s"}, won in the games: click for what they buy`;
+}
+coinsLabel.addEventListener("click", e => { e.stopPropagation(); window.zchatSend("/shop"); });
 
 // --- Animations: the frames of an image element, shown one after the other for their delays, in a loop, while the
 // element is on the page.

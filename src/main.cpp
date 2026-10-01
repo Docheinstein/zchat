@@ -298,11 +298,14 @@ void print_help(zchat::Chat& chat) {
     chat.notice(std::format("               around the screen, or they hear the sound (MP3, WAV, up to {}) at full "
                             "volume",
                             zchat::file::format_size(zchat::sound::max_bytes)));
-    chat.notice("               and see the picture flying around (/trill alone: Fahhh)");
+    chat.notice("               and see the picture flying around (/trill alone: Fahhh); it costs coins (/shop)");
     chat.notice("  /stop        stop the trills coming at you");
     chat.notice("  /kick NAME   ask the others to vote NAME out of the chat: /kick yes kicks, /kick no graces;");
-    chat.notice("               they are out (their zchat closes) if at least as many vote to kick as to grace");
+    chat.notice("               they are out (their zchat closes) if at least as many vote to kick as to grace;");
+    chat.notice("               asking costs coins (/shop), voting is free");
     chat.notice("  /game        list the games everyone in the chat can play (/game help NAME: how to play one)");
+    chat.notice("  /coins [NAME]  your coins, or somebody's: won in the games, spent on /trill and /kick");
+    chat.notice("               (/coins top: who has the most; /shop: the prices)");
     chat.notice("zchat:");
     chat.notice("  /update      get the latest zchat, build it and restart");
     chat.notice("  /help        show this help (/help game: the games)");
@@ -675,8 +678,9 @@ std::vector<std::filesystem::path> trill_files(std::string_view arg) {
 }
 
 // A trill: a sound (MP3 or WAV) and a picture, or one of them, that everybody else in the chat (or the channel) gets
-// once, after a few seconds to stop it; without either, Fahhh.
-void send_trill(zchat::Chat& chat, std::string_view arg) {
+// once, after a few seconds to stop it; without either, Fahhh. It costs coins (see coins.hpp), more with our own
+// sound or picture, paid once it is ready to go.
+void send_trill(zchat::Chat& chat, zchat::game::Games& games, std::string_view arg) {
     zchat::file::Trill trill;
     if (arg.empty()) {
         trill.sound_name = "Fahhh.mp3";
@@ -689,7 +693,9 @@ void send_trill(zchat::Chat& chat, std::string_view arg) {
             trill.picture = std::move(*picture);
         }
 #endif
-        chat.send_file(zchat::file::encode_trill(trill));
+        if (games.spend("trill")) {
+            chat.send_file(zchat::file::encode_trill(trill));
+        }
         return;
     }
     const auto files = trill_files(arg);
@@ -735,7 +741,9 @@ void send_trill(zchat::Chat& chat, std::string_view arg) {
         trill.picture_name = name;
         trill.picture = std::move(*picture);
     }
-    chat.send_file(zchat::file::encode_trill(trill));
+    if (games.spend("custom trill")) {
+        chat.send_file(zchat::file::encode_trill(trill));
+    }
 }
 
 void save_file(zchat::Chat& chat, std::string_view arg) {
@@ -1169,13 +1177,17 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
         } else if (input == "/save" || input.starts_with("/save ")) {
             save_file(chat, input.substr(std::min(input.size(), std::string_view("/save ").size())));
         } else if (input == "/trill" || input.starts_with("/trill ")) {
-            send_trill(chat, input.substr(std::min(input.size(), std::string_view("/trill ").size())));
+            send_trill(chat, games, input.substr(std::min(input.size(), std::string_view("/trill ").size())));
         } else if (input == "/stop") {
             const std::size_t stopped = chat.stop_trills();
             chat.notice(stopped == 0 ? std::string("No trill to stop.")
                                      : std::format("Stopped {} trill{}.", stopped, stopped == 1 ? "" : "s"));
         } else if (input == "/kick" || input.starts_with("/kick ")) {
             games.kick(input.substr(std::min(input.size(), std::string_view("/kick ").size())));
+        } else if (input == "/coins" || input.starts_with("/coins ")) {
+            games.coins(input.substr(std::min(input.size(), std::string_view("/coins ").size())));
+        } else if (input == "/shop") {
+            games.coins("shop");
         } else if (input == "/ascii" || input.starts_with("/ascii ")) {
             send_ascii(chat, input.substr(std::min(input.size(), std::string_view("/ascii ").size())));
         } else if (input == "/addemoji" || input.starts_with("/addemoji ")) {

@@ -82,6 +82,16 @@ public:
     virtual void leaderboard(std::string_view game) = 0;
     // /game elo [NAME]: somebody's ratings (ours without a name).
     virtual void profile(std::string_view name) = 0;
+
+    // The coins won in the rounds (see coins.hpp), kept and told around like the ratings.
+    // /coins [NAME]: somebody's coins (ours without a name).
+    virtual void wallet(std::string_view name) = 0;
+    // /coins top: who has the most.
+    virtual void richest() = 0;
+    // /shop: what coins buy, and how to win them.
+    virtual void shop() = 0;
+    // Pays for one of coins::items, by name: returns false, saying why, when we cannot afford it.
+    virtual bool spend(std::string_view item) = 0;
 };
 
 // The games that can be played with /game NAME. All calls are safe from any thread.
@@ -108,6 +118,11 @@ public:
 
     // /kick ARGS: asks the others to vote someone out of the chat, or votes (see kick.cpp).
     void kick(std::string_view args);
+
+    // /coins ARGS: ours, somebody's (NAME), who has the most (top), or what they buy (shop).
+    void coins(std::string_view args);
+    // Pays for an annoying command, one of coins::items: returns false, saying why, when we cannot afford it.
+    bool spend(std::string_view item);
 
 private:
     struct Score {
@@ -138,9 +153,11 @@ std::unique_ptr<Game> make_dice(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_paint(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_wordle(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_pokemon(Chat& chat, Screen& terminal, Games& games);
-// Not a game: the Elo ratings, told around as Game packets; rated_games are the names of the games they are for.
-std::unique_ptr<Ratings> make_ratings(Chat& chat, std::vector<std::string> rated_games);
-// Not a game: the votes of /kick, which travel as Game packets too.
-std::unique_ptr<Game> make_kick(Chat& chat, Screen& terminal, std::function<void()> kicked);
+// Not a game: the Elo ratings and the coins, told around as Game packets; rated_games are the names of the games
+// they are for.
+std::unique_ptr<Ratings> make_ratings(Chat& chat, Screen& terminal, std::vector<std::string> rated_games);
+// Not a game: the votes of /kick, which travel as Game packets too; spend pays for one (see Games::spend()).
+std::unique_ptr<Game> make_kick(Chat& chat, Screen& terminal, std::function<void()> kicked,
+                                std::function<bool(std::string_view)> spend);
 
 } // namespace zchat::game

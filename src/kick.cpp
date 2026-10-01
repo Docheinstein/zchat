@@ -1,7 +1,8 @@
 // Kick: /kick NAME asks the rest of the chat to vote someone out. Nobody is kicked right away: the others get
 // vote_time to answer /kick yes (kick them) or /kick no (grace them), and when the time is up, or everybody voted,
 // the one asked about is out if at least as many voted to kick as to grace (whoever asked counts as a vote to kick;
-// whoever does not answer does not count). Kicked out, their zchat closes.
+// whoever does not answer does not count). Kicked out, their zchat closes. Asking costs coins (see coins.hpp); voting
+// is free.
 //
 // Not a game, but it travels the same way: whoever asks is the referee of the vote, and counts the ballots. As Game
 // packets:
@@ -112,10 +113,11 @@ namespace {
 
     class Kick final : public Game {
     public:
-        Kick(Chat& chat, Screen& terminal, std::function<void()> kicked) :
+        Kick(Chat& chat, Screen& terminal, std::function<void()> kicked, std::function<bool(std::string_view)> spend) :
             chat_(chat),
             terminal_(terminal),
             kicked_(std::move(kicked)),
+            spend_(std::move(spend)),
             rng_(std::random_device {}()) {
         }
 
@@ -310,6 +312,10 @@ namespace {
                 chat_.notice(std::format("Nobody else is in the chat to vote on kicking {}: it takes someone else "
                                          "to agree.",
                                          chat_.colored_name(target, target_name)));
+                return;
+            }
+            // Asking costs coins (see coins.hpp), whatever the chat says.
+            if (spend_ && !spend_("kick")) {
                 return;
             }
             do {
@@ -540,6 +546,7 @@ namespace {
         Chat& chat_;
         Screen& terminal_;
         std::function<void()> kicked_;
+        std::function<bool(std::string_view)> spend_;
         std::mt19937_64 rng_;
         std::vector<Vote> votes_;
         // The votes that ended, so their late packets are ignored.
@@ -553,8 +560,9 @@ namespace {
 
 } // namespace
 
-std::unique_ptr<Game> make_kick(Chat& chat, Screen& terminal, std::function<void()> kicked) {
-    return std::make_unique<Kick>(chat, terminal, std::move(kicked));
+std::unique_ptr<Game> make_kick(Chat& chat, Screen& terminal, std::function<void()> kicked,
+                                std::function<bool(std::string_view)> spend) {
+    return std::make_unique<Kick>(chat, terminal, std::move(kicked), std::move(spend));
 }
 
 } // namespace zchat::game
