@@ -63,6 +63,12 @@ namespace {
         return std::string(s);
     }
 
+    // A name as typed: the window's '@' list types it after an '@', which is not part of it.
+    std::string person(std::string_view s) {
+        std::string out = trim(s);
+        return out.starts_with('@') ? trim(std::string_view(out).substr(1)) : out;
+    }
+
     std::optional<std::uint64_t> parse_number(std::string_view s, int base) {
         std::uint64_t value = 0;
         const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value, base);
@@ -155,9 +161,9 @@ namespace {
             if ((yes || no) && std::ranges::any_of(votes_, [](const Vote& v) {
                     return !v.ours && !v.us;
                 })) {
-                vote(yes, trim(rest));
+                vote(yes, person(rest));
             } else {
-                ask(trim(args));
+                ask(person(args));
             }
             return true;
         }
