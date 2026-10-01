@@ -19,7 +19,6 @@ namespace {
     constexpr auto node_check_timeout = 10s;
     // npm downloads about 30 MB: a slow network gets some time.
     constexpr auto install_timeout = 10min;
-    constexpr std::string_view format_id = "gen9randombattle";
 
     // npm is a script on Windows (npm.cmd), which only cmd runs.
     std::vector<std::string> npm(std::vector<std::string> args) {
@@ -139,7 +138,7 @@ void Engine::install(bool update) {
     });
 }
 
-std::unique_ptr<process::Child> Engine::start_battle(const std::string& p1, const std::string& p2,
+std::unique_ptr<process::Child> Engine::start_battle(int gen, const std::string& p1, const std::string& p2,
                                                      std::function<void(std::string)> on_line,
                                                      std::function<void(int, std::string)> on_exit,
                                                      std::string& error) {
@@ -157,7 +156,7 @@ std::unique_ptr<process::Child> Engine::start_battle(const std::string& p1, cons
             return nullptr;
         }
     }
-    return process::Child::start({"node", utf8(bridge), std::string(format_id), p1, p2}, std::move(on_line),
+    return process::Child::start({"node", utf8(bridge), std::format("gen{}randombattle", gen), p1, p2}, std::move(on_line),
                                  std::move(on_exit), error);
 }
 

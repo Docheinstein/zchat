@@ -210,6 +210,39 @@
     box-shadow: 0 8px 28px #000a;
   }
   #profile.open { display: block; }
+  /* Challenging someone to a Pokémon battle: a dialog in the look of the profile one, over a dimmed chat. */
+  #pk-challenge { position: fixed; inset: 0; z-index: 25; display: none; place-items: start center; padding-top: 90px; background: #0008; }
+  #pk-challenge.open { display: grid; }
+  #pk-challenge .box {
+    width: 380px; max-width: calc(100vw - 24px); background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px; box-shadow: 0 8px 28px #000a;
+  }
+  #pk-challenge .title { font-weight: 600; font-size: 14px; margin-bottom: 12px; }
+  #pk-challenge label { display: block; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .8px; margin: 2px 0 6px; }
+  #pk-challenge select {
+    width: 100%; background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 9px; font: inherit; font-size: 13px; outline: none; margin-bottom: 12px;
+  }
+  #pk-challenge select:focus { border-color: var(--accent); }
+  #pk-challenge .note { color: var(--muted); font-size: 12px; margin: -6px 0 12px; }
+  #pk-challenge .gens { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  #pk-challenge .gens label { margin: 0; text-transform: none; letter-spacing: 0; font-size: 12px; cursor: pointer; }
+  #pk-challenge .gens input { position: absolute; opacity: 0; pointer-events: none; }
+  #pk-challenge .gens span {
+    display: block; padding: 5px 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--input); color: var(--text);
+  }
+  #pk-challenge .gens label:hover span { border-color: var(--accent); }
+  #pk-challenge .gens input:checked + span { background: var(--accent); border-color: var(--accent); color: #0b0d10; font-weight: 600; }
+  #pk-challenge .gens input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #pk-challenge .buttons { display: flex; gap: 8px; justify-content: flex-end; }
+  #pk-challenge button {
+    background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    height: 30px; padding: 0 12px; font: inherit; cursor: pointer;
+  }
+  #pk-challenge button:hover { border-color: var(--accent); }
+  #pk-challenge button.primary { background: var(--accent); border-color: var(--accent); color: #0b0d10; font-weight: 600; }
+  #pk-challenge button:disabled { opacity: .4; cursor: default; }
   #profile label { display: block; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase;
     letter-spacing: .8px; margin: 2px 0 6px; }
   #profile input[type=text] {
@@ -260,6 +293,7 @@
     <button id="channel-delete" class="danger" title="Delete this channel, for everybody" hidden>Delete</button>
   </span>
   <span class="spacer"></span>
+  <button id="pk-challenge-open" title="Challenge someone to a Pokémon battle">⚔ Battle</button>
   <button id="dice-open" title="Dice" hidden>🎲</button>
   <button id="pk-open" title="Pokémon battle" hidden>⚔</button>
   <select id="font" title="Font"></select>
@@ -309,6 +343,17 @@
   </div>
   <div class="note" id="profile-note">Everybody sees it; a GIF plays. It changes right away.</div>
   <div class="buttons"><button id="profile-cancel">Cancel</button><button class="primary" id="profile-save">Save</button></div>
+</div>
+<div id="pk-challenge">
+  <div class="box" role="dialog" aria-label="Challenge to a Pokémon battle">
+    <div class="title">Challenge to a Pokémon battle</div>
+    <label for="pk-challenge-who">Who</label>
+    <select id="pk-challenge-who"></select>
+    <div class="note" id="pk-challenge-nobody" hidden>Nobody else is in the chat.</div>
+    <label>Generation</label>
+    <div class="gens" id="pk-challenge-gens"></div>
+    <div class="buttons"><button id="pk-challenge-cancel">Cancel</button><button class="primary" id="pk-challenge-send">⚔ Send</button></div>
+  </div>
 </div>
 <div id="channel-panel"></div>
 <div id="dice-float"><div id="dice-float-title">zchat · dice<button id="dice-float-close" title="Close">×</button></div>
@@ -902,6 +947,8 @@ const pkStyle = `
   .sprite img { max-width: 100%; max-height: 100%; image-rendering: auto; }
   .sprite img.small { width: 144px; height: 144px; image-rendering: pixelated; }
   .sprite.fainted img, .sprite.fainted .ph { opacity: .25; filter: grayscale(1); }
+  .sprite.dmax img, .sprite.dmax .ph { transform: scale(1.5); transform-origin: 50% 100%; transition: transform .4s;
+    filter: drop-shadow(0 0 6px #ff2a55) drop-shadow(0 0 14px #ff2a55aa); }
   .ph { width: 120px; height: 120px; border-radius: 50%; background: #0006; border: 2px dashed #fff8; color: #fff;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center; padding: 8px; }
   .ph .n { font-weight: 700; font-size: 13px; }
@@ -920,6 +967,7 @@ const pkStyle = `
   .chip.up { background: #2f5d34; color: #d8ffd8; } .chip.down { background: #6a2a2a; color: #ffd8d8; }
   .chip.vol { background: #3b3550; color: #e0d8ff; }
   .chip.cond { background: #000a; color: #fff; }
+  .chip.dmax { background: #b3133a; color: #fff; }
   .st { font-size: 10px; font-weight: 700; border-radius: 3px; padding: 0 4px; line-height: 15px; color: #fff; }
   .st.brn { background: #e8662f; } .st.par { background: #c9a50a; } .st.slp { background: #8c8c7a; }
   .st.frz { background: #39a9d0; } .st.psn { background: #a040a0; } .st.tox { background: #6c2590; } .st.fnt { background: #555; }
@@ -952,6 +1000,7 @@ const pkStyle = `
   .mv:disabled { filter: grayscale(1) brightness(.6); cursor: default; }
   .mv .n { font-weight: 700; font-size: 14px; }
   .mv .sub { display: flex; justify-content: space-between; font-size: 11px; opacity: .85; }
+  .gimmicks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .teracheck { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; width: fit-content; }
   .switches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
   .sw { height: 64px; border-radius: 8px; border: 1px solid #262a33; background: #1e222a; color: #d6d9df; font: inherit; font-size: 11px;
@@ -987,7 +1036,7 @@ const pkStyle = `
   .tip .t { font-weight: 700; font-size: 13px; }
   .tip .d { color: #9aa3b2; }
 `;
-let pkState = null, pkPopup = null, pkClosedBattle = null, pkClosing = false, pkTera = { rqid: 0, on: false };
+let pkState = null, pkPopup = null, pkClosedBattle = null, pkClosing = false, pkGimmick = { rqid: 0, on: "" };
 document.getElementById("pk-style").textContent = pkStyle.replace(/:root \{[^}]*\}/, "").replace(/(^|\})\s*([^{}@]+)\{/g,
   (m, end, sel) => end + " " + sel.split(",").map(x => x.trim() === "body" ? "#pk-float" : "#pk-float " + x.trim()).join(", ") + " {")
   + " #pk-float .pk { height: min(620px, calc(100vh - 100px)); }";
@@ -1005,6 +1054,8 @@ function pkInk(hex) {
   const n = parseInt(hex.slice(1), 16);
   return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 150 ? "#16181c" : "#fff";
 }
+// What a gimmick adds to the move command.
+const pkGimmickWords = { tera: "tera", mega: "mega", ultra: "ultra", z: "z", max: "max" };
 const pkStatNames = { hp: "HP", atk: "Atk", def: "Def", spa: "SpA", spd: "SpD", spe: "Spe", accuracy: "Accuracy", evasion: "Evasion" };
 
 // The name of a species' sprite, Showdown's way: toID(baseSpecies) + "-" + toID(forme). The base species is what is
@@ -1025,10 +1076,14 @@ function pkSpriteId(species) {
   }
   return pkToID(base) + (forme && pkToID(forme) ? "-" + pkToID(forme) : "");
 }
-function pkSpriteUrls(species, shiny, back) {
+// The pictures to try, in order: the generation's own for Gens 1 to 4 (Gen 1 has no shiny ones), then the animated
+// one, then Gen 5's. The last is the small one, for the switch buttons.
+function pkSpriteUrls(species, shiny, back, gen) {
   const id = pkSpriteId(species), s = shiny ? "-shiny" : "", b = back ? "-back" : "";
-  return ["https://play.pokemonshowdown.com/sprites/ani" + b + s + "/" + id + ".gif",
-          "https://play.pokemonshowdown.com/sprites/gen5" + b + s + "/" + id + ".png"];
+  const urls = ["https://play.pokemonshowdown.com/sprites/ani" + b + s + "/" + id + ".gif",
+                "https://play.pokemonshowdown.com/sprites/gen5" + b + s + "/" + id + ".png"];
+  if (gen >= 1 && gen <= 4) urls.unshift("https://play.pokemonshowdown.com/sprites/gen" + gen + b + (gen === 1 ? "" : s) + "/" + id + ".png");
+  return urls;
 }
 function pkPercent(mon) {
   if (!mon || !mon.maxhp) return 0;
@@ -1101,8 +1156,8 @@ function pkBuild(doc, root, popup) {
     p.img.alt = "";
     p.img.onerror = () => {
       // The animated one, then the still one, then (offline) a placeholder.
-      if (p.stage === 0 && p.urls) { p.stage = 1; p.img.className = "small"; p.img.src = p.urls[1]; }
-      else { p.stage = 2; p.img.style.display = "none"; p.ph.style.display = ""; }
+      if (p.urls && p.stage + 1 < p.urls.length) { p.stage++; p.img.className = /\.png$/.test(p.urls[p.stage]) ? "small" : ""; p.img.src = p.urls[p.stage]; }
+      else { p.stage = 99; p.img.style.display = "none"; p.ph.style.display = ""; }
     };
     p.ph = el("div", "ph");
     p.ph.style.display = "none";
@@ -1194,22 +1249,23 @@ function pkMonTip(v, mon) {
 }
 
 // One side of the field: its Pokémon in, its stat bar, its team and its conditions.
-function pkRenderSide(v, pos, side, color, ours) {
+function pkRenderSide(v, pos, side, color, ours, gen) {
   const el = v.el, p = v[pos];
   const team = side.team || [];
   const mon = side.active >= 0 ? team[side.active] : null;
   // The sprite, loaded again only for another Pokémon.
-  const urls = mon ? pkSpriteUrls(mon.species, mon.shiny, pos === "near") : null;
+  const urls = mon ? pkSpriteUrls(mon.species, mon.shiny, pos === "near", gen) : null;
   const spriteKey = urls ? urls[0] : "";
   if (p.spriteKey !== spriteKey) {
     p.spriteKey = spriteKey;
     p.urls = urls;
     p.stage = 0;
     p.ph.style.display = "none";
-    p.img.className = "";
+    p.img.className = urls && /\.png$/.test(urls[0]) ? "small" : "";
     if (urls) { p.img.style.display = ""; p.img.src = urls[0]; } else { p.img.style.display = "none"; p.img.removeAttribute("src"); }
   }
   p.sprite.classList.toggle("fainted", !!mon && pkFainted(mon));
+  p.sprite.classList.toggle("dmax", !!mon && !!mon.dynamaxed && !pkFainted(mon));
   pkPart(v, p.ph, mon ? JSON.stringify([mon.name, mon.types, mon.tera]) : "", node => {
     if (!mon) return;
     node.append(el("div", "n", mon.name || mon.species));
@@ -1251,6 +1307,8 @@ function pkRenderSide(v, pos, side, color, ours) {
     const chips = el("div", "chips");
     for (const [k, n] of Object.entries(mon.boosts || {}))
       if (n) chips.append(el("span", "chip " + (n > 0 ? "up" : "down"), (n > 0 ? "+" : "") + n + " " + (pkStatNames[k] || k)));
+    if (mon.dynamaxed) chips.append(el("span", "chip dmax", "Dynamax"));
+    if (mon.mega) chips.append(el("span", "chip vol", "Mega"));
     for (const x of mon.volatiles || []) chips.append(el("span", "chip vol", x));
     if (chips.childElementCount) node.append(chips);
     pkTip(v, node, () => pkMonTip(v, mon));
@@ -1293,42 +1351,74 @@ function pkRenderControls(v, s, player) {
     if (!player) { node.append(el("div", "wait", "Watching")); return; }
     if (s.error) node.append(el("div", "err", s.error));
     if (!rq || s.chosen) { node.append(el("div", "wait", "Waiting for opponent…")); return; }
-    if (pkTera.rqid !== rq.rqid) pkTera = { rqid: rq.rqid, on: false };
+    if (pkGimmick.rqid !== rq.rqid) pkGimmick = { rqid: rq.rqid, on: "" };
     const me = (s.sides || []).find(x => x.id === s.you) || { team: [] };
     if (rq.kind === "move") {
-      node.append(el("h3", "", "Attack"));
+      node.append(el("h3", "", rq.dynamaxed ? "Max Moves" : "Attack"));
       const moves = el("div", "moves");
-      for (const m of rq.moves || []) {
-        const b = el("button", "mv");
-        const c = pkTypeColor(m.type);
-        b.style.background = c;
-        b.style.color = pkInk(c);
-        b.disabled = !!m.disabled || m.pp === 0;
-        b.append(el("span", "n", m.name));
-        const sub = el("span", "sub");
-        sub.append(el("span", "", m.type), el("span", "", "PP " + m.pp + "/" + m.maxpp));
-        b.append(sub);
-        b.onclick = () => window.zchatSend("/game pokemon move " + m.slot + (pkTera.on ? " tera" : ""));
-        pkTip(v, b, () => {
-          const head = el("div", "chips");
-          head.append(pkTypeBadge(v, m.type), el("span", "", m.category));
-          const out = [el("div", "t", m.name), head,
-            el("div", "", "Power: " + (m.basePower ? m.basePower : "—") + " · Accuracy: " + (m.accuracy === true ? "—" : m.accuracy + "%"))];
-          if (m.desc) out.push(el("div", "d", m.desc));
-          if (m.disabled) out.push(el("div", "err", "Disabled"));
-          return out;
-        });
-        moves.append(b);
-      }
+      // The buttons, made again when a gimmick is checked: Z-Power and Dynamax change what the moves are.
+      const fill = () => {
+        moves.textContent = "";
+        v.tip.style.display = "none";
+        const on = rq.dynamaxed ? "" : pkGimmick.on;
+        for (const m of rq.moves || []) {
+          const shown = rq.dynamaxed || on === "max" ? m.maxMove || m : on === "z" ? m.zmove || m : m;
+          const b = el("button", "mv");
+          const c = pkTypeColor(shown.type);
+          b.style.background = c;
+          b.style.color = pkInk(c);
+          b.disabled = !!m.disabled || m.pp === 0 || (on === "z" && !m.zmove);
+          b.append(el("span", "n", shown.name));
+          const sub = el("span", "sub");
+          sub.append(el("span", "", shown.type + (shown !== m && shown.basePower ? " · " + shown.basePower : "")),
+                     el("span", "", "PP " + m.pp + "/" + m.maxpp));
+          b.append(sub);
+          b.onclick = () => window.zchatSend("/game pokemon move " + m.slot + (on ? " " + pkGimmickWords[on] : ""));
+          pkTip(v, b, () => {
+            const head = el("div", "chips");
+            head.append(pkTypeBadge(v, shown.type), el("span", "", shown.category));
+            const out = [el("div", "t", shown.name), head,
+              el("div", "", "Power: " + (shown.basePower ? shown.basePower : "—") + " · Accuracy: " + (shown.accuracy === true || !shown.accuracy ? "—" : shown.accuracy + "%"))];
+            if (shown.desc) out.push(el("div", "d", shown.desc));
+            const what = rq.dynamaxed ? "Max Move, from " + m.name + "."
+              : on === "max" ? "Dynamaxes, then uses " + shown.name + " (from " + m.name + ")."
+              : on === "z" ? (m.zmove ? "Uses the Z-Power: " + shown.name + " (from " + m.name + "), once per battle." : "No Z-Move from " + m.name + ".")
+              : on === "mega" ? "Mega Evolves, then uses " + m.name + "."
+              : on === "ultra" ? "Ultra Bursts, then uses " + m.name + "."
+              : on === "tera" ? "Terastallizes into " + rq.canTera + ", then uses " + m.name + "." : "";
+            if (what) out.push(el("div", "", what));
+            if (m.disabled) out.push(el("div", "err", "Disabled"));
+            return out;
+          });
+          moves.append(b);
+        }
+      };
+      fill();
       node.append(moves);
-      if (rq.canTera) {
-        const label = el("label", "teracheck");
-        const box = el("input");
-        box.type = "checkbox";
-        box.checked = pkTera.on;
-        box.onchange = () => { pkTera.on = box.checked; };
-        label.append(box, el("span", "", "Terastallize "), pkTypeBadge(v, rq.canTera));
-        node.append(label);
+      // The gimmicks this choice can use, one at most.
+      const hasZ = (rq.moves || []).some(m => m.zmove);
+      const gimmicks = [["tera", !!rq.canTera, "Terastallize "], ["mega", !!rq.canMega, "Mega Evolve"],
+        ["ultra", !!rq.canUltraBurst, "Ultra Burst"], ["z", hasZ, "Z-Power"], ["max", !!rq.canDynamax, "Dynamax"]]
+        .filter(([, can]) => can && !rq.dynamaxed);
+      if (gimmicks.length) {
+        const row = el("div", "gimmicks");
+        const boxes = [];
+        for (const [word, , label] of gimmicks) {
+          const lab = el("label", "teracheck");
+          const box = el("input");
+          box.type = "checkbox";
+          box.checked = pkGimmick.on === word;
+          box.onchange = () => {
+            pkGimmick.on = box.checked ? word : "";
+            for (const [w, other] of boxes) other.checked = pkGimmick.on === w;
+            fill();
+          };
+          boxes.push([word, box]);
+          lab.append(box, el("span", "", label));
+          if (word === "tera") lab.append(pkTypeBadge(v, rq.canTera));
+          row.append(lab);
+        }
+        node.append(row);
       }
       node.append(el("h3", "", rq.trapped ? "Switch (trapped)" : "Switch"));
     } else {
@@ -1413,8 +1503,9 @@ function renderPokemon() {
   if (!root._pk) root._pk = pkBuild(doc, root, popup);
   const v = root._pk;
   const player = !s.watching && (s.you === "p1" || s.you === "p2");
-  if (popup) doc.title = s.title || "zchat · Pokémon";
-  v.title.textContent = s.title || "Pokémon battle";
+  const title = (s.title || "Pokémon battle") + (s.format ? " · " + s.format : "");
+  if (popup) doc.title = s.title ? title : "zchat · Pokémon";
+  v.title.textContent = title;
   v.turn.textContent = s.phase === "battle" && s.turn ? "Turn " + s.turn : s.watching ? "watching" : "";
 
   // Our side near, at the bottom; for a spectator, p1.
@@ -1423,7 +1514,7 @@ function renderPokemon() {
   const colors = s.colors || {};
   for (const [pos, i] of [["near", nearIndex], ["far", 1 - nearIndex]]) {
     const side = sides[i] || { id: "p" + (i + 1), team: [], active: -1, conditions: [], teamSize: 6 };
-    pkRenderSide(v, pos, side, colors[side.id || "p" + (i + 1)], player && i === nearIndex);
+    pkRenderSide(v, pos, side, colors[side.id || "p" + (i + 1)], player && i === nearIndex, s.gen);
   }
   const f = s.field || {};
   const weather = (f.weather || "").toLowerCase();
@@ -1491,7 +1582,7 @@ function pokemonChallenges(state) {
     name.style.color = c.color;
     const sub = document.createElement("span");
     sub.className = "sub";
-    sub.textContent = "Pokémon Showdown · Gen 9 Random Battle";
+    sub.textContent = "Pokémon Showdown · " + (c.format || "Gen 9 Random Battle");
     what.append("⚔ ", name, " challenges you to a Pokémon battle!", sub);
     const row = document.createElement("div");
     row.className = "row";
@@ -1522,6 +1613,70 @@ function pokemonChallenges(state) {
   update();
   if (lefts.length) challengeTimer = setInterval(update, 1000);
 }
+
+// --- Challenging someone to a Pokémon battle: whom, among the people in the chat, and in which generation's Random
+// Battle (the last one picked is remembered). Sent as /game pokemon challenge NAME [genN].
+const pkChallenge = document.getElementById("pk-challenge");
+const pkChallengeWho = document.getElementById("pk-challenge-who");
+const pkChallengeSend = document.getElementById("pk-challenge-send");
+const pkChallengeGens = document.getElementById("pk-challenge-gens");
+function pkChallengeGen() {
+  let gen = 9;
+  try { gen = parseInt(localStorage.getItem("zchat-pokemon-gen"), 10) || 9; } catch {}
+  return gen >= 1 && gen <= 9 ? gen : 9;
+}
+for (let gen = 9; gen >= 1; gen--) {
+  const label = document.createElement("label");
+  const radio = document.createElement("input");
+  radio.type = "radio";
+  radio.name = "pk-challenge-gen";
+  radio.value = String(gen);
+  const text = document.createElement("span");
+  text.textContent = "Gen " + gen;
+  label.append(radio, text);
+  pkChallengeGens.append(label);
+}
+async function openChallenge() {
+  const gen = pkChallengeGen();
+  for (const radio of pkChallengeGens.querySelectorAll("input")) radio.checked = radio.value === String(gen);
+  const people = (await mentions()).filter(([name]) => name !== "everyone");
+  pkChallengeWho.textContent = "";
+  for (const [name, style] of people) {
+    const o = document.createElement("option");
+    o.value = o.textContent = name;
+    const color = styleColor(style);
+    if (color) o.style.color = color;
+    pkChallengeWho.append(o);
+  }
+  pkChallengeWho.hidden = !people.length;
+  document.getElementById("pk-challenge-nobody").hidden = !!people.length;
+  pkChallengeSend.disabled = !people.length;
+  pkChallenge.classList.add("open");
+  (people.length ? pkChallengeWho : document.getElementById("pk-challenge-cancel")).focus();
+}
+function closeChallenge() {
+  pkChallenge.classList.remove("open");
+  input.focus();
+}
+function sendChallenge() {
+  const name = pkChallengeWho.value;
+  if (!name) return;
+  const checked = pkChallengeGens.querySelector("input:checked");
+  const gen = checked ? parseInt(checked.value, 10) : 9;
+  try { localStorage.setItem("zchat-pokemon-gen", String(gen)); } catch {}
+  window.zchatSend("/game pokemon challenge " + name + (gen === 9 ? "" : " gen" + gen));
+  closeChallenge();
+}
+document.getElementById("pk-challenge-open").onclick = openChallenge;
+document.getElementById("pk-challenge-cancel").onclick = closeChallenge;
+pkChallengeSend.onclick = sendChallenge;
+pkChallenge.addEventListener("mousedown", e => { if (e.target === pkChallenge) closeChallenge(); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && pkChallenge.classList.contains("open")) { closeChallenge(); e.preventDefault(); }
+});
+pkChallenge.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.tagName !== "BUTTON" && !pkChallengeSend.disabled) { sendChallenge(); e.preventDefault(); }
+});
 
 // --- The games' windows: the C++ side calls zchat.game(game, state) with each game's state.
 zchat.game = (game, state) => {

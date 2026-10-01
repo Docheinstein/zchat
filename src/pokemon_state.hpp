@@ -56,6 +56,10 @@ public:
     int turn() const {
         return turn_;
     }
+    // The generation of the battle, 1 to 9 (9 until the battle says).
+    int gen() const {
+        return gen_;
+    }
 
     // The request waiting for our choice: its rqid, or 0 when there is none (a spectator, the opponent is still
     // choosing, or the battle is over). A request is answered once: chosen() makes this 0 until the next one, and an
@@ -86,6 +90,7 @@ public:
     // The state, for the battle window (see the Pokémon battle in src/ui/index.html): a JSON object whose first
     // members are extra (other JSON members, without braces; may be empty), then:
     //   "you": "p1" | "p2" | ""                   the side we are on, "" for a spectator
+    //   "gen": number                             the generation, 1 to 9 (from |gen|; 9 until it is known)
     //   "turn": number
     //   "over": bool, "winner": "name"            the winner is "" for a tie, or while it is not over
     //   "sides": [side, side]                     p1 then p2, each:
@@ -100,14 +105,22 @@ public:
     //             "teraType": "Steel" (ours only, the type it can Terastallize into) or "",
     //             "boosts": {"atk": 1, ...}, "volatiles": ["Substitute", "Confusion"],
     //             "item": "Leftovers" | "", "ability": "Prankster" | "", "moves": ["Headlong Rush", ...] (all of
-    //             ours; the opponent's as they are used), "stats": {"atk": 183, ...} (ours only, else {})}
+    //             ours; the opponent's as they are used), "stats": {"atk": 183, ...} (ours only, else {}),
+    //             "dynamaxed": bool (it is Dynamaxed now), "mega": bool (it is in a Mega forme)}
     //   "field": {"weather": "Rain" | "", "terrain": "Electric Terrain" | "", "other": ["Trick Room", ...]}
     //   "request": null, or the request waiting (see rqid()):
     //       {"rqid": 5, "kind": "move" | "switch",   switch: a forced switch, after a faint or U-turn
     //        "moves": [{"slot": 1, "name": "Thunder Wave", "id": "thunderwave", "pp": 32, "maxpp": 32,
     //                   "type": "Electric", "category": "Status", "basePower": 0, "accuracy": 90 | true,
-    //                   "desc": "...", "disabled": bool}...]   (empty for a switch)
+    //                   "desc": "...", "disabled": bool,
+    //                   "zmove": null | gimmick move,      its Z-Move, when it can be one now
+    //                   "maxMove": null | gimmick move}...]  its Max Move, when it can Dynamax or is Dynamaxed
+    //                                                        (empty for a switch)
+    //            gimmick move: {"name": "Breakneck Blitz", "type": "Normal", "category": "Physical",
+    //                           "basePower": 175, "accuracy": true | number, "desc": "..."}
     //        "canTera": "Steel" | "", "trapped": bool,
+    //        "canMega": bool, "canUltraBurst": bool, "canDynamax": bool,   what may go with a move this turn
+    //        "dynamaxed": bool                  the active one is Dynamaxed: its moves are used as their Max Moves
     //        "reviving": bool                   Revival Blessing: a switch to a fainted one, which comes back
     //        "switches": [{"slot": 2, "name": "Orthworm", "species": "Orthworm", "hp": 266, "maxhp": 266,
     //                      "status": "", "fainted": bool, "active": bool}...]   (the whole team, by slot)}
@@ -155,6 +168,15 @@ private:
         // The move its active Pokémon used last this turn (an id, like "uturn"), for the words of a switch after it.
         std::string last_move;
     };
+    // A Z-Move or Max Move a move would be.
+    struct Gimmick {
+        std::string name;
+        std::string type;
+        std::string category;
+        int base_power = 0;
+        int accuracy = 0; // 0 when it never misses
+        std::string desc;
+    };
     struct Move {
         std::string name;
         std::string id;
@@ -167,6 +189,8 @@ private:
         int accuracy = 0;
         std::string desc;
         bool disabled = false;
+        std::optional<Gimmick> zmove;
+        std::optional<Gimmick> max_move;
     };
     // The request waiting for our choice, as the simulator sent it.
     struct Request {
@@ -174,6 +198,10 @@ private:
         std::string kind; // "move", "switch" or "team" (Team Preview)
         std::vector<Move> moves;
         std::string can_tera;
+        bool can_mega = false;
+        bool can_ultra = false;
+        bool can_dynamax = false;
+        bool dynamaxed = false;
         bool trapped = false;
         // Revival Blessing: the switch is to one of the fainted Pokémon, which comes back.
         bool reviving = false;
@@ -209,6 +237,7 @@ private:
     std::string trainer(int side) const;
 
     std::string side_;
+    int gen_ = 9;
     Side sides_[2];
     int turn_ = 0;
     bool over_ = false;

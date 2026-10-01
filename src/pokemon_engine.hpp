@@ -35,9 +35,10 @@ public:
     // when it is done. Does nothing while installing.
     void install(bool update = false);
 
-    // Runs a battle of Gen 9 Random Battles between two players (their names as the battle shows them), see
-    // bridge.js for what it says and takes. nullptr, with why in error, when it cannot be started.
-    std::unique_ptr<process::Child> start_battle(const std::string& p1, const std::string& p2,
+    // Runs a battle of Showdown's Random Battles of a generation (1 to 9) between two players (their names as the
+    // battle shows them), see bridge.js for what it says and takes. nullptr, with why in error, when it cannot be
+    // started.
+    std::unique_ptr<process::Child> start_battle(int gen, const std::string& p1, const std::string& p2,
                                                  std::function<void(std::string line)> on_line,
                                                  std::function<void(int exit_code, std::string errors)> on_exit,
                                                  std::string& error);

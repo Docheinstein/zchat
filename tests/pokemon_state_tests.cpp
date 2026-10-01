@@ -879,3 +879,271 @@ TEST(json_quote) {
     REQUIRE(back.has_value());
     CHECK_EQ(back->str(), std::string_view("any \"text\" \\ \x7f with\r\nlines"));
 }
+
+namespace {
+
+// The winner of a log, from its |win| line.
+std::string winner_of(std::string_view name) {
+    for (const Message& m : load(name)) {
+        if (const auto at = m.text.find("|win|"); m.stream == "spectator" && at != std::string::npos) {
+            const auto end = m.text.find('\n', at);
+            return m.text.substr(at + 5, end == std::string::npos ? std::string::npos : end - at - 5);
+        }
+    }
+    return {};
+}
+
+std::string choose(const Battle& b, std::string_view typed) {
+    std::string why;
+    const auto choice = b.parse_choice(typed, why);
+    CHECK(choice.has_value() != !why.empty());
+    return choice.value_or("");
+}
+
+bool has_menu(const Battle& b, std::string_view line) {
+    const auto menu = b.menu();
+    return std::ranges::find(menu, line) != menu.end();
+}
+
+} // namespace
+
+TEST(pokemon_every_generation_replays) {
+    for (int gen = 1; gen <= 8; ++gen) {
+        const std::string name = std::format("battle-gen{}.log", gen);
+        const std::string winner = winner_of(name);
+        CHECK(winner == "Ash" || winner == "Gary");
+        for (const char* side : {"p1", "p2", ""}) {
+            Battle b {std::string(side)};
+            for (const Message& m : load(name)) {
+                if (m.stream != stream_of(side)) {
+                    continue;
+                }
+                b.feed(m.text);
+                if (!m.text.starts_with("|request|") || b.rqid() == 0) {
+                    continue;
+                }
+                // Every request, with its gimmicks.
+                const auto state = parsed(b);
+                const auto& q = state["request"];
+                for (const char* key : {"canMega", "canUltraBurst", "canDynamax", "dynamaxed", "canTera"}) {
+                    CHECK(q.find(key) != nullptr);
+                }
+                CHECK_EQ(q["rqid"].integer(), b.rqid());
+                for (const auto& move : q["moves"].items) {
+                    CHECK(move.find("zmove") != nullptr && move.find("maxMove") != nullptr);
+                    CHECK(move["zmove"].is_null() || move["zmove"]["name"].is_string());
+                    CHECK(move["maxMove"].is_null() || !move["maxMove"]["name"].str().empty());
+                    CHECK(!move["name"].str().empty());
+                }
+                CHECK(!b.menu().empty());
+                b.chosen();
+            }
+            CHECK(b.over());
+            CHECK_EQ(b.winner(), winner);
+            CHECK_EQ(b.turn(), last_turn(name));
+            CHECK_EQ(b.gen(), gen);
+            CHECK(has_line(b, std::format("{} won the battle!", winner), LogLine::Kind::Result));
+            const auto state = parsed(b);
+            CHECK_EQ(state["gen"].integer(), gen);
+            CHECK(state["request"].is_null());
+            for (int s = 0; s < 2; ++s) {
+                for (const auto& m : state["sides"][static_cast<std::size_t>(s)]["team"].items) {
+                    CHECK(m["dynamaxed"].is_bool() && m["mega"].is_bool());
+                    CHECK(!m["species"].str().empty());
+                    // No abilities before generation 3, and never an id for one.
+                    if (gen <= 2) {
+                        CHECK_EQ(m["ability"].str(), std::string_view());
+                    }
+                    CHECK(m["ability"].str() != "noability");
+                }
+            }
+            for (const LogLine& l : b.log()) {
+                CHECK(!l.text.empty());
+                CHECK(l.text.find("[POKEMON]") == std::string::npos && l.text.find("**") == std::string::npos);
+                CHECK(l.text.find("[STAT]") == std::string::npos && l.text.find("[MOVE]") == std::string::npos);
+            }
+        }
+    }
+}
+
+TEST(pokemon_mega_evolution) {
+    Replay replay("battle-gen6.log", "p1");
+    Battle& b = replay.battle;
+    replay.until("\"canMegaEvo\":true", [&] {
+        const auto state = parsed(b);
+        CHECK(state["request"]["canMega"].boolean);
+        CHECK(!state["request"]["canDynamax"].boolean);
+        CHECK(has_menu(b, "move 1 mega  Mega Evolve, with any move (move N mega)"));
+        CHECK_EQ(choose(b, "move 2 mega"), std::string("move 2 mega"));
+        CHECK_EQ(choose(b, "mega 1"), std::string("move 1 mega"));
+        CHECK_EQ(choose(b, "1"), std::string("move 1"));
+        CHECK_EQ(choose(b, "move 1 mega z"), std::string());
+        CHECK_EQ(choose(b, "move 1 z"), std::string());
+        CHECK_EQ(choose(b, "max 1"), std::string());
+        CHECK_EQ(choose(b, "move 1 ultra"), std::string());
+        CHECK_EQ(choose(b, "move 1 tera"), std::string());
+        CHECK_EQ(choose(b, "switch 2 mega"), std::string());
+        CHECK_EQ(choose(b, "mega"), std::string());
+        b.chosen();
+    });
+    replay.until("|-mega|p1a: Venusaur", [&] {
+        const auto state = parsed(b);
+        const auto* venusaur = mon(state, 0, "Venusaur");
+        REQUIRE(venusaur);
+        CHECK((*venusaur)["mega"].boolean);
+        CHECK_EQ((*venusaur)["species"].str(), std::string_view("Venusaur-Mega"));
+        // Generation 6 had Mega Bracelets.
+        CHECK(has_line(b, "Venusaur's Venusaurite is reacting to Ash's Mega Bracelet!"));
+        CHECK(has_line(b, "Venusaur has Mega Evolved into Mega Venusaur!"));
+    });
+    // Once Mega Evolved, never again.
+    replay.until("|request|", [&] {
+        if (b.rqid() != 0) {
+            CHECK(!parsed(b)["request"]["canMega"].boolean);
+            CHECK_EQ(choose(b, "move 1 mega"), std::string());
+        }
+    });
+
+    // From generation 7, it is the Key Stone.
+    Battle seven("p2");
+    seven.feed("|gen|7\n|player|p1|Ash||\n|player|p2|Gary||\n|switch|p1a: Tyranitar|Tyranitar, L76, M|100/100\n"
+               "|detailschange|p1a: Tyranitar|Tyranitar-Mega, L76, M\n|-mega|p1a: Tyranitar|Tyranitar|Tyranitarite\n"
+               "|-primal|p1a: Tyranitar\n");
+    CHECK(has_line(seven, "The opposing Tyranitar's Tyranitarite is reacting to the Key Stone!"));
+    CHECK(has_line(seven, "The opposing Tyranitar has Mega Evolved into Mega Tyranitar!"));
+    CHECK(has_line(seven, "The opposing Tyranitar's Primal Reversion! It reverted to its primal state!"));
+    const auto state = parsed(seven);
+    CHECK((*mon(state, 0, "Tyranitar"))["mega"].boolean);
+}
+
+TEST(pokemon_z_moves) {
+    Replay replay("battle-gen7.log", "p2");
+    Battle& b = replay.battle;
+    replay.until("\"canZMove\"", [&] {
+        const auto state = parsed(b);
+        const auto& moves = state["request"]["moves"];
+        REQUIRE(moves.size() == 4);
+        CHECK(moves[0]["zmove"].is_null());
+        const auto& z = moves[2]["zmove"];
+        CHECK_EQ(z["name"].str(), std::string_view("Genesis Supernova"));
+        CHECK_EQ(z["type"].str(), std::string_view("Psychic"));
+        CHECK_EQ(z["category"].str(), std::string_view("Special"));
+        CHECK_EQ(z["basePower"].integer(), 185);
+        CHECK(z["accuracy"].is_bool());
+        CHECK(!z["desc"].str().empty());
+        CHECK(moves[2]["maxMove"].is_null());
+        CHECK(has_menu(b, "move 3 z  Genesis Supernova  Psychic, Special, 185 power"));
+        CHECK_EQ(choose(b, "move 3 z"), std::string("move 3 zmove"));
+        CHECK_EQ(choose(b, "zmove 3"), std::string("move 3 zmove"));
+        CHECK_EQ(choose(b, "Genesis Supernova"), std::string("move 3 zmove"));
+        CHECK_EQ(choose(b, "move 1 z"), std::string());
+        CHECK_EQ(choose(b, "move 3 z mega"), std::string());
+        CHECK_EQ(choose(b, "move 3 max"), std::string());
+        CHECK_EQ(choose(b, "3"), std::string("move 3"));
+        b.chosen();
+    });
+    replay.until("|-zpower|", [&] {
+        CHECK(has_line(b, "Mew surrounded itself with its Z-Power!"));
+        CHECK(has_line(b, "Mew unleashes its full-force Z-Move!"));
+        CHECK(has_line(b, "Mew used Genesis Supernova!", LogLine::Kind::Move));
+        CHECK(has_line(b, "The battlefield got weird!"));
+        CHECK_EQ(parsed(b)["field"]["terrain"].str(), std::string_view("Psychic Terrain"));
+    });
+    replay.until("|request|", [&] {
+        if (b.rqid() != 0) {
+            const auto state = parsed(b);
+            for (const auto& move : state["request"]["moves"].items) {
+                CHECK(move["zmove"].is_null());
+            }
+        }
+    });
+    Battle hand("p1");
+    hand.feed("|gen|7\n|switch|p1a: Mew|Mew, L80|100/100\n|switch|p2a: Rhydon|Rhydon, L80, M|100/100\n"
+              "|-zbroken|p2a: Rhydon\n");
+    CHECK(has_line(hand, "The opposing Rhydon couldn't fully protect itself and got hurt!"));
+}
+
+TEST(pokemon_dynamax) {
+    Replay replay("battle-gen8.log", "p1");
+    Battle& b = replay.battle;
+    replay.until("\"canDynamax\":true", [&] {
+        const auto state = parsed(b);
+        const auto& q = state["request"];
+        CHECK(q["canDynamax"].boolean);
+        CHECK(!q["dynamaxed"].boolean);
+        CHECK_EQ(q["moves"][0]["name"].str(), std::string_view("Scald"));
+        CHECK_EQ(q["moves"][0]["maxMove"]["name"].str(), std::string_view("Max Geyser"));
+        CHECK_EQ(q["moves"][1]["maxMove"]["name"].str(), std::string_view("Max Guard"));
+        CHECK_EQ(q["moves"][0]["maxMove"]["type"].str(), std::string_view("Water"));
+        CHECK(q["moves"][0]["zmove"].is_null());
+        CHECK(has_menu(b, "move 1 max  Dynamax, with any move (move N max)"));
+        CHECK(has_menu(b, "move 1 max  Max Geyser  Water, Physical"));
+        CHECK(has_menu(b, "move 1  Scald  Water, Special, 80 power, 24/24 PP"));
+        CHECK_EQ(choose(b, "max 1"), std::string("move 1 dynamax"));
+        CHECK_EQ(choose(b, "move 3 dynamax"), std::string("move 3 dynamax"));
+        CHECK_EQ(choose(b, "max geyser"), std::string("move 1 dynamax"));
+        CHECK_EQ(choose(b, "move 1 max mega"), std::string());
+        CHECK_EQ(choose(b, "move 1 z"), std::string());
+        CHECK_EQ(choose(b, "switch 2 max"), std::string());
+        CHECK_EQ(choose(b, "1"), std::string("move 1"));
+        b.chosen();
+    });
+    replay.until("|-start|p1a: Tentacruel|Dynamax", [&] {
+        const auto state = parsed(b);
+        CHECK((*mon(state, 0, "Tentacruel"))["dynamaxed"].boolean);
+        CHECK(contains((*mon(state, 0, "Tentacruel"))["volatiles"], "Dynamax"));
+        CHECK(has_line(b, "(Tentacruel's Dynamax!)", LogLine::Kind::Minor));
+        CHECK(has_line(b, "Tentacruel used Max Ooze!", LogLine::Kind::Move));
+        CHECK(has_line(b, "(The opposing Mr. Rime's Dynamax!)"));
+        CHECK(has_line(b, "The opposing Mr. Rime protected itself!"));
+        CHECK(has_line(b, "(The opposing Mr. Rime returned to normal!)"));
+    });
+    // Dynamaxed: the moves are Max Moves, and nothing more goes with them.
+    replay.until("|request|", [&] {
+        REQUIRE(b.rqid() != 0);
+        const auto state = parsed(b);
+        const auto& q = state["request"];
+        CHECK(q["dynamaxed"].boolean);
+        CHECK(!q["canDynamax"].boolean);
+        CHECK_EQ(q["moves"][0]["maxMove"]["name"].str(), std::string_view("Max Geyser"));
+        const auto menu = b.menu();
+        CHECK(std::ranges::any_of(menu, [](const std::string& l) {
+            return l.starts_with("move 1  Max Geyser (Scald)  Water");
+        }));
+        CHECK(!has_menu(b, "move 1 max  Dynamax, with any move (move N max)"));
+        CHECK_EQ(choose(b, "move 1"), std::string("move 1"));
+        CHECK_EQ(choose(b, "max 2"), std::string("move 2"));
+        CHECK_EQ(choose(b, "move 3 dynamax"), std::string("move 3"));
+        CHECK_EQ(choose(b, "max ooze"), std::string("move 3"));
+        // Its HP is doubled, as the request says.
+        CHECK_EQ((*mon(state, 0, "Tentacruel"))["maxhp"].integer(), 524);
+        b.chosen();
+    });
+    replay.until("|-end|p1a: Tentacruel|Dynamax", [&] {
+        const auto state = parsed(b);
+        CHECK(!(*mon(state, 0, "Tentacruel"))["dynamaxed"].boolean);
+        CHECK(has_line(b, "(Tentacruel returned to normal!)"));
+    });
+}
+
+TEST(pokemon_older_generations_words) {
+    // Generation 1's Reflect is on the Pokémon, with words of its own, and it had a single Special stat.
+    Battle one("p1");
+    one.feed("|gen|1\n|player|p1|Ash||\n|player|p2|Gary||\n|switch|p1a: Starmie|Starmie, L70|100/100\n"
+             "|switch|p2a: Slowbro|Slowbro, L70|100/100\n|-start|p1a: Starmie|Reflect\n|-boost|p2a: Slowbro|spa|2\n"
+             "|-start|p2a: Slowbro|Light Screen\n|-start|p2a: Slowbro|Mist\n|move|p1a: Starmie|Psychic|p2a: Slowbro\n"
+             "|-miss|p1a: Starmie\n");
+    CHECK(has_line(one, "Starmie gained armor!"));
+    CHECK(has_line(one, "The opposing Slowbro's Special rose sharply!"));
+    CHECK(has_line(one, "The opposing Slowbro's protected against special attacks!"));
+    CHECK(has_line(one, "The opposing Slowbro's shrouded in mist!"));
+    CHECK(has_line(one, "Starmie's attack missed!"));
+    const auto state = parsed(one);
+    CHECK(contains((*mon(state, 0, "Starmie"))["volatiles"], "Reflect"));
+    // Later generations have the words of today.
+    Battle nine("p1");
+    nine.feed("|switch|p1a: Starmie|Starmie, L70|100/100\n|-boost|p1a: Starmie|spa|1\n|-sidestart|p1: Ash|Reflect");
+    CHECK(has_line(nine, "Starmie's Sp. Atk rose!"));
+    CHECK(has_line(nine, "Reflect made your team stronger against physical moves!"));
+    CHECK_EQ(nine.gen(), 9);
+}

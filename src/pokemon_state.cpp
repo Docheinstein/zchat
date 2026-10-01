@@ -1029,8 +1029,88 @@ namespace {
         {"zerotohero", "name", "Zero to Hero"},
     };
 
-    // A text of the table, or empty.
-    std::string_view lookup(std::string_view id, std::string_view key) {
+    // The texts older generations have instead, as {id, key, gen, text}: a text for gen N is the one of generations N
+    // and before (down to the next one given), as in Showdown's data/text. Sorted by id, key, then gen.
+    struct GenText {
+        std::string_view id;
+        std::string_view key;
+        int gen;
+        std::string_view text;
+    };
+    constexpr GenText gen_texts[] = {
+        {"healblock", "cant", 8, "[POKEMON] can't use [MOVE] because of Heal Block!"},
+        {"healblock", "end", 8, "  [POKEMON]'s Heal Block wore off!"},
+        {"lightscreen", "start", 1, "  [POKEMON]'s protected against special attacks!"},
+        {"mist", "block", 1, "  But, it failed!"},
+        {"mist", "block", 2, "  [POKEMON]'s protected by MIST."},
+        {"mist", "start", 1, "  [POKEMON]'s shrouded in mist!"},
+        {"mist", "start", 2, "  [POKEMON]'s shrouded in MIST!"},
+        {"reflect", "start", 1, "  [POKEMON] gained armor!"},
+    };
+
+    // The names of the Max Moves, which requests give as ids.
+    constexpr std::pair<std::string_view, std::string_view> max_move_names[] = {
+        {"gmaxbefuddle", "G-Max Befuddle"},
+        {"gmaxcannonade", "G-Max Cannonade"},
+        {"gmaxcentiferno", "G-Max Centiferno"},
+        {"gmaxchistrike", "G-Max Chi Strike"},
+        {"gmaxcuddle", "G-Max Cuddle"},
+        {"gmaxdepletion", "G-Max Depletion"},
+        {"gmaxdrumsolo", "G-Max Drum Solo"},
+        {"gmaxfinale", "G-Max Finale"},
+        {"gmaxfireball", "G-Max Fireball"},
+        {"gmaxfoamburst", "G-Max Foam Burst"},
+        {"gmaxgoldrush", "G-Max Gold Rush"},
+        {"gmaxgravitas", "G-Max Gravitas"},
+        {"gmaxhydrosnipe", "G-Max Hydrosnipe"},
+        {"gmaxmalodor", "G-Max Malodor"},
+        {"gmaxmeltdown", "G-Max Meltdown"},
+        {"gmaxoneblow", "G-Max One Blow"},
+        {"gmaxrapidflow", "G-Max Rapid Flow"},
+        {"gmaxreplenish", "G-Max Replenish"},
+        {"gmaxresonance", "G-Max Resonance"},
+        {"gmaxsandblast", "G-Max Sandblast"},
+        {"gmaxsmite", "G-Max Smite"},
+        {"gmaxsnooze", "G-Max Snooze"},
+        {"gmaxsteelsurge", "G-Max Steelsurge"},
+        {"gmaxstonesurge", "G-Max Stonesurge"},
+        {"gmaxstunshock", "G-Max Stun Shock"},
+        {"gmaxsweetness", "G-Max Sweetness"},
+        {"gmaxtartness", "G-Max Tartness"},
+        {"gmaxterror", "G-Max Terror"},
+        {"gmaxvinelash", "G-Max Vine Lash"},
+        {"gmaxvolcalith", "G-Max Volcalith"},
+        {"gmaxvoltcrash", "G-Max Volt Crash"},
+        {"gmaxwildfire", "G-Max Wildfire"},
+        {"gmaxwindrage", "G-Max Wind Rage"},
+        {"maxairstream", "Max Airstream"},
+        {"maxdarkness", "Max Darkness"},
+        {"maxflare", "Max Flare"},
+        {"maxflutterby", "Max Flutterby"},
+        {"maxgeyser", "Max Geyser"},
+        {"maxguard", "Max Guard"},
+        {"maxhailstorm", "Max Hailstorm"},
+        {"maxknuckle", "Max Knuckle"},
+        {"maxlightning", "Max Lightning"},
+        {"maxmindstorm", "Max Mindstorm"},
+        {"maxooze", "Max Ooze"},
+        {"maxovergrowth", "Max Overgrowth"},
+        {"maxphantasm", "Max Phantasm"},
+        {"maxquake", "Max Quake"},
+        {"maxrockfall", "Max Rockfall"},
+        {"maxstarfall", "Max Starfall"},
+        {"maxsteelspike", "Max Steelspike"},
+        {"maxstrike", "Max Strike"},
+        {"maxwyrmwind", "Max Wyrmwind"},
+    };
+
+    // A text of the table, or empty, as generation gen has it.
+    std::string_view lookup(std::string_view id, std::string_view key, int gen = 9) {
+        for (const GenText& t : gen_texts) {
+            if (t.id == id && t.key == key && t.gen >= gen) {
+                return t.text;
+            }
+        }
         static const bool sorted = std::ranges::is_sorted(texts, {}, [](const Text& t) {
             return std::pair(t.id, t.key);
         });
@@ -1146,7 +1226,7 @@ namespace {
     // The text for what happened (key) as the first of the effects (namespaces) that has one says it, or else the
     // default one. As in Showdown's client, own_tag picks the default's own variant ("Go! [FULLNAME]!") and
     // no_default stops the search with nothing. Ends with a '\n' when there is a text.
-    std::string text_for(std::string_view key, std::initializer_list<std::string_view> namespaces) {
+    std::string text_for(int gen, std::string_view key, std::initializer_list<std::string_view> namespaces) {
         for (const std::string_view space : namespaces) {
             if (space.empty()) {
                 continue;
@@ -1160,7 +1240,7 @@ namespace {
             }
             std::string id = effect_id(space);
             std::string type(key);
-            std::string_view text = lookup(id, type);
+            std::string_view text = lookup(id, type, gen);
             if (text.empty()) {
                 continue;
             }
@@ -1171,11 +1251,11 @@ namespace {
                 } else {
                     id = std::string(text.substr(1));
                 }
-                text = lookup(id, type);
+                text = lookup(id, type, gen);
             }
             return text.empty() || starts_with(text, "#") ? std::string() : std::string(text) + '\n';
         }
-        const auto text = lookup("default", key);
+        const auto text = lookup("default", key, gen);
         return text.empty() ? std::string() : std::string(text) + '\n';
     }
 
@@ -1577,6 +1657,10 @@ std::string Battle::describe(const Line& l) const {
     const auto P = [this](std::string_view ident) {
         return pokemon_text(ident);
     };
+    // Generation 1 had a single Special stat.
+    const auto stat = [this](std::string_view name) {
+        return stat_name(gen_ == 1 && to_id(name) == "spa" ? std::string_view("spc") : name);
+    };
     // "[The opposing Salamence's Intimidate]", when an ability did it.
     const auto ability = [&](std::string_view name, std::string_view holder) -> std::string {
         if (name.empty()) {
@@ -1598,7 +1682,7 @@ std::string Battle::describe(const Line& l) const {
     const std::string_view of_or_1 = of.empty() ? a1 : of;
 
     if (cmd == "start") {
-        std::string text = text_for("startBattle", {});
+        std::string text = text_for(gen_, "startBattle", {});
         // Showdown fills the two [TRAINER]s in turn.
         const auto at = text.find("[TRAINER]");
         if (at != std::string::npos) {
@@ -1617,7 +1701,7 @@ std::string Battle::describe(const Line& l) const {
         if (cmd == "tie" || trim(l.rest).empty()) {
             return std::format("Tie between {} and {}!", trainer(0), trainer(1));
         }
-        return fill(text_for("winBattle", {}), {{"[TRAINER]", trim(l.rest)}});
+        return fill(text_for(gen_, "winBattle", {}), {{"[TRAINER]", trim(l.rest)}});
     }
     if (cmd == "error") {
         return std::string(l.rest);
@@ -1645,7 +1729,7 @@ std::string Battle::describe(const Line& l) const {
                                             ? std::string_view(s.last_move)
                                             : std::string_view();
             const std::string ident = std::format("p{}a: {}", side + 1, previous->name);
-            out += fill(text_for("switchOut", {by, own(side) ? own_tag : std::string_view()}),
+            out += fill(text_for(gen_, "switchOut", {by, own(side) ? own_tag : std::string_view()}),
                         {{"[TRAINER]", trainer(side)}, {"[NICKNAME]", previous->name}, {"[POKEMON]", P(ident)}});
         }
         if (cmd == "replace") {
@@ -1656,20 +1740,23 @@ std::string Battle::describe(const Line& l) const {
         const std::string full =
             name == species ? std::format("**{}**", species) : std::format("{} (**{}**)", name, species);
         const std::string_view key = cmd == "switch" ? "switchIn" : "drag";
-        out += fill(text_for(key, {own(side) && cmd == "switch" ? own_tag : std::string_view()}),
+        out += fill(text_for(gen_, key, {own(side) && cmd == "switch" ? own_tag : std::string_view()}),
                     {{"[TRAINER]", trainer(side)}, {"[FULLNAME]", full}});
         return out;
     }
     if (cmd == "faint") {
-        return fill(text_for("faint", {}), {{"[POKEMON]", P(a1)}});
+        return fill(text_for(gen_, "faint", {}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "move") {
-        return fill(text_for("move", {from}), {{"[POKEMON]", P(a1)}, {"[MOVE]", a2}});
+        // A Z-Move says so first.
+        const std::string line1 =
+            l.has("zeffect") ? fill(text_for(gen_, "zEffect", {}), {{"[POKEMON]", P(a1)}}) : std::string();
+        return line1 + fill(text_for(gen_, "move", {from}), {{"[POKEMON]", P(a1)}, {"[MOVE]", a2}});
     }
     if (cmd == "cant") {
-        std::string text = text_for("cant", {a2, no_default});
+        std::string text = text_for(gen_, "cant", {a2, no_default});
         if (text.empty()) {
-            text = text_for(a3.empty() ? "cantNoMove" : "cant", {});
+            text = text_for(gen_, a3.empty() ? "cantNoMove" : "cant", {});
         }
         return maybe_ability(a2, of_or_1) + fill(text, {{"[POKEMON]", P(a1)}, {"[MOVE]", a3}});
     }
@@ -1702,18 +1789,18 @@ std::string Battle::describe(const Line& l) const {
                 key = "transformEnd";
             }
         }
-        const std::string text = text_for(key, {effect, l.has("msg") ? std::string_view() : no_default});
+        const std::string text = text_for(gen_, key, {effect, l.has("msg") ? std::string_view() : no_default});
         return maybe_ability(from, a1) + fill(text, {{"[POKEMON]", P(a1)}, {"[SPECIES]", species}});
     }
     if (cmd == "-transform") {
-        return maybe_ability(from, a1) + fill(text_for("transform", {"Transform"}),
+        return maybe_ability(from, a1) + fill(text_for(gen_, "transform", {"Transform"}),
                                               {{"[POKEMON]", P(a1)},
                                                {"[TARGET]", P(a2)},
                                                {"[SPECIES]", side_index(a2) >= 0 ? P(a2) : std::string(a2)}});
     }
     if (cmd == "-damage") {
         const std::string line1 = maybe_ability(from, of_or_1);
-        if (std::string text = text_for("damage", {from, no_default}); !text.empty()) {
+        if (std::string text = text_for(gen_, "damage", {from, no_default}); !text.empty()) {
             return line1 + fill(text, {{"[POKEMON]", P(a1)}});
         }
         if (from.empty()) {
@@ -1725,32 +1812,32 @@ std::string Battle::describe(const Line& l) const {
                 const double now = after->maxhp > 0 ? static_cast<double>(after->hp) / after->maxhp : 0.0;
                 lost = percentage(before, now, (after->maxhp > 0 ? after->maxhp : mon->maxhp) != 100);
             }
-            const std::string text = text_for(lost.empty() ? "damage" : "damagePercentage", {});
+            const std::string text = text_for(gen_, lost.empty() ? "damage" : "damagePercentage", {});
             return line1 + fill(text, {{"[POKEMON]", P(a1)}, {"[PERCENTAGE]", lost}});
         }
         if (starts_with(from, "item:")) {
-            return line1 + fill(text_for(of.empty() ? "damageFromItem" : "damageFromPokemon", {}),
+            return line1 + fill(text_for(gen_, of.empty() ? "damageFromItem" : "damageFromPokemon", {}),
                                 {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(from)}, {"[SOURCE]", P(of)}});
         }
         if (l.has("partiallytrapped") || effect_id(from) == "bind" || effect_id(from) == "wrap") {
-            return line1 + fill(text_for("damageFromPartialTrapping", {}),
+            return line1 + fill(text_for(gen_, "damageFromPartialTrapping", {}),
                                 {{"[POKEMON]", P(a1)}, {"[MOVE]", effect_name(from)}});
         }
-        return line1 + fill(text_for("damage", {}), {{"[POKEMON]", P(a1)}});
+        return line1 + fill(text_for(gen_, "damage", {}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-heal") {
         const std::string line1 = maybe_ability(from, a1);
-        if (std::string text = text_for("heal", {from, no_default}); !text.empty()) {
+        if (std::string text = text_for(gen_, "heal", {from, no_default}); !text.empty()) {
             return line1 + fill(text, {{"[POKEMON]", P(a1)}, {"[SOURCE]", P(of)}, {"[NICKNAME]", l.tag("wisher")}});
         }
         if (!from.empty() && !starts_with(from, "ability:")) {
             return line1 +
-                   fill(text_for("healFromEffect", {}), {{"[POKEMON]", P(a1)}, {"[EFFECT]", effect_name(from)}});
+                   fill(text_for(gen_, "healFromEffect", {}), {{"[POKEMON]", P(a1)}, {"[EFFECT]", effect_name(from)}});
         }
-        return line1 + fill(text_for("heal", {}), {{"[POKEMON]", P(a1)}});
+        return line1 + fill(text_for(gen_, "heal", {}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-sethp") {
-        return fill(text_for("activate", {from, no_default}), {{"[POKEMON]", P(a1)}});
+        return fill(text_for(gen_, "activate", {from, no_default}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-boost" || cmd == "-unboost") {
         const int amount = to_int(a3);
@@ -1764,54 +1851,54 @@ std::string Battle::describe(const Line& l) const {
             key += '0';
         }
         if (amount != 0 && starts_with(from, "item:")) {
-            return line1 + fill(text_for(key + "FromItem", {from}),
-                                {{"[POKEMON]", P(a1)}, {"[STAT]", stat_name(a2)}, {"[ITEM]", effect_name(from)}});
+            return line1 + fill(text_for(gen_, key + "FromItem", {from}),
+                                {{"[POKEMON]", P(a1)}, {"[STAT]", stat(a2)}, {"[ITEM]", effect_name(from)}});
         }
-        return line1 + fill(text_for(key, {from}), {{"[POKEMON]", P(a1)}, {"[STAT]", stat_name(a2)}});
+        return line1 + fill(text_for(gen_, key, {from}), {{"[POKEMON]", P(a1)}, {"[STAT]", stat(a2)}});
     }
     if (cmd == "-setboost") {
         return maybe_ability(from, of_or_1) +
-               fill(text_for("boost", {from}), {{"[POKEMON]", P(a1)}, {"[STAT]", stat_name(a2)}});
+               fill(text_for(gen_, "boost", {from}), {{"[POKEMON]", P(a1)}, {"[STAT]", stat(a2)}});
     }
     if (cmd == "-swapboost") {
         return maybe_ability(from, a1) +
-               fill(text_for("swapBoost", {from}), {{"[POKEMON]", P(a1)}, {"[TARGET]", P(a2)}});
+               fill(text_for(gen_, "swapBoost", {from}), {{"[POKEMON]", P(a1)}, {"[TARGET]", P(a2)}});
     }
     if (cmd == "-copyboost") {
         return maybe_ability(from, a1) +
-               fill(text_for("copyBoost", {from}), {{"[POKEMON]", P(a1)}, {"[TARGET]", P(a2)}});
+               fill(text_for(gen_, "copyBoost", {from}), {{"[POKEMON]", P(a1)}, {"[TARGET]", P(a2)}});
     }
     if (cmd == "-clearboost" || cmd == "-clearpositiveboost" || cmd == "-clearnegativeboost") {
         return maybe_ability(from, of_or_1) +
-               fill(text_for(l.has("zeffect") ? "clearBoostFromZEffect" : "clearBoost", {from}),
+               fill(text_for(gen_, l.has("zeffect") ? "clearBoostFromZEffect" : "clearBoost", {from}),
                     {{"[POKEMON]", P(a1)}, {"[SOURCE]", P(a2)}});
     }
     if (cmd == "-invertboost") {
-        return maybe_ability(from, a1) + fill(text_for("invertBoost", {from}), {{"[POKEMON]", P(a1)}});
+        return maybe_ability(from, a1) + fill(text_for(gen_, "invertBoost", {from}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-clearallboost") {
-        return text_for("clearAllBoost", {from});
+        return text_for(gen_, "clearAllBoost", {from});
     }
     if (cmd == "-crit" || cmd == "-supereffective" || cmd == "-resisted") {
         std::string key = cmd == "-crit" ? "crit" : cmd == "-supereffective" ? "superEffective" : "resisted";
         if (l.has("spread")) {
             key += "Spread";
         }
-        return fill(text_for(key, {}), {{"[POKEMON]", P(a1)}});
+        return fill(text_for(gen_, key, {}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-immune") {
-        std::string text = text_for("block", {from});
+        std::string text = text_for(gen_, "block", {from});
         if (text.empty()) {
-            text = text_for(a1.empty() ? "immuneNoPokemon" : l.has("ohko") ? "immuneOHKO" : "immune", {from});
+            text = text_for(gen_, a1.empty() ? "immuneNoPokemon" : l.has("ohko") ? "immuneOHKO" : "immune", {from});
         }
         return maybe_ability(from, of_or_1) + fill(text, {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-miss") {
         const std::string line1 = maybe_ability(from, of.empty() ? a2 : of);
         if (a2.empty()) {
-            return line1 + fill(text_for("missNoPokemon", {}), {{"[SOURCE]", P(a1)}});
+            return line1 + fill(text_for(gen_, "missNoPokemon", {}), {{"[SOURCE]", P(a1)}});
         }
-        return line1 + fill(text_for("miss", {}), {{"[POKEMON]", P(a2)}});
+        return line1 + fill(text_for(gen_, "miss", {}), {{"[POKEMON]", P(a2)}});
     }
     if (cmd == "-fail") {
         const std::string id = effect_id(a2);
@@ -1824,12 +1911,12 @@ std::string Battle::describe(const Line& l) const {
         } else if (blocker == "uproar" && l.has("msg")) {
             key = "blockSelf";
         }
-        if (std::string text = text_for(key, {from, no_default}); !text.empty()) {
+        if (std::string text = text_for(gen_, key, {from, no_default}); !text.empty()) {
             return line1 + fill(text, {{"[POKEMON]", P(a1)}});
         }
         if (id == "unboost") {
-            return line1 + fill(text_for(a3.empty() ? "fail" : "failSingular", {"unboost"}),
-                                {{"[POKEMON]", P(a1)}, {"[STAT]", stat_name(a3)}});
+            return line1 + fill(text_for(gen_, a3.empty() ? "fail" : "failSingular", {"unboost"}),
+                                {{"[POKEMON]", P(a1)}, {"[STAT]", stat(a3)}});
         }
         key = "fail";
         if (id == "brn" || id == "frz" || id == "par" || id == "psn" || id == "tox" || id == "slp" ||
@@ -1845,61 +1932,63 @@ std::string Battle::describe(const Line& l) const {
         if (l.has("forme")) {
             key = "failWrongForme";
         }
-        std::string text = text_for(key, {id});
+        std::string text = text_for(gen_, key, {id});
         if (text.empty()) {
-            text = text_for("fail", {});
+            text = text_for(gen_, "fail", {});
         }
         return line1 + fill(text, {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-block") {
         return maybe_ability(a2, of_or_1) +
-               fill(text_for("block", {a2}),
+               fill(text_for(gen_, "block", {a2}),
                     {{"[POKEMON]", P(a1)}, {"[SOURCE]", P(l.arg(4).empty() ? of : l.arg(4))}, {"[MOVE]", a3}});
     }
     if (cmd == "-notarget") {
-        return text_for("noTarget", {});
+        return text_for(gen_, "noTarget", {});
     }
     if (cmd == "-ohko" || cmd == "-center" || cmd == "-combine") {
-        return text_for(cmd == "-ohko" ? "ohko" : cmd == "-center" ? "center" : "combine", {});
+        return text_for(gen_, cmd == "-ohko" ? "ohko" : cmd == "-center" ? "center" : "combine", {});
     }
     if (cmd == "-hitcount") {
         if (trim(a2) == "1") {
-            return text_for("hitCountSingular", {});
+            return text_for(gen_, "hitCountSingular", {});
         }
-        return fill(text_for("hitCount", {}), {{"[NUMBER]", trim(a2)}});
+        return fill(text_for(gen_, "hitCount", {}), {{"[NUMBER]", trim(a2)}});
     }
     if (cmd == "-status") {
         const std::string line1 = maybe_ability(from, of_or_1);
         std::string text;
         if (effect_id(from) == "rest") {
-            text = text_for("startFromRest", {a2});
+            text = text_for(gen_, "startFromRest", {a2});
         } else if (starts_with(from, "item:")) {
-            text = text_for("startFromItem", {a2, no_default});
+            text = text_for(gen_, "startFromItem", {a2, no_default});
         }
         if (text.empty()) {
-            text = text_for("start", {a2});
+            text = text_for(gen_, "start", {a2});
         }
         return line1 + fill(text, {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(from)}});
     }
     if (cmd == "-curestatus") {
         if (effect_id(from) == "naturalcure") {
-            return fill(text_for("activate", {from}), {{"[POKEMON]", P(a1)}});
+            return fill(text_for(gen_, "activate", {from}), {{"[POKEMON]", P(a1)}});
         }
         const std::string line1 = maybe_ability(from, of_or_1);
         if (starts_with(from, "item:")) {
-            return line1 + fill(text_for("endFromItem", {a2}), {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(from)}});
+            return line1 +
+                   fill(text_for(gen_, "endFromItem", {a2}), {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(from)}});
         }
         if (l.has("thaw")) {
-            return line1 + fill(text_for("endFromMove", {a2}), {{"[POKEMON]", P(a1)}, {"[MOVE]", effect_name(from)}});
+            return line1 +
+                   fill(text_for(gen_, "endFromMove", {a2}), {{"[POKEMON]", P(a1)}, {"[MOVE]", effect_name(from)}});
         }
-        std::string text = text_for("end", {a2, no_default});
+        std::string text = text_for(gen_, "end", {a2, no_default});
         if (text.empty()) {
-            text = fill(text_for("end", {}), {{"[EFFECT]", "status"}});
+            text = fill(text_for(gen_, "end", {}), {{"[EFFECT]", "status"}});
         }
         return line1 + fill(text, {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-cureteam") {
-        return text_for("activate", {from});
+        return text_for(gen_, "activate", {from});
     }
     if (cmd == "-singleturn" || cmd == "-singlemove") {
         std::string line1 = maybe_ability(a2, of_or_1);
@@ -1907,11 +1996,15 @@ std::string Battle::describe(const Line& l) const {
             line1 = maybe_ability(from, of_or_1);
         }
         if (effect_id(a2) == "instruct") {
-            return line1 + fill(text_for("activate", {a2}), {{"[POKEMON]", P(of)}, {"[TARGET]", P(a1)}});
+            return line1 + fill(text_for(gen_, "activate", {a2}), {{"[POKEMON]", P(of)}, {"[TARGET]", P(a1)}});
         }
-        std::string text = text_for("start", {a2, no_default});
+        std::string text = text_for(gen_, "start", {a2, no_default});
         if (text.empty()) {
-            text = fill(text_for("start", {}), {{"[EFFECT]", effect_name(a2)}});
+            // Max Guard has words only for what it does, which are those of its start too.
+            text = text_for(gen_, "activate", {a2, no_default});
+        }
+        if (text.empty()) {
+            text = fill(text_for(gen_, "start", {}), {{"[EFFECT]", effect_name(a2)}});
         }
         return line1 + fill(text, {{"[POKEMON]", P(a1)}, {"[SOURCE]", P(of)}, {"[TEAM]", team_text(side_index(a1))}});
     }
@@ -1922,23 +2015,24 @@ std::string Battle::describe(const Line& l) const {
         }
         const std::string id = effect_id(a2);
         if (id == "typechange") {
-            return line1 +
-                   fill(text_for("typeChange", {from}), {{"[POKEMON]", P(a1)}, {"[TYPE]", a3}, {"[SOURCE]", P(of)}});
+            return line1 + fill(text_for(gen_, "typeChange", {from}),
+                                {{"[POKEMON]", P(a1)}, {"[TYPE]", a3}, {"[SOURCE]", P(of)}});
         }
         if (id == "typeadd") {
-            return line1 + fill(text_for("typeAdd", {from}), {{"[POKEMON]", P(a1)}, {"[TYPE]", a3}});
+            return line1 + fill(text_for(gen_, "typeAdd", {from}), {{"[POKEMON]", P(a1)}, {"[TYPE]", a3}});
         }
         if (starts_with(id, "stockpile") && id.size() > 9) {
-            return line1 + fill(text_for("start", {"stockpile"}), {{"[POKEMON]", P(a1)}, {"[NUMBER]", id.substr(9)}});
+            return line1 +
+                   fill(text_for(gen_, "start", {"stockpile"}), {{"[POKEMON]", P(a1)}, {"[NUMBER]", id.substr(9)}});
         }
         if (starts_with(id, "perish") && id.size() > 6) {
             return line1 +
-                   fill(text_for("activate", {"perishsong"}), {{"[POKEMON]", P(a1)}, {"[NUMBER]", id.substr(6)}});
+                   fill(text_for(gen_, "activate", {"perishsong"}), {{"[POKEMON]", P(a1)}, {"[NUMBER]", id.substr(6)}});
         }
         if ((starts_with(id, "protosynthesis") || starts_with(id, "quarkdrive")) && id.size() > 3) {
             const std::string_view effect = starts_with(id, "quarkdrive") ? "quarkdrive" : "protosynthesis";
-            return line1 + fill(text_for("start", {effect}),
-                                {{"[POKEMON]", P(a1)}, {"[STAT]", stat_name(id.substr(id.size() - 3))}});
+            return line1 + fill(text_for(gen_, "start", {effect}),
+                                {{"[POKEMON]", P(a1)}, {"[STAT]", stat(id.substr(id.size() - 3))}});
         }
         std::string_view key = "start";
         if (l.has("already")) {
@@ -1961,10 +2055,10 @@ std::string Battle::describe(const Line& l) const {
         }
         std::string text;
         if (key == "start" && starts_with(from, "item:")) {
-            text = text_for("startFromItem", {from, a2, no_default});
+            text = text_for(gen_, "startFromItem", {from, a2, no_default});
         }
         if (text.empty()) {
-            text = text_for(key, {from, a2});
+            text = text_for(gen_, key, {from, a2});
         }
         return line1 + fill(text, {{"[POKEMON]", P(a1)},
                                    {"[EFFECT]", effect_name(a2)},
@@ -1979,16 +2073,16 @@ std::string Battle::describe(const Line& l) const {
         }
         const std::string id = effect_id(a2);
         if (id == "doomdesire" || id == "futuresight") {
-            return line1 + fill(text_for("activate", {a2}), {{"[TARGET]", P(a1)}});
+            return line1 + fill(text_for(gen_, "activate", {a2}), {{"[TARGET]", P(a1)}});
         }
         std::string text;
         if (starts_with(from, "item:")) {
-            text = text_for("endFromItem", {a2, no_default});
+            text = text_for(gen_, "endFromItem", {a2, no_default});
         }
         if (text.empty()) {
             // Effects that count down are known by their name: perish3 ends as Perish Song.
-            text =
-                text_for("end", {starts_with(id, "stockpile") ? std::string_view("stockpile") : std::string_view(a2)});
+            text = text_for(gen_, "end",
+                            {starts_with(id, "stockpile") ? std::string_view("stockpile") : std::string_view(a2)});
         }
         return line1 + fill(text, {{"[POKEMON]", P(a1)},
                                    {"[EFFECT]", effect_name(a2)},
@@ -2006,44 +2100,46 @@ std::string Battle::describe(const Line& l) const {
         }
         const std::string line1 = maybe_ability(from, holder.empty() ? a1 : holder);
         if (id == "thief" || id == "covet" || id == "bestow" || id == "magician" || id == "pickpocket") {
-            return line1 + fill(text_for("takeItem", {from}), {{"[POKEMON]", P(a1)},
-                                                               {"[ITEM]", effect_name(a2)},
-                                                               {"[SOURCE]", P(target.empty() ? source : target)}});
+            return line1 +
+                   fill(text_for(gen_, "takeItem", {from}), {{"[POKEMON]", P(a1)},
+                                                             {"[ITEM]", effect_name(a2)},
+                                                             {"[SOURCE]", P(target.empty() ? source : target)}});
         }
         if (id == "frisk") {
             const bool target_seen = !of.empty() && !a1.empty() && of != a1;
-            return line1 + fill(text_for(target_seen ? "activate" : "activateNoTarget", {"Frisk"}),
+            return line1 + fill(text_for(gen_, target_seen ? "activate" : "activateNoTarget", {"Frisk"}),
                                 {{"[POKEMON]", P(of)}, {"[ITEM]", effect_name(a2)}, {"[TARGET]", P(a1)}});
         }
         if (!from.empty()) {
-            return line1 + fill(text_for("addItem", {from}), {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(a2)}});
+            return line1 + fill(text_for(gen_, "addItem", {from}), {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(a2)}});
         }
-        return line1 + fill(text_for("start", {a2, no_default}), {{"[POKEMON]", P(a1)}});
+        return line1 + fill(text_for(gen_, "start", {a2, no_default}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-enditem") {
         const std::string line1 = maybe_ability(from, of_or_1);
         if (l.has("eat")) {
-            return line1 + fill(text_for("eatItem", {from}), {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(a2)}});
+            return line1 + fill(text_for(gen_, "eatItem", {from}), {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(a2)}});
         }
         const std::string id = effect_id(from);
         if (id == "gem") {
-            return line1 + fill(text_for("useGem", {a2}),
+            return line1 + fill(text_for(gen_, "useGem", {a2}),
                                 {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(a2)}, {"[MOVE]", l.tag("move")}});
         }
         if (id == "stealeat") {
             return line1 +
-                   fill(text_for("removeItem", {"Bug Bite"}), {{"[SOURCE]", P(of)}, {"[ITEM]", effect_name(a2)}});
+                   fill(text_for(gen_, "removeItem", {"Bug Bite"}), {{"[SOURCE]", P(of)}, {"[ITEM]", effect_name(a2)}});
         }
         if (!from.empty()) {
-            return line1 + fill(text_for("removeItem", {from}),
+            return line1 + fill(text_for(gen_, "removeItem", {from}),
                                 {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(a2)}, {"[SOURCE]", P(of)}});
         }
         if (l.has("weaken")) {
-            return line1 + fill(text_for("activateWeaken", {}), {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(a2)}});
+            return line1 +
+                   fill(text_for(gen_, "activateWeaken", {}), {{"[POKEMON]", P(a1)}, {"[ITEM]", effect_name(a2)}});
         }
-        std::string text = text_for("end", {a2, no_default});
+        std::string text = text_for(gen_, "end", {a2, no_default});
         if (text.empty()) {
-            text = fill(text_for("activateItem", {}), {{"[ITEM]", effect_name(a2)}});
+            text = fill(text_for(gen_, "activateItem", {}), {{"[ITEM]", effect_name(a2)}});
         }
         return line1 + fill(text, {{"[POKEMON]", P(a1)}, {"[TARGET]", P(of)}});
     }
@@ -2056,46 +2152,64 @@ std::string Battle::describe(const Line& l) const {
         }
         std::string line1 = ability(old_ability, a1) + ability(a2, a1);
         if (l.has("fail")) {
-            return line1 + text_for("block", {from});
+            return line1 + text_for(gen_, "block", {from});
         }
         if (!from.empty()) {
             line1 = maybe_ability(from, a1) + line1;
-            return line1 + fill(text_for("changeAbility", {from}),
+            return line1 + fill(text_for(gen_, "changeAbility", {from}),
                                 {{"[POKEMON]", P(a1)}, {"[ABILITY]", effect_name(a2)}, {"[SOURCE]", P(of)}});
         }
         const std::string id = effect_id(a2);
         if (id == "unnerve") {
             const int side = side_index(a1);
-            return line1 + fill(text_for("start", {a2}), {{"[TEAM]", team_text(side < 0 ? 0 : 1 - side)}});
+            return line1 + fill(text_for(gen_, "start", {a2}), {{"[TEAM]", team_text(side < 0 ? 0 : 1 - side)}});
         }
         const std::string_view key = id == "anticipation" || id == "sturdy" ? "activate" : "start";
-        return line1 + fill(text_for(key, {a2, no_default}), {{"[POKEMON]", P(a1)}});
+        return line1 + fill(text_for(gen_, key, {a2, no_default}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-endability") {
         if (!a2.empty()) {
             return ability(a2, a1);
         }
-        return maybe_ability(from, a1) + fill(text_for("start", {"Gastro Acid"}), {{"[POKEMON]", P(a1)}});
+        return maybe_ability(from, a1) + fill(text_for(gen_, "start", {"Gastro Acid"}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-terastallize") {
-        return fill(text_for("terastallize", {}), {{"[POKEMON]", P(a1)}, {"[TYPE]", a2}});
+        return fill(text_for(gen_, "terastallize", {}), {{"[POKEMON]", P(a1)}, {"[TYPE]", a2}});
     }
     if (cmd == "-mega") {
-        return fill(text_for("mega", {a2}),
-                    {{"[POKEMON]", P(a1)}, {"[ITEM]", a3}, {"[TRAINER]", trainer(side_index(a1))}});
+        // "Venusaur's Venusaurite is reacting to the Key Stone!", then "Venusaur has Mega Evolved into Mega
+        // Venusaur!". Rayquaza needs no Mega Stone; generation 6 had Mega Bracelets.
+        std::string_view key = gen_ < 7 ? "megaGen6" : "mega";
+        std::string_view effect;
+        if (to_id(a2) == "rayquaza") {
+            key = "megaNoItem";
+            effect = "dragonascent";
+        } else if (trim(a3).empty()) {
+            key = "megaNoItem";
+        }
+        const std::string pokemon = P(a1);
+        const std::string text = text_for(gen_, key, {effect}) +
+                                 fill(text_for(gen_, "transformMega", {}), {{"[POKEMON]", pokemon}, {"[SPECIES]", a2}});
+        return fill(text, {{"[POKEMON]", pokemon}, {"[ITEM]", a3}, {"[TRAINER]", trainer(side_index(a1))}});
+    }
+    if (cmd == "-zpower") {
+        return fill(text_for(gen_, "zPower", {}), {{"[POKEMON]", P(a1)}});
+    }
+    if (cmd == "-zbroken") {
+        return fill(text_for(gen_, "zBroken", {}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-primal") {
-        return fill(text_for("primal", {}), {{"[POKEMON]", P(a1)}});
+        return fill(text_for(gen_, "primal", {}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-burst") {
-        return fill(text_for("activate", {"Ultranecrozium Z"}), {{"[POKEMON]", P(a1)}});
+        return fill(text_for(gen_, "activate", {"Ultranecrozium Z"}), {{"[POKEMON]", P(a1)}});
     }
     if (cmd == "-activate") {
         std::string_view pokemon = a1;
         std::string_view target = a3;
         const std::string id = effect_id(a2);
         if (id == "celebrate") {
-            return fill(text_for("activate", {"celebrate"}), {{"[TRAINER]", trainer(side_index(a1))}});
+            return fill(text_for(gen_, "activate", {"celebrate"}), {{"[TRAINER]", trainer(side_index(a1))}});
         }
         if (target.empty() && (id == "hyperdrill" || id == "hyperspacefury" || id == "hyperspacehole" ||
                                id == "phantomforce" || id == "shadowforce" || id == "feint")) {
@@ -2107,7 +2221,7 @@ std::string Battle::describe(const Line& l) const {
         }
         std::string line1 = maybe_ability(a2, pokemon);
         if (id == "lockon" || id == "mindreader") {
-            return line1 + fill(text_for("start", {a2}), {{"[POKEMON]", P(of)}, {"[SOURCE]", P(pokemon)}});
+            return line1 + fill(text_for(gen_, "start", {a2}), {{"[POKEMON]", P(of)}, {"[SOURCE]", P(pokemon)}});
         }
         std::string_view key = "activate";
         if (id == "forewarn" && pokemon == target) {
@@ -2119,16 +2233,16 @@ std::string Battle::describe(const Line& l) const {
         if (id == "orichalcumpulse" && l.has("source")) {
             key = "start";
         }
-        std::string text = text_for(key, {a2, no_default});
+        std::string text = text_for(gen_, key, {a2, no_default});
         if (text.empty()) {
             // Protect and the like say again what they do when they block a move.
-            text = text_for("block", {a2, no_default});
+            text = text_for(gen_, "block", {a2, no_default});
         }
         if (text.empty()) {
             if (!line1.empty()) {
                 return line1;
             }
-            return fill(text_for("activate", {}), {{"[EFFECT]", effect_name(a2)}});
+            return fill(text_for(gen_, "activate", {}), {{"[EFFECT]", effect_name(a2)}});
         }
         if (id == "brickbreak") {
             text = fill(text, {{"[TEAM]", team_text(side_index(target))}});
@@ -2145,36 +2259,36 @@ std::string Battle::describe(const Line& l) const {
                                    {"[NAME]", l.tag("name")}});
     }
     if (cmd == "-prepare") {
-        return fill(text_for("prepare", {a2}), {{"[POKEMON]", P(a1)}, {"[TARGET]", P(a3)}});
+        return fill(text_for(gen_, "prepare", {a2}), {{"[POKEMON]", P(a1)}, {"[TARGET]", P(a3)}});
     }
     if (cmd == "-waiting") {
-        return fill(text_for("activate", {"Water Pledge"}), {{"[POKEMON]", P(a1)}, {"[TARGET]", P(a2)}});
+        return fill(text_for(gen_, "activate", {"Water Pledge"}), {{"[POKEMON]", P(a1)}, {"[TARGET]", P(a2)}});
     }
     if (cmd == "-weather") {
         if (a1.empty() || a1 == "none") {
-            return text_for("end", {weather_id_, no_default});
+            return text_for(gen_, "end", {weather_id_, no_default});
         }
         if (l.has("upkeep")) {
-            return text_for("upkeep", {a1, no_default});
+            return text_for(gen_, "upkeep", {a1, no_default});
         }
-        return maybe_ability(from, of) + text_for("start", {a1, no_default});
+        return maybe_ability(from, of) + text_for(gen_, "start", {a1, no_default});
     }
     if (cmd == "-fieldstart" || cmd == "-fieldactivate") {
         const std::string line1 = maybe_ability(from, of);
         if (effect_id(from) == "hadronengine") {
-            return line1 + fill(text_for("start", {"hadronengine"}), {{"[POKEMON]", P(of)}});
+            return line1 + fill(text_for(gen_, "start", {"hadronengine"}), {{"[POKEMON]", P(of)}});
         }
         const std::string_view key = cmd == "-fieldstart" || effect_id(a1) == "perishsong" ? "start" : "activate";
-        std::string text = text_for(key, {a1, no_default});
+        std::string text = text_for(gen_, key, {a1, no_default});
         if (text.empty()) {
-            text = fill(text_for("startFieldEffect", {}), {{"[EFFECT]", effect_name(a1)}});
+            text = fill(text_for(gen_, "startFieldEffect", {}), {{"[EFFECT]", effect_name(a1)}});
         }
         return line1 + fill(text, {{"[POKEMON]", P(of)}});
     }
     if (cmd == "-fieldend") {
-        std::string text = text_for("end", {a1, no_default});
+        std::string text = text_for(gen_, "end", {a1, no_default});
         if (text.empty()) {
-            text = fill(text_for("endFieldEffect", {}), {{"[EFFECT]", effect_name(a1)}});
+            text = fill(text_for(gen_, "endFieldEffect", {}), {{"[EFFECT]", effect_name(a1)}});
         }
         return text;
     }
@@ -2184,15 +2298,16 @@ std::string Battle::describe(const Line& l) const {
             return {};
         }
         const bool start = cmd == "-sidestart";
-        std::string text = text_for(start ? "start" : "end", {a2, no_default});
+        std::string text = text_for(gen_, start ? "start" : "end", {a2, no_default});
         if (text.empty()) {
-            text = fill(text_for(start ? "startTeamEffect" : "endTeamEffect", {}), {{"[EFFECT]", effect_name(a2)}});
+            text =
+                fill(text_for(gen_, start ? "startTeamEffect" : "endTeamEffect", {}), {{"[EFFECT]", effect_name(a2)}});
         }
         return fill(text, {{"[TEAM]", team_text(side)},
                            {"[PARTY]", lookup("default", near(side) ? "party" : "opposingParty")}});
     }
     if (cmd == "-swapsideconditions") {
-        return text_for("activate", {"Court Change"});
+        return text_for(gen_, "activate", {"Court Change"});
     }
     return {};
 }
@@ -2420,6 +2535,8 @@ void Battle::apply(const Line& l) {
         if (side >= 0 && !trim(a2).empty()) {
             sides_[side].name = std::string(trim(a2));
         }
+    } else if (cmd == "gen") {
+        gen_ = std::clamp(to_int(a1, 9), 1, 9);
     } else if (cmd == "teamsize") {
         if (side >= 0) {
             sides_[side].team_size = std::clamp(to_int(a2, 6), 1, 24);
@@ -2675,6 +2792,22 @@ void Battle::apply(const Line& l) {
 }
 
 void Battle::request(std::string_view text) {
+    // A Z-Move or Max Move of a request: {"move": "Breakneck Blitz" or "maxgeyser", "type": ..., "basePower": ...}.
+    const auto gimmick = [](const json::Value& m) {
+        Gimmick g;
+        g.name = std::string(m["move"].str());
+        for (const auto& [id, name] : max_move_names) {
+            if (to_id(g.name) == id) {
+                g.name = std::string(name);
+            }
+        }
+        g.type = std::string(m["type"].str());
+        g.category = std::string(m["category"].str());
+        g.base_power = std::max(0, m["basePower"].integer());
+        g.accuracy = m["accuracy"].is_number() ? std::clamp(m["accuracy"].integer(), 0, 1000) : 0;
+        g.desc = std::string(m["desc"].str());
+        return g;
+    };
     if (side_.empty()) {
         return;
     }
@@ -2715,6 +2848,10 @@ void Battle::request(std::string_view text) {
             mon.ability = std::string(!p["abilityName"].str().empty() ? p["abilityName"].str()
                                       : !p["ability"].str().empty()   ? p["ability"].str()
                                                                       : p["baseAbility"].str());
+            // Generations 1 and 2 had no abilities.
+            if (to_id(mon.ability) == "noability") {
+                mon.ability.clear();
+            }
             const json::Value& names = p["moveNames"].is_array() ? p["moveNames"] : p["moves"];
             for (const json::Value& m : names.items) {
                 if (!m.str().empty() && mon.moves.size() < 12) {
@@ -2771,7 +2908,11 @@ void Battle::request(std::string_view text) {
     } else if (r["active"].is_array() && r["active"][0].is_object()) {
         q.kind = "move";
         const json::Value& active = r["active"][0];
-        for (const json::Value& m : active["moves"].items) {
+        // Z-Moves and Max Moves come in lists of their own, one for each move (null for those without).
+        const json::Value& zmoves = active["canZMove"];
+        const json::Value& max_moves = active["maxMoves"]["maxMoves"];
+        for (std::size_t i = 0; i < active["moves"].size(); ++i) {
+            const json::Value& m = active["moves"][i];
             if (!m.is_object() || q.moves.size() >= 24) {
                 continue;
             }
@@ -2789,9 +2930,23 @@ void Battle::request(std::string_view text) {
             move.accuracy = m["accuracy"].is_number() ? std::clamp(m["accuracy"].integer(), 0, 1000) : 0;
             move.desc = std::string(m["desc"].str());
             move.disabled = m["disabled"].truthy();
+            if (zmoves[i].is_object()) {
+                move.zmove = gimmick(zmoves[i]);
+            }
+            if (max_moves[i].is_object()) {
+                move.max_move = gimmick(max_moves[i]);
+            }
             q.moves.push_back(std::move(move));
         }
         q.can_tera = std::string(active["canTerastallize"].str());
+        q.can_mega = active["canMegaEvo"].truthy();
+        q.can_ultra = active["canUltraBurst"].truthy();
+        q.can_dynamax = active["canDynamax"].truthy();
+        // Max Moves without the choice to Dynamax: it is Dynamaxed already.
+        const Mon* in =
+            ours.active >= 0 && ours.active < static_cast<int>(ours.team.size()) ? &ours.team[ours.active] : nullptr;
+        q.dynamaxed = (active["maxMoves"].is_object() && !q.can_dynamax) ||
+                      (in && std::ranges::find(in->volatiles, "Dynamax") != in->volatiles.end());
         q.trapped = active["trapped"].truthy();
     }
     if (over_ || r["wait"].truthy() || q.kind.empty()) {
@@ -2819,6 +2974,24 @@ namespace {
         return status.empty() ? std::format("{}%", percent) : std::format("{}% {}", percent, status);
     }
 
+    // "Fire, Special, 110 power, 8/8 PP".
+    std::string move_about(std::string_view type, std::string_view category, int power, int pp, int maxpp) {
+        std::string about(type);
+        const auto add = [&](std::string_view part) {
+            about += about.empty() ? std::string(part) : std::format(", {}", part);
+        };
+        if (!category.empty()) {
+            add(category);
+        }
+        if (power > 0) {
+            add(std::format("{} power", power));
+        }
+        if (maxpp > 0) {
+            add(std::format("{}/{} PP", pp, maxpp));
+        }
+        return about;
+    }
+
 } // namespace
 
 std::vector<std::string> Battle::menu() const {
@@ -2833,21 +3006,41 @@ std::vector<std::string> Battle::menu() const {
     }
     for (std::size_t i = 0; i < q.moves.size(); ++i) {
         const Move& m = q.moves[i];
-        std::string about = m.type;
-        if (!m.category.empty()) {
-            about += about.empty() ? m.category : ", " + m.category;
+        const char* disabled = m.disabled ? " (disabled)" : "";
+        if (q.dynamaxed && m.max_move) {
+            // Dynamaxed, a move is its Max Move (whose power comes from the move's).
+            const Gimmick& max = *m.max_move;
+            lines.push_back(std::format("move {}  {} ({})  {}{}", i + 1, max.name, m.name,
+                                        move_about(max.type, max.category, 0, m.pp, m.maxpp), disabled));
+        } else {
+            lines.push_back(std::format("move {}  {}  {}{}", i + 1, m.name,
+                                        move_about(m.type, m.category, m.base_power, m.pp, m.maxpp), disabled));
         }
-        if (m.base_power > 0) {
-            about += std::format("{}{} power", about.empty() ? "" : ", ", m.base_power);
-        }
-        if (m.maxpp > 0) {
-            about += std::format("{}{}/{} PP", about.empty() ? "" : ", ", m.pp, m.maxpp);
-        }
-        lines.push_back(std::format("move {}  {}  {}{}", i + 1, m.name, about, m.disabled ? " (disabled)" : ""));
     }
     if (q.kind == "move" && !q.can_tera.empty()) {
         lines.push_back(
             std::format("move 1 tera  Terastallize into the {} type, with any move (move N tera)", q.can_tera));
+    }
+    if (q.kind == "move" && q.can_mega) {
+        lines.emplace_back("move 1 mega  Mega Evolve, with any move (move N mega)");
+    }
+    if (q.kind == "move" && q.can_ultra) {
+        lines.emplace_back("move 1 ultra  Ultra Burst, with any move (move N ultra)");
+    }
+    for (std::size_t i = 0; i < q.moves.size(); ++i) {
+        if (const auto& z = q.moves[i].zmove) {
+            lines.push_back(std::format("move {} z  {}  {}", i + 1, z->name,
+                                        move_about(z->type, z->category, z->base_power, 0, 0)));
+        }
+    }
+    if (q.kind == "move" && q.can_dynamax) {
+        lines.emplace_back("move 1 max  Dynamax, with any move (move N max)");
+        for (std::size_t i = 0; i < q.moves.size(); ++i) {
+            if (const auto& max = q.moves[i].max_move) {
+                lines.push_back(std::format("move {} max  {}  {}", i + 1, max->name,
+                                            move_about(max->type, max->category, 0, 0, 0)));
+            }
+        }
     }
     const int me = side_ == "p2" ? 1 : 0;
     const Side& ours = sides_[me];
@@ -2876,14 +3069,6 @@ std::optional<std::string> Battle::parse_choice(std::string_view typed, std::str
     }
     const Request& q = *request_;
     std::vector<std::string> words = split(lowercase(typed), ' ');
-    bool tera = false;
-    std::erase_if(words, [&](const std::string& w) {
-        if (w == "tera" || w == "terastallize" || w == "terastalize") {
-            tera = true;
-            return true;
-        }
-        return false;
-    });
     if (words.empty()) {
         error = "Choose a move or a Pokémon (see the menu).";
         return std::nullopt;
@@ -2906,9 +3091,62 @@ std::optional<std::string> Battle::parse_choice(std::string_view typed, std::str
         error = q.reviving ? "Choose a fainted Pokémon to bring back." : "You have to switch.";
         return std::nullopt;
     }
-    std::string arg;
-    for (const std::string& w : words) {
-        arg += arg.empty() ? w : " " + w;
+    const auto joined = [](const std::vector<std::string>& parts) {
+        std::string text;
+        for (const std::string& w : parts) {
+            text += text.empty() ? w : " " + w;
+        }
+        return text;
+    };
+
+    // The name of a Z-Move or a Max Move is that move with its gimmick: "breakneck blitz", "max geyser".
+    int move = 0;
+    std::string gimmick;
+    if (what != "switch" && q.kind == "move") {
+        const std::string id = to_id(joined(words));
+        for (std::size_t i = 0; i < q.moves.size() && !id.empty(); ++i) {
+            if (q.moves[i].zmove && to_id(q.moves[i].zmove->name) == id) {
+                move = static_cast<int>(i) + 1;
+                gimmick = "zmove";
+            } else if (q.moves[i].max_move && to_id(q.moves[i].max_move->name) == id &&
+                       (q.dynamaxed || q.can_dynamax)) {
+                move = static_cast<int>(i) + 1;
+                gimmick = "dynamax";
+            }
+        }
+    }
+    if (move == 0) {
+        // The gimmicks that go with a move, at most one: "move 2 mega", "max 1", "tera 3".
+        static constexpr std::pair<std::string_view, std::string_view> words_of[] = {{"tera", "terastallize"},
+                                                                                     {"terastallize", "terastallize"},
+                                                                                     {"terastalize", "terastallize"},
+                                                                                     {"mega", "mega"},
+                                                                                     {"ultra", "ultra"},
+                                                                                     {"ultraburst", "ultra"},
+                                                                                     {"z", "zmove"},
+                                                                                     {"zmove", "zmove"},
+                                                                                     {"max", "dynamax"},
+                                                                                     {"dynamax", "dynamax"}};
+        bool twice = false;
+        std::erase_if(words, [&](const std::string& w) {
+            for (const auto& [word, choice] : words_of) {
+                if (w == word) {
+                    twice = twice || (!gimmick.empty() && gimmick != choice);
+                    gimmick = choice;
+                    return true;
+                }
+            }
+            return false;
+        });
+        if (twice) {
+            error = "Only one of Terastallizing, Mega Evolving, Ultra Burst, Z-Moves and Dynamaxing at a time.";
+            return std::nullopt;
+        }
+    }
+    const std::string arg = joined(words);
+    if (move == 0 && arg.empty()) {
+        error = "Choose a move or a Pokémon (see the menu).";
+        return std::nullopt;
     }
     const int me = side_ == "p2" ? 1 : 0;
     const Side& ours = sides_[me];
@@ -2916,9 +3154,8 @@ std::optional<std::string> Battle::parse_choice(std::string_view typed, std::str
     const std::string arg_id = to_id(arg);
 
     // Which move or Pokémon: by number, or else by name (moves first, when it could be either).
-    int move = 0;
     int pokemon = 0;
-    if (what != "switch" && q.kind == "move") {
+    if (move == 0 && what != "switch" && q.kind == "move") {
         if (number > 0) {
             move = number;
         } else if (!arg_id.empty()) {
@@ -2928,7 +3165,7 @@ std::optional<std::string> Battle::parse_choice(std::string_view typed, std::str
                 }
             }
         }
-        if (move == 0 && what == "move") {
+        if (move == 0 && (what == "move" || !gimmick.empty())) {
             error = std::format("You have no move {}.", arg);
             return std::nullopt;
         }
@@ -2959,11 +3196,32 @@ std::optional<std::string> Battle::parse_choice(std::string_view typed, std::str
             error = std::format("{} is disabled now.", m.name);
             return std::nullopt;
         }
-        if (tera && q.can_tera.empty()) {
+        if (gimmick == "terastallize" && q.can_tera.empty()) {
             error = "You cannot Terastallize now.";
             return std::nullopt;
         }
-        return std::format("move {}{}", move, tera ? " terastallize" : "");
+        if (gimmick == "mega" && !q.can_mega) {
+            error = "You cannot Mega Evolve now.";
+            return std::nullopt;
+        }
+        if (gimmick == "ultra" && !q.can_ultra) {
+            error = "You cannot Ultra Burst now.";
+            return std::nullopt;
+        }
+        if (gimmick == "zmove" && !m.zmove) {
+            error = std::format("{} cannot be a Z-Move now.", m.name);
+            return std::nullopt;
+        }
+        if (gimmick == "dynamax") {
+            if (q.dynamaxed) {
+                // Dynamaxed, every move is a Max Move already.
+                gimmick.clear();
+            } else if (!q.can_dynamax) {
+                error = "You cannot Dynamax now.";
+                return std::nullopt;
+            }
+        }
+        return gimmick.empty() ? std::format("move {}", move) : std::format("move {} {}", move, gimmick);
     }
     if (pokemon > static_cast<int>(ours.team.size())) {
         error = std::format("There is no Pokémon {}: choose 1 to {}.", pokemon, ours.team.size());
@@ -2971,8 +3229,8 @@ std::optional<std::string> Battle::parse_choice(std::string_view typed, std::str
     }
     const Mon& mon = ours.team[pokemon - 1];
     const bool fainted = mon.status == "fnt" || mon.hp <= 0;
-    if (tera) {
-        error = "Terastallizing goes with a move, not a switch.";
+    if (!gimmick.empty()) {
+        error = "Terastallizing, Mega Evolving, Ultra Burst, Z-Moves and Dynamaxing go with a move, not a switch.";
         return std::nullopt;
     }
     if (q.reviving) {
@@ -3002,6 +3260,14 @@ std::optional<std::string> Battle::parse_choice(std::string_view typed, std::str
 }
 
 std::string Battle::json(std::string_view extra) const {
+    const auto gimmick_json = [](const std::optional<Gimmick>& g) {
+        if (!g) {
+            return std::string("null");
+        }
+        return std::format(R"({{"name":{},"type":{},"category":{},"basePower":{},"accuracy":{},"desc":{}}})",
+                           json::quote(g->name), json::quote(g->type), json::quote(g->category), g->base_power,
+                           g->accuracy > 0 ? std::to_string(g->accuracy) : std::string("true"), json::quote(g->desc));
+    };
     std::string out = "{";
     Writer w(out);
     if (!trim(extra).empty()) {
@@ -3009,6 +3275,7 @@ std::string Battle::json(std::string_view extra) const {
         out += extra;
     }
     w.key("you").string(side_);
+    w.key("gen").number(gen_);
     w.key("turn").number(turn_);
     w.key("over").boolean(over_);
     w.key("winner").string(over_ ? winner_ : std::string());
@@ -3054,6 +3321,8 @@ std::string Battle::json(std::string_view extra) const {
             mw.key("ability").string(m.ability);
             mw.key("moves").raw(string_array(m.moves));
             mw.key("stats").raw(ours ? int_object(m.stats) : "{}");
+            mw.key("dynamaxed").boolean(std::ranges::find(m.volatiles, "Dynamax") != m.volatiles.end());
+            mw.key("mega").boolean(m.species.find("-Mega") != std::string::npos);
             out += '}';
         }
         out += ']';
@@ -3108,10 +3377,16 @@ std::string Battle::json(std::string_view extra) const {
             }
             mw.key("desc").string(m.desc);
             mw.key("disabled").boolean(m.disabled);
+            mw.key("zmove").raw(gimmick_json(m.zmove));
+            mw.key("maxMove").raw(gimmick_json(m.max_move));
             out += '}';
         }
         out += ']';
         rw.key("canTera").string(q.can_tera);
+        rw.key("canMega").boolean(q.can_mega);
+        rw.key("canUltraBurst").boolean(q.can_ultra);
+        rw.key("canDynamax").boolean(q.can_dynamax);
+        rw.key("dynamaxed").boolean(q.dynamaxed);
         rw.key("trapped").boolean(q.trapped);
         rw.key("reviving").boolean(q.reviving);
         rw.key("switches");

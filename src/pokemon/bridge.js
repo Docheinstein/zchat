@@ -4,24 +4,30 @@
 //
 //   node bridge.js FORMAT P1-NAME P2-NAME
 //
+// where FORMAT is one of Showdown's random battles, gen1randombattle to gen9randombattle.
+//
 // It reads commands on stdin, one per line:
-//   p1 CHOICE | p2 CHOICE    a player's choice, as Showdown takes it ("move 1", "switch 3", "move 2 terastallize")
+//   p1 CHOICE | p2 CHOICE    a player's choice, as Showdown takes it ("move 1", "switch 3", "move 2 terastallize",
+//                            "move 1 mega", "move 3 zmove", "move 2 dynamax")
 //   forcewin p1|p2           ends the battle with that player winning (the timer ran out, a player left)
 //   forcetie                 ends it with no winner
 // and prints on stdout, one per line, what the simulator says, as "STREAM TEXT", where STREAM is spectator (what
 // everyone may see), p1 or p2 (what only that player may see: their requests, their side's exact HP...), and TEXT is
 // the message with backslashes doubled and line breaks as \n. "ready" is printed once it runs; "exit" when it ends.
 //
-// What zchat cannot know without the Pokédex is added to the messages: each move of a request gets its type,
-// category, base power, accuracy and short description, and each Pokémon of a request its types (and the request
-// its rqid); and after every
-// line showing a Pokémon (switching in, changing forme) comes "|zchat-types|POKEMON|TYPE1/TYPE2".
+// What zchat cannot know without the Pokédex (the battle's generation's) is added to the messages: each move of a
+// request gets its type, category, base power, accuracy and short description, and so do its Z-Moves and Max Moves;
+// each Pokémon of a request gets its types, and the request its rqid; and after every line showing a Pokémon
+// (switching in, changing forme) comes "|zchat-types|POKEMON|TYPE1/TYPE2".
 
 "use strict";
 
-const {BattleStream, getPlayerStreams, Dex} = require("pokemon-showdown");
+const {BattleStream, getPlayerStreams, Dex: AllDex} = require("pokemon-showdown");
 
-const [format, p1, p2] = process.argv.slice(2);
+const [given, p1, p2] = process.argv.slice(2);
+const format = /^gen[1-9]randombattle$/.test(given || "") ? given : "gen9randombattle";
+// Types and moves as they were in that generation (Clefairy was Normal, Bite was Normal).
+const Dex = AllDex.forFormat(format);
 const stream = new BattleStream();
 const streams = getPlayerStreams(stream);
 
@@ -35,16 +41,34 @@ const typesOf = details => Dex.species.get(details.split(",")[0]).types.join("/"
 // which request a choice answers.
 const rqids = {p1: 0, p2: 0};
 
+// A move of a request (by id or name), with what the Pokédex says of it.
+function describe(m, id) {
+    const move = Dex.moves.get(id);
+    if (!move.exists) return;
+    Object.assign(m, {type: move.type, category: move.category, basePower: move.basePower, accuracy: move.accuracy,
+                      desc: move.shortDesc || move.desc});
+}
+
 function enrichRequest(json, tag) {
     const request = JSON.parse(json);
     if (!request.rqid && rqids[tag] !== undefined) request.rqid = ++rqids[tag];
     for (const active of request.active || []) {
-        for (const m of active.moves || []) {
-            const move = Dex.moves.get(m.id);
-            if (!move.exists) continue;
-            Object.assign(m, {type: move.type, category: move.category, basePower: move.basePower,
-                              accuracy: move.accuracy, desc: move.shortDesc || move.desc});
-        }
+        for (const m of active.moves || []) describe(m, m.id);
+        // Z-Moves and Max Moves, one per move (a Z-Move may be null): their power is the move's they come from (the
+        // Pokédex has a placeholder for theirs), except for status ones.
+        const based = (list, power) => (list || []).forEach((g, i) => {
+            if (!g) return;
+            describe(g, g.move);
+            const base = Dex.moves.get((active.moves[i] || {}).id);
+            // A status move's Z-Move ("Z-Happy Hour") is the move itself, with a Z-Power effect on top.
+            if (!g.type && base.exists) {
+                Object.assign(g, {type: base.type, category: base.category, basePower: 0, accuracy: base.accuracy,
+                                  desc: `${base.shortDesc || base.desc} Z-Power: an extra effect first.`});
+            }
+            if (base.exists && g.category !== "Status" && power(base)) g.basePower = power(base);
+        });
+        based(active.canZMove, base => base.zMove && base.zMove.basePower);
+        based(active.maxMoves && active.maxMoves.maxMoves, base => base.maxMove && base.maxMove.basePower);
     }
     for (const p of (request.side && request.side.pokemon) || []) {
         p.types = typesOf(p.details);
@@ -86,7 +110,7 @@ for (const tag of ["spectator", "p1", "p2"]) {
     setTimeout(() => process.exit(0), 200);
 })();
 
-streams.omniscient.write(`>start ${JSON.stringify({formatid: format || "gen9randombattle"})}
+streams.omniscient.write(`>start ${JSON.stringify({formatid: format})}
 >player p1 ${JSON.stringify({name: p1 || "Player 1"})}
 >player p2 ${JSON.stringify({name: p2 || "Player 2"})}`);
 out("ready", "");
