@@ -110,7 +110,9 @@ public:
     //   "field": {"weather": "Rain" | "", "terrain": "Electric Terrain" | "", "other": ["Trick Room", ...]}
     //   "request": null, or the request waiting (see rqid()):
     //       {"rqid": 5, "kind": "move" | "switch",   switch: a forced switch, after a faint or U-turn
-    //        "moves": [{"slot": 1, "name": "Thunder Wave", "id": "thunderwave", "pp": 32, "maxpp": 32,
+    //        "moves": [{"slot": 1, "name": "Thunder Wave", "id": "thunderwave", "pp": 32, "maxpp": 32 (both null when
+    //                   not counted: the only thing left to do, like Recharge or a locked Outrage, which is not
+    //                   out of PP),
     //                   "type": "Electric", "category": "Status", "basePower": 0, "accuracy": 90 | true,
     //                   "desc": "...", "disabled": bool,
     //                   "zmove": null | gimmick move,      its Z-Move, when it can be one now
@@ -182,6 +184,8 @@ private:
         std::string id;
         int pp = 0;
         int maxpp = 0;
+        // Whether its PP are counted: not for the only thing left to do (Recharge, a locked Outrage, Struggle...).
+        bool counted = true;
         std::string type;
         std::string category;
         int base_power = 0;

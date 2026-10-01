@@ -2924,6 +2924,7 @@ void Battle::request(std::string_view text) {
             }
             move.pp = std::max(0, m["pp"].integer());
             move.maxpp = std::max(0, m["maxpp"].integer());
+            move.counted = m["maxpp"].is_number();
             move.type = std::string(m["type"].str());
             move.category = std::string(m["category"].str());
             move.base_power = std::max(0, m["basePower"].integer());
@@ -3364,8 +3365,14 @@ std::string Battle::json(std::string_view extra) const {
             mw.key("slot").number(static_cast<int>(i) + 1);
             mw.key("name").string(m.name);
             mw.key("id").string(m.id);
-            mw.key("pp").number(m.pp);
-            mw.key("maxpp").number(m.maxpp);
+            // null: not counted, which is not out of PP.
+            if (m.counted) {
+                mw.key("pp").number(m.pp);
+                mw.key("maxpp").number(m.maxpp);
+            } else {
+                mw.key("pp").raw("null");
+                mw.key("maxpp").raw("null");
+            }
             mw.key("type").string(m.type);
             mw.key("category").string(m.category);
             mw.key("basePower").number(m.base_power);

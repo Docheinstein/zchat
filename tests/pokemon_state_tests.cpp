@@ -1148,3 +1148,37 @@ TEST(pokemon_older_generations_words) {
     CHECK(has_line(nine, "Reflect made your team stronger against physical moves!"));
     CHECK_EQ(nine.gen(), 9);
 }
+
+// When there is only one thing to do (recharging after Hyper Beam, a locked Outrage, Struggle, or sleeping in Gen 1,
+// where it is "Fight"), Showdown's request has that one move without PP: it is not out of PP, it is the move to pick.
+TEST(pokemon_forced_moves_have_no_pp) {
+    for (const std::string move : {"Recharge", "Fight", "Outrage", "Struggle"}) {
+        std::string id = move;
+        std::ranges::transform(id, id.begin(), [](char c) {
+            return static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+        });
+        Battle b("p1");
+        b.feed("|player|p1|Ash||\n|player|p2|Gary||\n|gen|9\n|start\n|switch|p1a: Snorlax|Snorlax, L84, M|400/400\n"
+               "|switch|p2a: Tauros|Tauros, L84, M|100/100\n|turn|2");
+        b.feed("|request|{\"active\":[{\"moves\":[{\"move\":\"" + move + "\",\"id\":\"" + id +
+               "\"}],\"trapped\":true}],\"side\":{\"name\":\"Ash\",\"id\":\"p1\",\"pokemon\":[{\"ident\":\"p1: Snorlax\","
+               "\"details\":\"Snorlax, L84, M\",\"condition\":\"400/400 slp\",\"active\":true,\"stats\":{},\"moves\":[],"
+               "\"baseAbility\":\"\",\"item\":\"\",\"pokeball\":\"pokeball\"},{\"ident\":\"p1: Mew\",\"details\":\"Mew, L80\","
+               "\"condition\":\"300/300\",\"active\":false,\"stats\":{},\"moves\":[],\"baseAbility\":\"\",\"item\":\"\","
+               "\"pokeball\":\"pokeball\"}]},\"rqid\":5}");
+        REQUIRE(b.rqid() == 5);
+        const auto state = parsed(b);
+        const auto& m = state["request"]["moves"][0];
+        CHECK_EQ(m["name"].str(), std::string_view(move));
+        // No PP to show, and certainly not 0 (the window would grey the only button out).
+        CHECK(m["pp"].is_null());
+        CHECK(m["maxpp"].is_null());
+        CHECK(!m["disabled"].boolean);
+        std::string error;
+        CHECK_EQ(b.parse_choice("1", error).value_or("REFUSED: " + error), std::string("move 1"));
+        const auto menu = b.menu();
+        CHECK(std::ranges::any_of(menu, [&](const std::string& l) {
+            return l.starts_with("move 1  " + move) && l.find("PP") == std::string::npos;
+        }));
+    }
+}
