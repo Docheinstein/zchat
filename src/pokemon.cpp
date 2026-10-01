@@ -1,24 +1,27 @@
-// Pokémon: battles of Pokémon Showdown's Gen 9 Random Battles between two people in the chat, with
-// /game pokemon challenge NAME, which anybody else can watch. The battles are Showdown's own: its simulator runs with
+// Pokémon: battles of Pokémon Showdown's Random Battles, of any generation from 1 to 9, between two people in the
+// chat, with /game pokemon challenge NAME [genN], which anybody else can watch. The battles are Showdown's own: its simulator runs with
 // Node.js (see pokemon::Engine), on the zchat of one of the two players, the referee, which tells the others what
 // happens. zchat works without Node.js: only the battles need it, and only on one of the two players' computers.
 //
 // Every peer that hears of a battle keeps what it knows of it; the players and those watching also keep the battle
 // itself (pokemon::Battle), shown in a window of its own (see Screen::show_game()) or in the terminal. As Game
 // packets:
-//   pokemon challenge B NODE NAME          asks NAME (the rest of the text) to battle; B is a random hex number
-//                                          naming the battle, NODE is 1 when we have Node.js, else 0
+//   pokemon challenge B NODE FORMAT NAME   asks NAME (the rest of the text) to battle; B is a random hex number
+//                                          naming the battle, NODE is 1 when we have Node.js, else 0, FORMAT is
+//                                          Showdown's (gen1randombattle to gen9randombattle; older versions did
+//                                          not send it, and their battles are gen9randombattle)
 //   pokemon accept B NODE | decline B      the answer, from who was challenged
 //   pokemon cancel B REASON                the challenger gives up on it (nobody has Node.js...)
-//   pokemon start B REFEREE P1 P2 N1 N2    the challenger starts it: ids in hex, and the names of P1 (the
-//                                          challenger) and P2, with %-escapes for spaces
+//   pokemon start B REFEREE P1 P2 N1 N2 FORMAT   the challenger starts it: ids in hex, and the names of P1
+//                                          (the challenger) and P2, with %-escapes for spaces
 // then the referee sends what the simulator says, in three streams of numbered messages, each split in parts that
 // fit in a packet:
 //   pokemon log B SEQ PART/COUNT TEXT      what everyone may see, for those watching
 //   pokemon priv B SIDE SEQ PART/COUNT TEXT  what only player SIDE (p1 or p2) may see: their own stream, which has
 //                                          everything they are shown (another zchat could read it: battles are
 //                                          for fun, not for money)
-//   pokemon head B LOG P1 P2 TIMER L1 L2 OVER ID1 ID2 N1 N2   every second or two: how many messages each stream
+//   pokemon head B LOG P1 P2 TIMER L1 L2 OVER ID1 ID2 N1 N2 FORMAT   every second or two: how many messages each
+//                                          stream
 //                                          has, whether the timer is on and the seconds each player has left to
 //                                          choose (-1: not choosing), how it ended (0 while it goes on, p1, p2,
 //                                          tie or none) and who plays it; it also tells the referee is still here
@@ -172,6 +175,34 @@ namespace {
         return index == 0 ? "p1" : "p2";
     }
 
+    // Showdown's random battles, one per generation: "gen3randombattle" as the packets carry it, and as it is shown.
+    constexpr int default_gen = 9;
+
+    std::string format_id(int gen) {
+        return std::format("gen{}randombattle", gen);
+    }
+
+    std::string format_name(int gen) {
+        return std::format("Gen {} Random Battle", gen);
+    }
+
+    // The generation of a format, or 0 when it is not one.
+    int format_gen(std::string_view id) {
+        if (id.size() == 16 && id.starts_with("gen") && id.ends_with("randombattle") && id[3] >= '1' && id[3] <= '9') {
+            return id[3] - '0';
+        }
+        return 0;
+    }
+
+    // The generation typed, as "gen3" (or "Gen3"), or 0 when it is not one.
+    int typed_gen(std::string_view word) {
+        if (word.size() == 4 && (word[0] == 'g' || word[0] == 'G') && (word[1] == 'e' || word[1] == 'E') &&
+            (word[2] == 'n' || word[2] == 'N') && word[3] >= '1' && word[3] <= '9') {
+            return word[3] - '0';
+        }
+        return 0;
+    }
+
     // What the bridge prints, kept for the chat thread (see Pokemon::tick()), as it comes on a thread of its own.
     struct Inbox {
         std::mutex mutex;
@@ -206,8 +237,8 @@ namespace {
         }
 
         std::string_view commands() const override {
-            return "challenge NAME, accept, decline, move N, switch N, say TEXT, timer, forfeit, watch NAME, unwatch, "
-                   "update";
+            return "challenge NAME [gen1..gen9], accept, decline, move N, switch N, say TEXT, timer, forfeit, "
+                   "watch NAME, unwatch, update";
         }
 
         bool keeps_case() const override {
@@ -220,15 +251,16 @@ namespace {
                 return;
             }
             chat_.notice(
-                "⚔ Pokémon battles, as on Pokémon Showdown (Gen 9 Random Battle): /game pokemon challenge NAME "
+                "⚔ Pokémon battles, as on Pokémon Showdown (Random Battles): /game pokemon challenge NAME "
                 "challenges someone in the chat, who answers with /game pokemon accept.");
+            chat_.notice("   Gen 9 unless you say another: /game pokemon challenge NAME gen3 (gen1 to gen9).");
             chat_.notice("   One of you needs Node.js (nodejs.org): Pokémon Showdown is installed with it, the first "
                          "time, which takes a minute.");
             bool any = false;
             for (const auto& [id, b] : battles_) {
                 if (!b.over) {
-                    chat_.notice(std::format("   Going on: {} vs {}, /game pokemon watch {} to watch it", b.names[0],
-                                             b.names[1], b.names[0]));
+                    chat_.notice(std::format("   Going on: {} vs {} ({}), /game pokemon watch {} to watch it",
+                                             b.names[0], b.names[1], format_name(b.gen), b.names[0]));
                     any = true;
                 }
             }
@@ -349,6 +381,7 @@ namespace {
             bool node = false;
             bool accepted = false;
             clock::time_point at;
+            int gen = default_gen;
         };
 
         // A stream of the referee's: its messages (as the bridge printed them), and for a player's, how many they
@@ -390,6 +423,7 @@ namespace {
             std::uint64_t referee_id = 0;
             std::array<std::uint64_t, 2> ids {0, 0};
             std::array<std::string, 2> names;
+            int gen = default_gen;
             clock::time_point last_head = clock::now();
             bool over = false;
             // p1, p2, tie or none; and why, for none.
@@ -424,7 +458,20 @@ namespace {
 
         // --- Challenges
 
-        void challenge(const std::string& who) {
+        // /game pokemon challenge NAME [genN]: the generation may come before the name too.
+        void challenge(const std::string& typed) {
+            std::string who = typed;
+            int gen = default_gen;
+            if (const auto space = who.rfind(' '); space != std::string::npos && typed_gen(who.substr(space + 1))) {
+                gen = typed_gen(who.substr(space + 1));
+                who = trim(who.substr(0, space));
+            } else if (const auto first = who.find(' '); first != std::string::npos && typed_gen(who.substr(0, first))) {
+                gen = typed_gen(who.substr(0, first));
+                who = trim(who.substr(first + 1));
+            } else if (typed_gen(who)) {
+                chat_.notice("Who? /game pokemon challenge NAME gen3 (/who lists the people in the chat).");
+                return;
+            }
             if (who.empty()) {
                 chat_.notice("Who? /game pokemon challenge NAME (/who lists the people in the chat).");
                 return;
@@ -450,11 +497,10 @@ namespace {
             do {
                 battle = rng_();
             } while (battle == 0);
-            challenges_.push_back({battle, 0, target, target, true, node, false, clock::now()});
-            send(std::format("challenge {:x} {} {}", battle, node ? 1 : 0, target));
-            chat_.notice(std::format("⚔ You challenge {} to a Pokémon battle (Gen 9 Random Battle): waiting for an "
-                                     "answer…",
-                                     target));
+            challenges_.push_back({battle, 0, target, target, true, node, false, clock::now(), gen});
+            send(std::format("challenge {:x} {} {} {}", battle, node ? 1 : 0, format_id(gen), target));
+            chat_.notice(std::format("⚔ You challenge {} to a Pokémon battle ({}): waiting for an answer…", target,
+                                     format_name(gen)));
             if (!node) {
                 chat_.notice(
                     "   You do not have Node.js: the battle can only happen if they have it (or install it from "
@@ -465,6 +511,12 @@ namespace {
         void receive_challenge(std::uint64_t sender, std::string_view name, std::uint64_t battle,
                                std::string_view text) {
             const std::string_view node = next_field(text);
+            int gen = default_gen;
+            std::string_view rest = text;
+            if (const int g = format_gen(next_field(rest))) {
+                gen = g;
+                text = rest;
+            }
             if (lowercase(trim(text)) != lowercase(chat_.name()) ||
                 std::ranges::any_of(challenges_, [&](const Challenge& c) {
                     return c.battle == battle;
@@ -473,16 +525,17 @@ namespace {
             }
             const std::string colored = chat_.colored_name(sender, name);
             challenges_.push_back(
-                {battle, sender, std::string(name), colored, false, node == "1", false, clock::now()});
-            chat_.notice(std::format("⚔ {} challenges you to a Pokémon battle (Gen 9 Random Battle)! /game pokemon "
-                                     "accept, or /game pokemon decline",
-                                     colored));
+                {battle, sender, std::string(name), colored, false, node == "1", false, clock::now(), gen});
+            chat_.notice(std::format("⚔ {} challenges you to a Pokémon battle ({})! /game pokemon accept, or "
+                                     "/game pokemon decline",
+                                     colored, format_name(gen)));
             terminal_.bell();
         }
 
         // The challenges to us waiting for an answer, for the window to show them with buttons to accept or decline
         // (see the Pokémon challenges in src/ui/index.html), each time they change:
-        //   {"challenges": [{"battle": "ab12", "name": "Ash", "color": "#rrggbb", "left": seconds}...]}
+        //   {"challenges": [{"battle": "ab12", "name": "Ash", "color": "#rrggbb", "left": seconds,
+        //                    "format": "Gen 9 Random Battle"}...]}
         void show_challenges() {
             std::string list;
             std::string shown;
@@ -492,9 +545,10 @@ namespace {
                     continue;
                 }
                 const auto left = std::chrono::duration_cast<std::chrono::seconds>(challenge_time - (now - c.at));
-                list += std::format("{}{{\"battle\":\"{:x}\",\"name\":{},\"color\":\"{}\",\"left\":{}}}",
-                                    list.empty() ? "" : ",", c.battle, json(c.name), hex_color(c.from),
-                                    std::max<long long>(0, left.count()));
+                list += std::format(
+                    "{}{{\"battle\":\"{:x}\",\"name\":{},\"color\":\"{}\",\"left\":{},\"format\":{}}}",
+                    list.empty() ? "" : ",", c.battle, json(c.name), hex_color(c.from),
+                    std::max<long long>(0, left.count()), json(format_name(c.gen)));
                 shown += std::format("{:x} ", c.battle);
             }
             if (shown == shown_challenges_) {
@@ -581,9 +635,9 @@ namespace {
             const std::uint64_t referee = node ? chat_.id() : sender;
             const std::array<std::uint64_t, 2> ids {chat_.id(), sender};
             const std::array<std::string, 2> names {chat_.name(), std::string(name)};
-            send(std::format("start {:x} {:x} {:x} {:x} {} {}", battle, referee, ids[0], ids[1], encode_field(names[0]),
-                             encode_field(names[1])));
-            begin(battle, referee, ids, names);
+            send(std::format("start {:x} {:x} {:x} {:x} {} {} {}", battle, referee, ids[0], ids[1],
+                             encode_field(names[0]), encode_field(names[1]), format_id(c.gen)));
+            begin(battle, referee, ids, names, c.gen);
         }
 
         void receive_decline(std::uint64_t sender, std::string_view name, std::uint64_t battle) {
@@ -602,6 +656,7 @@ namespace {
             const auto p2 = parse_number(next_field(text), 16);
             const std::string n1 = text::sanitize(decode_field(next_field(text)), 48);
             const std::string n2 = text::sanitize(decode_field(next_field(text)), 48);
+            const int gen = format_gen(next_field(text));
             // Only the challenger starts it.
             if (!referee || !p1 || !p2 || *p1 != sender || battles_.contains(battle)) {
                 return;
@@ -609,29 +664,30 @@ namespace {
             std::erase_if(challenges_, [&](const Challenge& c) {
                 return c.battle == battle;
             });
-            begin(battle, *referee, {*p1, *p2}, {n1, n2});
+            begin(battle, *referee, {*p1, *p2}, {n1, n2}, gen ? gen : default_gen);
         }
 
         // A battle starts: we may play it, and run it.
         void begin(std::uint64_t id, std::uint64_t referee, std::array<std::uint64_t, 2> ids,
-                   std::array<std::string, 2> names) {
+                   std::array<std::string, 2> names, int gen) {
             Battle& b = battles_[id];
             b.id = id;
             b.referee_id = referee;
             b.ids = ids;
             b.names = names;
+            b.gen = gen;
             b.last_head = clock::now();
             const std::string vs =
                 std::format("{} vs {}", chat_.colored_name(ids[0], names[0]), chat_.colored_name(ids[1], names[1]));
             const int us = ids[0] == chat_.id() ? 0 : ids[1] == chat_.id() ? 1 : -1;
             if (us < 0) {
-                chat_.notice(
-                    std::format("⚔ A Pokémon battle starts: {}! /game pokemon watch {} to watch it.", vs, names[0]));
+                chat_.notice(std::format("⚔ A Pokémon battle starts ({}): {}! /game pokemon watch {} to watch it.",
+                                         format_name(gen), vs, names[0]));
                 return;
             }
             b.side = side_name(us);
             b.view.emplace(b.side);
-            chat_.notice(std::format("⚔ Your Pokémon battle starts: {}! Good luck.", vs));
+            chat_.notice(std::format("⚔ Your Pokémon battle starts ({}): {}! Good luck.", format_name(gen), vs));
             terminal_.bell();
             if (referee == chat_.id()) {
                 b.referee = std::make_unique<Referee>();
@@ -873,6 +929,7 @@ namespace {
             const auto p2 = parse_number(next_field(text), 16);
             const std::string n1 = text::sanitize(decode_field(next_field(text)), 48);
             const std::string n2 = text::sanitize(decode_field(next_field(text)), 48);
+            const int gen = format_gen(next_field(text));
             if (!p1 || !p2) {
                 return;
             }
@@ -887,6 +944,7 @@ namespace {
                 b.referee_id = sender;
                 b.ids = {*p1, *p2};
                 b.names = {n1, n2};
+                b.gen = gen ? gen : default_gen;
                 it = battles_.find(id);
             }
             Battle& b = it->second;
@@ -987,10 +1045,10 @@ namespace {
                                               : std::format("The battle ended: {}.", b.reason);
             }
             const std::string extra = std::format(
-                "\"battle\":\"{:x}\",\"title\":{},\"phase\":\"{}\",\"setup\":{},\"colors\":{{\"p1\":\"{}\",\"p2\":\"{}"
+                "\"battle\":\"{:x}\",\"format\":{},\"title\":{},\"phase\":\"{}\",\"setup\":{},\"colors\":{{\"p1\":\"{}\",\"p2\":\"{}"
                 "\"}},"
                 "\"timer\":{{\"on\":{},\"left\":{}}},\"chosen\":{},\"watching\":{},\"result\":{},\"open\":{}",
-                b.id, json(std::format("{} vs {}", b.names[0], b.names[1])),
+                b.id, json(format_name(b.gen)), json(std::format("{} vs {}", b.names[0], b.names[1])),
                 b.over  ? "over"
                 : setup ? "setup"
                         : "battle",
@@ -1103,7 +1161,7 @@ namespace {
             std::string error;
             std::weak_ptr<Inbox> inbox = r.inbox;
             r.child = engine_.start_battle(
-                battle_name(b.names[0]), battle_name(b.names[1]),
+                b.gen, battle_name(b.names[0]), battle_name(b.names[1]),
                 [inbox](std::string line) {
                     if (const auto in = inbox.lock()) {
                         std::scoped_lock lock(in->mutex);
@@ -1354,10 +1412,10 @@ namespace {
                 const int l = referee_left(b, side);
                 return l < 0 ? std::string("-1") : std::to_string(l);
             };
-            send(std::format("head {:x} {} {} {} {} {} {} {} {:x} {:x} {} {}", b.id, r.streams[0].messages.size(),
+            send(std::format("head {:x} {} {} {} {} {} {} {} {:x} {:x} {} {} {}", b.id, r.streams[0].messages.size(),
                              r.streams[1].messages.size(), r.streams[2].messages.size(), r.timer ? 1 : 0, left(0),
                              left(1), b.over ? b.outcome : "0", b.ids[0], b.ids[1], encode_field(b.names[0]),
-                             encode_field(b.names[1])));
+                             encode_field(b.names[1]), format_id(b.gen)));
             // Our own side sees the timer too.
             if (b.view) {
                 const int us = side_index(b.side);
