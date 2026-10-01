@@ -274,7 +274,8 @@ For the window:
 * **macOS**: nothing more, WebKit comes with macOS.
 * **Linux**: GTK and WebKitGTK, e.g. `sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev` (Debian, Ubuntu) or
   `sudo dnf install gtk3-devel webkit2gtk4.1-devel` (Fedora). Without them, CMake says so and builds zchat for the
-  terminal only. `-DZCHAT_GUI=OFF` does the same on purpose.
+  terminal only (and `zchat` then chats in the terminal, with no window): install them and run CMake again.
+  `-DZCHAT_GUI=OFF` does the same on purpose.
 
 With [just](https://github.com/casey/just) installed, the shortest way is:
 
@@ -308,8 +309,7 @@ cmake -S . -B build-win -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_CXX_COMPILER=x86_64-
 cmake --build build-win
 ```
 
-(The window has only been built with Visual Studio so far: if a MinGW build of it fails, add `-DZCHAT_GUI=OFF` for
-the terminal version.)
+The window is built too (`-DZCHAT_GUI=OFF` leaves it out, for the terminal version).
 
 ## How it works
 
