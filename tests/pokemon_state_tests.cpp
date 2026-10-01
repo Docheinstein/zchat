@@ -856,8 +856,9 @@ TEST(json_parse) {
     CHECK((*v)["missing"]["deeper"][3].is_null());
     CHECK_EQ((*v)["a"][99].integer(7), 7);
     // A lone surrogate is not a code point.
-    CHECK_EQ(parse(R"("\ud83d")")->str(), std::string_view("\xEF\xBF\xBD"));
-    CHECK_EQ(parse(R"("\ude00x")")->str(), std::string_view("\xEF\xBF\xBDx"));
+    // Not raw strings: MSVC rejects a lone surrogate \u escape even inside R"(...)".
+    CHECK_EQ(parse("\"\\ud83d\"")->str(), std::string_view("\xEF\xBF\xBD"));
+    CHECK_EQ(parse("\"\\ude00x\"")->str(), std::string_view("\xEF\xBF\xBDx"));
     for (const char* bad :
          {"",        " ",         "{",        "}",     "[1,]",       "{\"a\":}", "{\"a\" 1}", "{a:1}",
           "01",      "1.",        ".5",       "-",     "1e",         "tru",      "nul",       "\"abc",
