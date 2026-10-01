@@ -28,6 +28,15 @@ Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
     games_.push_back(make_wordle(chat, terminal, *this));
     games_.push_back(make_pokemon(chat, terminal, *this));
     games_.push_back(make_kick(chat, terminal, std::move(kicked)));
+    std::vector<std::string> rated;
+    for (const auto& g : games_) {
+        if (g->rated()) {
+            rated.emplace_back(g->name());
+        }
+    }
+    auto ratings = make_ratings(chat, std::move(rated));
+    ratings_ = ratings.get();
+    games_.push_back(std::move(ratings));
 
     chat_.set_game_hooks({
         .packet =
@@ -84,6 +93,14 @@ void Games::command(std::string_view arg) {
         print_help(lowercase(args));
         return;
     }
+    if (name == "leaderboard" || name == "leaderboards" || name == "top") {
+        ratings_->leaderboard(lowercase(args));
+        return;
+    }
+    if (name == "elo" || name == "rating" || name == "ratings") {
+        ratings_->profile(args);
+        return;
+    }
     Game* game = find(name);
     if (!game) {
         chat_.notice(std::format("Unknown game {} (try /game)", text::sanitize(arg.substr(0, space), 32)));
@@ -103,6 +120,11 @@ int Games::add_win(std::string_view game, std::uint64_t id, std::string_view nam
     score.name = chat_.colored_name(id, name);
     ++score.total;
     return ++score.wins[std::string(game)];
+}
+
+void Games::rate(std::string_view game, const std::vector<Placing>& placings) {
+    std::scoped_lock lock(mutex_);
+    ratings_->rate(game, placings);
 }
 
 void Games::kick(std::string_view args) {
@@ -133,6 +155,9 @@ void Games::list() const {
     chat_.notice("  /game NAME        start one, like /game race");
     chat_.notice("  /game help NAME   how to play one, and its commands");
     chat_.notice("  /game scores      who won what in this session");
+    chat_.notice("  /game top [NAME]  the Elo leaderboard of all games, or of one (all: each of them); also "
+                 "/game leaderboard");
+    chat_.notice("  /game elo [NAME]  somebody's Elo ratings, yours without a name");
 }
 
 void Games::print_help(std::string_view name) const {

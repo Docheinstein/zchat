@@ -97,6 +97,11 @@ public:
     // color), kept in the config; and the file where the channels we know are kept. Before start().
     void set_user(std::uint64_t user, std::filesystem::path channels_file);
 
+    // Our id of set_user(); 0 when there is none (no config folder).
+    std::uint64_t user() const {
+        return user_;
+    }
+
     // Channels (see channel.hpp): what we say, draw and send goes to the current one. Each returns what went wrong, or
     // nullopt. The channel of add_to_channel() and the others is the current one when empty; people are named as
     // they are in the chat (they must be online).

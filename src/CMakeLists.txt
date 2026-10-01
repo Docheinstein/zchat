@@ -7,6 +7,7 @@ target_sources(zchat PUBLIC
     color.cpp
     config.cpp
     dice.cpp
+    elo.cpp
     file.cpp
     game.cpp
     history.cpp
@@ -23,6 +24,7 @@ target_sources(zchat PUBLIC
     pokemon_state.cpp
     process.cpp
     race.cpp
+    ratings.cpp
     protocol.cpp
     sound.cpp
     terminal.cpp

@@ -197,6 +197,11 @@ namespace {
             return "a shared canvas everyone colors square by square, to draw something together";
         }
 
+        // Nobody wins a drawing.
+        bool rated() const override {
+            return false;
+        }
+
         void start() override {
             if (!open_) {
                 open_ = true;
