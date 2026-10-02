@@ -274,7 +274,7 @@ namespace {
                 return;
             }
             chat_.game_notice(
-                "⚔ Pokémon battles, as on Pokémon Showdown (Random Battles): /game pokemon challenge NAME "
+                "◓ Pokémon battles, as on Pokémon Showdown (Random Battles): /game pokemon challenge NAME "
                 "challenges someone in the chat, who answers with /game pokemon accept.");
             chat_.game_notice("   Gen 9 unless you say another: /game pokemon challenge NAME gen3 (gen1 to gen9).");
             chat_.game_notice(
@@ -341,7 +341,7 @@ namespace {
             } else if (event == "cancel") {
                 std::erase_if(challenges_, [&](const Challenge& c) {
                     if (c.battle == *id && !c.ours && c.from == sender) {
-                        chat_.game_notice(std::format("⚔ {} called off the battle: {}",
+                        chat_.game_notice(std::format("◓ {} called off the battle: {}",
                                                       chat_.colored_name(sender, name), text::sanitize(text, 200)));
                         return true;
                     }
@@ -366,7 +366,7 @@ namespace {
                     return false;
                 }
                 if (c.ours && !c.accepted) {
-                    chat_.game_notice(std::format("⚔ {} did not answer your challenge.", c.colored_name));
+                    chat_.game_notice(std::format("◓ {} did not answer your challenge.", c.colored_name));
                 }
                 return true;
             });
@@ -537,7 +537,7 @@ namespace {
             } while (battle == 0);
             challenges_.push_back({battle, 0, target, target, true, node, false, clock::now(), gen});
             send(std::format("challenge {:x} {} {} {}", battle, node ? 1 : 0, format_id(gen), target));
-            chat_.game_notice(std::format("⚔ You challenge {} to a Pokémon battle ({}): waiting for an answer…", target,
+            chat_.game_notice(std::format("◓ You challenge {} to a Pokémon battle ({}): waiting for an answer…", target,
                                           format_name(gen)));
             if (!node) {
                 chat_.game_notice(
@@ -564,7 +564,7 @@ namespace {
             const std::string colored = chat_.colored_name(sender, name);
             challenges_.push_back(
                 {battle, sender, std::string(name), colored, false, node == "1", false, clock::now(), gen});
-            chat_.game_notice(std::format("⚔ {} challenges you to a Pokémon battle ({})! /game pokemon accept, or "
+            chat_.game_notice(std::format("◓ {} challenges you to a Pokémon battle ({})! /game pokemon accept, or "
                                           "/game pokemon decline",
                                           colored, format_name(gen)));
             terminal_.bell();
@@ -634,7 +634,7 @@ namespace {
             c->accepted = true;
             c->at = clock::now();
             send(std::format("accept {:x} {}", c->battle, node ? 1 : 0));
-            chat_.game_notice(std::format("⚔ You accept {}'s challenge: the battle is starting…", c->colored_name));
+            chat_.game_notice(std::format("◓ You accept {}'s challenge: the battle is starting…", c->colored_name));
         }
 
         void decline(const std::string& who) {
@@ -684,7 +684,7 @@ namespace {
         void receive_decline(std::uint64_t sender, std::string_view name, std::uint64_t battle) {
             std::erase_if(challenges_, [&](const Challenge& c) {
                 if (c.battle == battle && c.ours && lowercase(c.name) == lowercase(name)) {
-                    chat_.game_notice(std::format("⚔ {} declined your challenge.", chat_.colored_name(sender, name)));
+                    chat_.game_notice(std::format("◓ {} declined your challenge.", chat_.colored_name(sender, name)));
                     return true;
                 }
                 return false;
@@ -722,13 +722,13 @@ namespace {
                 std::format("{} vs {}", chat_.colored_name(ids[0], names[0]), chat_.colored_name(ids[1], names[1]));
             const int us = ids[0] == chat_.id() ? 0 : ids[1] == chat_.id() ? 1 : -1;
             if (us < 0) {
-                chat_.game_notice(std::format("⚔ A Pokémon battle starts ({}): {}! /game pokemon watch {} to watch it.",
+                chat_.game_notice(std::format("◓ A Pokémon battle starts ({}): {}! /game pokemon watch {} to watch it.",
                                               format_name(gen), vs, names[0]));
                 return;
             }
             b.side = side_name(us);
             b.view.emplace(b.side);
-            chat_.game_notice(std::format("⚔ Your Pokémon battle starts ({}): {}! Good luck.", format_name(gen), vs));
+            chat_.game_notice(std::format("◓ Your Pokémon battle starts ({}): {}! Good luck.", format_name(gen), vs));
             terminal_.bell();
             if (referee == chat_.id()) {
                 b.referee = std::make_unique<Referee>();
@@ -775,7 +775,7 @@ namespace {
             show(*b);
             if (!b->window) {
                 chat_.game_notice(
-                    std::format("⚔ You chose {}: waiting for the other player (/game pokemon cancel to change "
+                    std::format("◓ You chose {}: waiting for the other player (/game pokemon cancel to change "
                                 "it).",
                                 b->chose_label));
             }
@@ -832,12 +832,12 @@ namespace {
                 b.chose = false;
                 show(b);
                 if (!b.window) {
-                    chat_.game_notice("⚔ Choice taken back: choose again.");
+                    chat_.game_notice("◓ Choice taken back: choose again.");
                 }
                 return;
             }
             show(b);
-            chat_.game_notice("⚔ Too late to take it back: the other player had chosen too.");
+            chat_.game_notice("◓ Too late to take it back: the other player had chosen too.");
         }
 
         void act(std::string_view action) {
@@ -1185,24 +1185,24 @@ namespace {
                 using Kind = pokemon::LogLine::Kind;
                 switch (line.kind) {
                 case Kind::Turn:
-                    chat_.game_notice(std::format("⚔ ── {} ──", line.text));
+                    chat_.game_notice(std::format("◓ ── {} ──", line.text));
                     break;
                 case Kind::Chat:
-                    chat_.game_notice(std::format("⚔ {}: {}", line.name, line.text));
+                    chat_.game_notice(std::format("◓ {}: {}", line.name, line.text));
                     break;
                 case Kind::Minor:
-                    chat_.game_notice(std::format("⚔   {}", line.text));
+                    chat_.game_notice(std::format("◓   {}", line.text));
                     break;
                 default:
-                    chat_.game_notice(std::format("⚔ {}", line.text));
+                    chat_.game_notice(std::format("◓ {}", line.text));
                     break;
                 }
             }
             if (v.rqid() != 0 && v.rqid() != b.menu_rqid) {
                 b.menu_rqid = v.rqid();
-                chat_.game_notice("⚔ Your move: /game pokemon then one of");
+                chat_.game_notice("◓ Your move: /game pokemon then one of");
                 for (const auto& choice : v.menu()) {
-                    chat_.game_notice(std::format("⚔   {}", choice));
+                    chat_.game_notice(std::format("◓   {}", choice));
                 }
             }
         }
@@ -1624,10 +1624,10 @@ namespace {
                 games_.rate(game_name,
                             {{b.ids[winner], b.names[winner], 0}, {b.ids[1 - winner], b.names[1 - winner], 1}});
             } else if (outcome == "tie") {
-                chat_.game_notice(std::format("⚔ The Pokémon battle between {} and {} is a tie!", p1, p2));
+                chat_.game_notice(std::format("◓ The Pokémon battle between {} and {} is a tie!", p1, p2));
                 games_.rate(game_name, {{b.ids[0], b.names[0], 0}, {b.ids[1], b.names[1], 0}});
             } else {
-                chat_.game_notice(std::format("⚔ The Pokémon battle between {} and {} ended{}.", p1, p2,
+                chat_.game_notice(std::format("◓ The Pokémon battle between {} and {} ended{}.", p1, p2,
                                               reason.empty() ? std::string() : std::format(": {}", reason)));
             }
             if (b.view) {
