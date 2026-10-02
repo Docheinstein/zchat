@@ -1,7 +1,7 @@
 // Spy: /spy @NAME asks NAME to let you see their screen(s). Nothing is captured behind anyone's back — the person at
-// the other machine is asked first, and a screenshot is taken only if they agree with /spy allow. If they /spy deny,
-// or do nothing before the time is up, no picture is ever taken. Asking costs coins (see coins.hpp); the asker gets
-// half of them back when the peek does not happen (a refusal, no answer, or a machine that cannot take a screenshot),
+// the other machine is asked first, and a screenshot is taken only if they agree with /spy allow, or do nothing before
+// the time is up (no answer counts as a yes). If they /spy deny, no picture is ever taken. Asking costs coins (see coins.hpp); the asker gets
+// half of them back when the peek does not happen (a refusal, or a machine that cannot take a screenshot),
 // and the person who agrees earns the same half for being a good sport.
 //
 // When someone agrees, THEIR zchat takes the picture of each of their monitors (see capture.cpp) and sends them to
@@ -19,6 +19,7 @@
 
 #include "capture.hpp"
 #include "coins.hpp"
+#include "color.hpp"
 #include "game.hpp"
 #include "image.hpp"
 
@@ -100,6 +101,26 @@ namespace {
         return field;
     }
 
+    std::string json(std::string_view s) {
+        std::string out = "\"";
+        for (const char c : s) {
+            if (c == '"' || c == '\\') {
+                out += '\\';
+                out += c;
+            } else if (static_cast<unsigned char>(c) < 0x20) {
+                out += std::format("\\u{:04x}", static_cast<unsigned>(static_cast<unsigned char>(c)));
+            } else {
+                out += c;
+            }
+        }
+        return out + "\"";
+    }
+
+    std::string hex_color(std::uint64_t id) {
+        const Color c = color_of_id(id);
+        return std::format("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
+    }
+
     std::string screens_of(std::size_t n) {
         return std::format("{} screen{}", n, n == 1 ? "" : "s");
     }
@@ -140,7 +161,7 @@ namespace {
         void start() override {
             const long long price = coins::price("spy").value_or(0);
             chat_.notice("/spy @NAME asks NAME to let you see their screen(s). They decide: /spy allow shares them, "
-                         "/spy deny refuses, and doing nothing refuses too. Nothing is captured without their yes.");
+                         "/spy deny refuses, and doing nothing shares them too once the time is up.");
             chat_.notice(std::format("   Asking is free: only if they accept do you pay {} coins, and they get {} "
                                      "for letting you in (/shop).",
                                      price, half_of(price)));
@@ -234,6 +255,7 @@ namespace {
             std::erase_if(workers_, [](const Worker& w) {
                 return w.done->load();
             });
+            publish();
         }
 
     private:
@@ -351,6 +373,7 @@ namespace {
             done_.push_back(round);
             // The request is over for us either way; the asker hears the outcome below (or the worker sends it).
             requests_.erase(std::ranges::find(requests_, round, &Request::round));
+            publish();
             if (!allow) {
                 send_done(round, "denied", 0);
                 chat_.notice(std::format("🕶 You refused {}'s peek: no screenshot was taken.", other_name));
@@ -446,11 +469,12 @@ namespace {
             r.other_plain = std::string(name);
             r.price = static_cast<long long>(*price);
             r.deadline = clock::now() + std::chrono::seconds(std::min<std::uint64_t>(*seconds, 600));
-            chat_.notice(std::format("👁 {} wants to see your screen(s)! Nothing is taken unless you say so: /spy allow "
-                                     "shares them, /spy deny refuses ({} seconds, and doing nothing refuses).",
+            chat_.notice(std::format("👁 {} wants to see your screen(s)! /spy deny refuses, /spy allow shares them now; "
+                                     "if you do not answer in {} seconds, they are shared anyway.",
                                      r.other_name, *seconds));
             terminal_.bell();
             requests_.push_back(std::move(r));
+            publish();
         }
 
         void receive_done(std::uint64_t round, std::string_view text) {
@@ -487,6 +511,32 @@ namespace {
             } else if (result == "failed") {
                 chat_.notice(std::format("🖥 {} agreed, but their machine could not take a screenshot{}.", other,
                                          ours ? " — so you paid nothing" : ""));
+            }
+        }
+
+        // The peeks waiting for our answer, for the window to show them with buttons to allow or deny (see the spy
+        // requests in src/ui/index.html), each time they change:
+        //   {"requests": [{"round": "ab12", "name": "Ash", "color": "#rrggbb", "price": coins, "left": seconds}...]}
+        void publish() {
+            std::string list;
+            std::string shown;
+            const auto now = clock::now();
+            for (const Request& r : requests_) {
+                if (!r.us || r.answered) {
+                    continue;
+                }
+                const auto left = std::chrono::duration_cast<std::chrono::seconds>(r.deadline - now);
+                list += std::format("{}{{\"round\":\"{:x}\",\"name\":{},\"color\":\"{}\",\"price\":{},\"left\":{}}}",
+                                    list.empty() ? "" : ",", r.round, json(r.other_plain), hex_color(r.other), r.price,
+                                    std::max<long long>(0, left.count()));
+                shown += std::format("{:x} ", r.round);
+            }
+            if (shown == shown_) {
+                return;
+            }
+            // Until the window is there to show them (a terminal never is: there they are typed).
+            if (terminal_.show_game("spy", std::format("{{\"requests\":[{}]}}", list))) {
+                shown_ = shown;
             }
         }
 
@@ -531,6 +581,8 @@ namespace {
         std::deque<std::uint64_t> done_;
         // Our outcomes, sent again so the asker gets them.
         std::vector<Resend> dones_;
+        // The requests shown in the window, by round.
+        std::string shown_;
         // The threads taking screenshots; joined when they finish (and on destruction). The flag lets tick() know a
         // worker is done without joining (which would block).
         struct Worker {

@@ -108,6 +108,32 @@
     font-size: 12px; user-select: none;
   }
   #dice-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  /* Peeks at our screen waiting for an answer (/spy): in the corner like the dice window, one card each, above it. */
+  #spy-requests { position: fixed; top: 60px; right: 24px; width: 360px; z-index: 21; display: flex; flex-direction: column;
+    gap: 10px; pointer-events: none; }
+  #spy-requests:empty { display: none; }
+  .spy { pointer-events: auto; background: #111317; color: #d6d9df; border: 1px solid #e5534b; border-radius: 12px;
+    box-shadow: 0 10px 34px #000b; overflow: hidden; animation: challenge-in .25s ease-out; }
+  .spy .titlebar { display: flex; align-items: center; padding: 6px 10px; background: var(--panel); color: var(--muted);
+    font-size: 12px; user-select: none; }
+  .spy .titlebar button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  .spy .body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .spy .what { font-size: 15px; line-height: 1.4; }
+  .spy .what b { font-weight: 700; }
+  .spy .hint { color: #7d8491; font-size: 12px; }
+  .spy .timer { display: flex; justify-content: space-between; align-items: baseline; }
+  .spy .timer .secs { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .spy .timer .secs.low { color: #e5534b; }
+  .spy .timer .phase { color: #7d8491; }
+  .spy .bar { height: 6px; border-radius: 3px; background: #262a33; overflow: hidden; }
+  .spy .bar div { height: 100%; background: #6ea8ff; transition: width .9s linear; }
+  .spy .bar div.low { background: #e5534b; }
+  .spy .buttons { display: flex; gap: 8px; }
+  .spy .buttons button { flex: 1; height: 40px; border-radius: 8px; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+    border: 1px solid #262a33; background: #1e222a; color: #d6d9df; }
+  .spy .buttons button.allow { background: #6ea8ff; border-color: #6ea8ff; color: #0b0d10; }
+  .spy .buttons button.deny { border-color: #e5534b; color: #e5534b; }
+  .spy .buttons button:hover { filter: brightness(1.12); }
   /* The same for the casino. A table taking bets or being played lights its button up. */
   #casino-float {
     position: fixed; top: 54px; right: 20px; width: min(780px, calc(100vw - 40px)); z-index: 18; display: none;
@@ -421,6 +447,7 @@
   </div>
 </div>
 <div id="channel-panel"></div>
+<div id="spy-requests"></div>
 <div id="dice-float"><div id="dice-float-title">zchat · dice<button id="dice-float-close" title="Close">×</button></div>
   <div class="dice" id="dice-body"></div></div>
 <div id="casino-float"><div id="casino-float-title">zchat · casino<button id="casino-float-close" title="Close">×</button></div>
@@ -999,6 +1026,70 @@ document.getElementById("dice-float-close").onclick = closeDice;
   });
   document.addEventListener("mouseup", () => { dragging = false; });
 })();
+
+// --- Peeks at our screen waiting for our answer (zchat.game("spy", {requests: [...]})): a card each in the corner,
+// like the dice window, with buttons for /spy allow NAME and /spy deny NAME, and the seconds left to answer. Doing
+// nothing shares the screens when the time is up, so closing the card is a refusal too.
+const spyBox = document.getElementById("spy-requests");
+let spyTimer = null;
+function spyRequests(state) {
+  spyBox.textContent = "";
+  clearInterval(spyTimer);
+  const since = Date.now();
+  const lefts = [];
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  for (const r of state.requests || []) {
+    const card = el("div", "spy");
+    card.setAttribute("role", "alertdialog");
+    card.setAttribute("aria-label", `${r.name} wants to see your screen`);
+    const answer = choice => {
+      card.remove();
+      window.zchatSend(`/spy ${choice} ${r.name}`);
+      input.focus();
+    };
+    const title = el("div", "titlebar", "zchat · spy");
+    const close = el("button", "", "×");
+    close.title = "Deny";
+    close.onclick = () => answer("deny");
+    title.append(close);
+    const body = el("div", "body");
+    const what = el("div", "what");
+    const name = el("b", "", r.name);
+    name.style.color = r.color;
+    what.append("👁 ", name, " wants to see your screen(s)!");
+    const hint = el("div", "hint", `Allow shares a screenshot of each of your monitors with the chat; you get ${Math.ceil(r.price / 2)} coins for it.`);
+    const timer = el("div", "timer");
+    const secs = el("span", "secs");
+    timer.append(secs, el("span", "phase", "then shared anyway"));
+    const bar = el("div", "bar"), fill = el("div");
+    bar.append(fill);
+    const buttons = el("div", "buttons");
+    const allow = el("button", "allow", "Allow");
+    allow.onclick = () => answer("allow");
+    const deny = el("button", "deny", "Deny");
+    deny.onclick = () => answer("deny");
+    buttons.append(allow, deny);
+    body.append(what, hint, timer, bar, buttons);
+    card.append(title, body);
+    spyBox.append(card);
+    lefts.push([secs, fill, r.left, card]);
+  }
+  // The seconds left, counted here: the C++ side only tells when the requests change.
+  const update = () => {
+    const gone = Math.floor((Date.now() - since) / 1000);
+    for (const [secs, fill, left, card] of lefts) {
+      const now = Math.max(0, left - gone);
+      const low = now <= 10;
+      secs.textContent = now + "s";
+      secs.className = "secs" + (low ? " low" : "");
+      fill.className = low ? "low" : "";
+      fill.style.width = Math.min(100, now / Math.max(1, left) * 100) + "%";
+      if (left - gone < 0) card.remove();
+    }
+  };
+  update();
+  if (lefts.length) spyTimer = setInterval(update, 1000);
+}
 
 // --- Pokémon battle, in a window of its own (zchat.game("pokemon", state)): Pokémon Showdown's battle room, more or
 // less. Like the dice: a real window when the web view allows one, or else one floating over the chat. The state is
@@ -4201,6 +4292,7 @@ zchat.game = (game, state) => {
   else if (game === "frag") fragGame(state);
   else if (game === "pokemon-challenge") pokemonChallenges(state);
   else if (game === "kick") kickVotes(state);
+  else if (game === "spy") spyRequests(state);
   else if (game === "coins") showCoins(state);
   else if (game === "casino") openCasino(typeof state.open === "string" ? state.open : undefined);
   else if (game === "blackjack" || game === "roulette" || game === "horses") casinoGame(game, state);
