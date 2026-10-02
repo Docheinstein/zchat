@@ -3,6 +3,7 @@ add_executable(zchat)
 target_sources(zchat PUBLIC
     blackjack.cpp
     arena.cpp
+    frag.cpp
     bomber.cpp
     capture.cpp
     casino.cpp
