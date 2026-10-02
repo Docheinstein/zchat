@@ -96,7 +96,7 @@ While chatting:
 | `/trill [SOUND] [PICTURE]` | trill everybody else: 3 seconds to catch a STOP button running around their screen, or their window shakes, the sound (MP3, WAV) plays at full volume and the picture flies around the screen; `/trill` alone sends the built-in *Fahhh*. It costs coins (see below): 5, or 8 with your own sound or picture |
 | `/stop`            | stop the trills coming at you (or playing)             |
 | `/kick NAME`       | ask the rest of the chat to vote NAME out: nobody is kicked right away. The others (not NAME) have 20 seconds to answer `/kick yes` to kick them or `/kick no` to grace them (in the window, a card pops up with Kick and Grace buttons); asking counts as a vote to kick. When the time is up, or everybody voted, NAME is out if at least as many voted to kick as to grace (who does not answer does not count), and their zchat closes. It takes someone else in the chat to vote; with several votes on, `/kick yes NAME` says which; `/kick` alone shows the votes on. Asking costs 20 coins, paid when the vote starts, whatever the chat says; voting is free |
-| `/spy @NAME`       | ask NAME to let you see their screen(s). Nothing is captured behind their back: NAME is asked first and has 30 seconds to answer `/spy allow`, which makes *their* zchat take a picture of each of their monitors and share them with the chat, or `/spy deny` to refuse — and doing nothing refuses too, so no screenshot is ever taken without their yes. `/spy` alone shows the requests on; with several waiting, `/spy allow NAME` says which. Asking is free: only if they accept do you pay 20 coins, and they get 10 for letting you in. A refusal, no answer, or a machine that cannot take a screenshot costs nobody anything |
+| `/spy @NAME`       | ask NAME to let you see their screen(s). Nothing is captured behind their back: NAME is asked first and has 30 seconds to answer `/spy allow`, which makes *their* zchat take a picture of each of their monitors and share them with the chat, or `/spy deny` to refuse — and doing nothing refuses too, so no screenshot is ever taken without their yes. `/spy` alone shows the requests on; with several waiting, `/spy allow NAME` says which. Asking is free: only if they accept do you pay 10 coins, and they get 5 for letting you in. A refusal, no answer, or a machine that cannot take a screenshot costs nobody anything |
 | `/coins [NAME]`    | your coins, or somebody's: won in the games, spent on `/trill`, `/kick` and `/spy`. In the window they are by your name (💰), and a click on them shows `/shop` |
 | `/coins top`       | who has the most coins (`/game top coins` works too). Who left is on it too |
 | `/shop`            | what coins buy, and how to win them (`/coins shop` works too) |
@@ -200,8 +200,8 @@ chat shows what each player of a round won, with their new balance.
 |------:|---------------------------------------------------------|
 |     5 | `/trill`: *Fahhh* at everybody else                     |
 |     8 | `/trill SOUND PICTURE`: your own sound, picture, or both |
+|    10 | `/spy @NAME`: ask to see their screen(s); paid only if they `/spy allow` (free otherwise), and they get 5 |
 |    20 | `/kick NAME`: paid when the vote starts, whatever the chat says (voting is free) |
-|    20 | `/spy @NAME`: ask to see their screen(s); paid only if they `/spy allow` (free otherwise), and they get 10 |
 
 Without enough coins, the command is not sent, and zchat says what it costs and how many you have. The prices are in
 `src/coins.hpp`, with what a round pays.
