@@ -153,6 +153,7 @@ std::unique_ptr<Game> make_dice(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_paint(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_wordle(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_pokemon(Chat& chat, Screen& terminal, Games& games);
+std::unique_ptr<Game> make_bomber(Chat& chat, Screen& terminal, Games& games);
 // Not a game: the Elo ratings and the coins, told around as Game packets; rated_games are the names of the games
 // they are for.
 std::unique_ptr<Ratings> make_ratings(Chat& chat, Screen& terminal, std::vector<std::string> rated_games);
