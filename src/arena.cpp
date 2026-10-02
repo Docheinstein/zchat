@@ -1,8 +1,9 @@
 // Arena: a top-down shooter for the whole chat, a deathmatch on a small map of walls and cover, so the others are never
 // far. Everyone who joins starts in a corner (or on a side); shots fly in a straight line until they hit a wall or
 // somebody, and four hits take a player out, who comes back a few seconds later somewhere away from the others. Med
-// kits on the map heal. After three minutes whoever took out the most players wins (the fewest times out breaks a
-// tie). Up to 16 can play: the map grows with them. In a window it has a window of its own (see Screen::show_game()),
+// kits on the map heal. Every player taken out pays whoever did it a coin, right away; after three minutes whoever took
+// out the most players wins (the fewest times out breaks a tie), and the round pays coins as every rated game does. Up
+// to 16 can play: the map grows with them. In a window it has a window of its own (see Screen::show_game()),
 // played with WASD (or the arrows) to move, the mouse to aim and its button (or Space) to shoot; in a terminal, with
 // /game arena move up, /game arena shoot [NAME] and /game arena map.
 //
@@ -90,6 +91,8 @@ namespace {
     constexpr int protect_steps = 2 * steps_per_second;
     constexpr int kit_steps = 15 * steps_per_second;
     constexpr double kit_reach = 14.0;
+    // What each player taken out pays whoever did it, besides what the round pays (see coins::payouts()).
+    constexpr long long coins_per_kill = 1;
 
     // How often things are told again, as packets get lost.
     constexpr auto open_interval = 1s;
@@ -362,7 +365,7 @@ namespace {
         }
 
         std::string_view summary() const override {
-            return "a top-down shooter for everyone: three minutes of deathmatch, the most players taken out wins";
+            return "a top-down shooter for everyone: three minutes of deathmatch, each player taken out pays a coin";
         }
 
         void start() override {
@@ -711,7 +714,8 @@ namespace {
             next_join_ = {};
             chat_.game_notice(
                 std::format("🎯 Arena, started by {}! /game arena join within {} seconds to play: three minutes of "
-                            "shooting each other, whoever takes out the most wins (/game help arena).",
+                            "shooting each other, a coin for each player you take out, and whoever takes out the "
+                            "most wins (/game help arena).",
                             colored(referee), join_time.count()));
         }
 
@@ -1212,6 +1216,8 @@ namespace {
             frame_ = -1;
             sub_ = 'c';
             seconds_ = 0;
+            paid_kills_ = -1;
+            earned_ = 0;
             result_.clear();
             places_.clear();
             end_sent_ = end_repeats;
@@ -1285,6 +1291,7 @@ namespace {
                 }
             }
             seen_ = std::move(seen);
+            pay_kills();
             shots_ = std::move(flying);
             if (was == 'c' && sub_ == 'p') {
                 chat_.game_notice("🎯 Go!");
@@ -1293,6 +1300,33 @@ namespace {
                 }
             }
             publish();
+        }
+
+        // Each player we took out pays us a coin, as soon as the referee says so. Every zchat pays only its own user
+        // (and tells the others its coins, as always); the first state we see only counts what was taken out before,
+        // so coming back to a round in the middle pays nothing twice.
+        void pay_kills() {
+            if (!me_ || *me_ >= seen_.size()) {
+                return;
+            }
+            const int kills = seen_[*me_].kills;
+            if (paid_kills_ < 0 || kills < paid_kills_) {
+                paid_kills_ = kills;
+                return;
+            }
+            if (kills == paid_kills_) {
+                return;
+            }
+            const int taken = kills - paid_kills_;
+            const long long coins = taken * coins_per_kill;
+            paid_kills_ = kills;
+            games_.cash(coins);
+            earned_ += coins;
+            // The window shows it by the view; the chat would fill up.
+            if (terminal_mode_) {
+                chat_.game_notice(std::format("💰 +{} for taking out {}: {} this round.", plural(coins, "coin"),
+                                              plural(taken, "player"), plural(earned_, "coin")));
+            }
         }
 
         void obituary(std::size_t victim, int killer) {
@@ -1346,6 +1380,10 @@ namespace {
                 scoreboard();
             }
             games_.rate(game_name, placings);
+            if (me_ && earned_ > 0) {
+                chat_.game_notice(
+                    std::format("💰 The players you took out made you {} more.", plural(earned_, "coin")));
+            }
             over(std::move(result));
         }
 
@@ -1550,10 +1588,11 @@ namespace {
             const std::string state = std::format(
                 "{{\"round\":\"{:x}\",\"phase\":\"{}\",\"referee\":{},\"isReferee\":{},\"joined\":{},\"playing\":{},"
                 "\"joinLeft\":{},\"left\":{},\"frame\":{},\"w\":{},\"h\":{},\"unit\":{},\"grid\":{},\"maxHits\":{},"
-                "\"shotSpeed\":{},\"body\":{},\"players\":{},\"shots\":{},\"kits\":{},\"result\":{}}}",
+                "\"shotSpeed\":{},\"body\":{},\"perKill\":{},\"earned\":{},\"players\":{},\"shots\":{},"
+                "\"kits\":{},\"result\":{}}}",
                 round_, phase, json(phase_ == Phase::None ? std::string() : name_of(referee_)), referee_ == chat_.id(),
                 joined_, me_.has_value(), lobby_left_, seconds_, frame_, w_, h_, tile, json(map_), max_hits,
-                shot_speed, body, players, shots, kits, json(result_));
+                shot_speed, body, coins_per_kill, earned_, players, shots, kits, json(result_));
             terminal_mode_ = !terminal_.show_game(game_name, state);
         }
 
@@ -1601,6 +1640,9 @@ namespace {
         bool fire_ = false;
         std::int64_t asked_ = 0;
         clock::time_point next_input_;
+        // The kills we were paid for (-1 before the first state), and the coins they made this round.
+        int paid_kills_ = -1;
+        long long earned_ = 0;
 
         // When we are the referee of the match.
         std::optional<Sim> sim_;

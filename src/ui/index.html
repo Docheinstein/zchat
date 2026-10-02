@@ -2885,6 +2885,7 @@ const amStyle = bmStyle.replace(".bm {", ".am {").replaceAll("bm-blink", "am-bli
   .feed .kill b { font-weight: 700; }
   .feed .kill .gun { color: #7d8491; margin: 0 4px; }
   .top .clock.last { color: #e5534b; animation: am-blink .6s steps(2) infinite; }
+  .top .earned { color: #f2c94c; font-weight: 700; font-size: 14px; }
 `;
 let amState = null, amPopup = null, amClosedRound = null;
 // The players' places in the state before the last one and in the last one, and when that came.
@@ -3164,7 +3165,7 @@ function renderArena() {
     amBuilt = kind;
     root.textContent = "";
     const top = el("div", "top");
-    top.append(el("span", "title", "🎯 Arena"), el("span", "by"), el("span", "clock"));
+    top.append(el("span", "title", "🎯 Arena"), el("span", "by"), el("span", "earned"), el("span", "clock"));
     if (amDoc()) {
       const close = el("button", "", "×");
       close.style.cssText = "margin-left:8px;background:none;border:0;color:#7d8491;font-size:18px;cursor:pointer";
@@ -3194,6 +3195,7 @@ function renderArena() {
   }
   const q = sel => root.querySelector(sel);
   q(".top .by").textContent = s.referee ? "by " + s.referee : "";
+  q(".top .earned").textContent = field && s.playing && s.earned ? `💰 +${s.earned}` : "";
   const clock = q(".top .clock");
   clock.className = "clock" + (s.phase === "play" && s.left <= 10 ? " last" : "");
   clock.textContent = s.phase === "play" ? Math.floor(s.left / 60) + ":" + String(s.left % 60).padStart(2, "0") : "";
@@ -3215,7 +3217,7 @@ function renderArena() {
     lobby.textContent = "";
     lobby.append(el("div", "big", s.joinLeft + "s"),
       el("div", "hint", s.joined ? (s.players.some(p => p.you) ? "You are in! The round starts when the time is up." : "Joining…")
-        : "Join to play: three minutes, whoever takes out the most wins."));
+        : `Join to play: three minutes, ${s.perKill} coin for each player you take out, and whoever takes out the most wins.`));
   }
 
   // The players, the best first: taken out and times out; at the end, where they finished.
@@ -3276,7 +3278,8 @@ function renderArena() {
   hint.textContent = "";
   if (s.playing || s.phase === "lobby") {
     hint.innerHTML = "<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrows move, the mouse aims, " +
-      "click (or hold <kbd>Space</kbd>) to shoot. Four hits take you out, for 3 seconds; ✚ heals." +
+      "click (or hold <kbd>Space</kbd>) to shoot. Four hits take you out, for 3 seconds; ✚ heals. " +
+      `Each player you take out: 💰 +${s.perKill}.` +
       (amDoc() ? "" : " Click the map first, for the keys to come here.");
   } else if (field && s.phase !== "over") {
     hint.textContent = "You are watching this round.";
