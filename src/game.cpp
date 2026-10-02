@@ -27,6 +27,7 @@ Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
     games_.push_back(make_paint(chat, terminal, *this));
     games_.push_back(make_wordle(chat, terminal, *this));
     games_.push_back(make_pokemon(chat, terminal, *this));
+    games_.push_back(make_bomber(chat, terminal, *this));
     // Kicks cost coins, which the ratings keep (made next).
     games_.push_back(make_kick(chat, terminal, std::move(kicked), [this](std::string_view item) {
         return ratings_->spend(item);

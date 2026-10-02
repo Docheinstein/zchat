@@ -183,6 +183,12 @@ public:
     // Sends a Game packet to everybody (not to us).
     void send_game(std::string_view text);
 
+    // While a game is played in real time (see the bomber game), the game hooks tick about 50 times a second instead
+    // of a few. Thread-safe.
+    void set_fast_ticks(bool fast) {
+        fast_ticks_ = fast;
+    }
+
 private:
     using clock = std::chrono::steady_clock;
 
@@ -288,6 +294,7 @@ private:
     net::BroadcastSocket socket_;
     std::atomic<std::uint64_t> seq_ {0};
     std::atomic<bool> stopped_ {false};
+    std::atomic<bool> fast_ticks_ {false};
 
     mutable std::mutex peers_mutex_;
     std::map<std::uint64_t, Peer> peers_;
