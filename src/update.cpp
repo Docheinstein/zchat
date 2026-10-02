@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <format>
+#include <functional>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -98,6 +99,43 @@ namespace {
         return std::string(s);
     }
 
+    // Never ask for a password: there is nobody to type it, the terminal belongs to the chat.
+    void no_password_prompt() {
+#ifdef _WIN32
+        SetEnvironmentVariableW(L"GIT_TERMINAL_PROMPT", L"0");
+#else
+        setenv("GIT_TERMINAL_PROMPT", "0", 1);
+#endif
+    }
+
+    using Git = std::function<process::Result(std::vector<std::string>)>;
+
+    // What changed since the running zchat was built: the subjects of the commits it does not have, newest first.
+    // The sources may already be ahead of it (pulled by hand, or an update that could not build), so it counts from
+    // the commit it was built from when that is known, else from the sources. Empty when it cannot tell.
+    std::vector<std::string> news(const Git& git) {
+        const std::string built_commit = ZCHAT_COMMIT;
+        const bool from_built = !built_commit.empty() &&
+                                git({"merge-base", "--is-ancestor", built_commit, "@{upstream}"}).exit_code == 0;
+        const auto log = git({"log", "--no-merges", "--format=%s",
+                              std::format("{}..@{{upstream}}", from_built ? built_commit : "HEAD")});
+        if (log.exit_code != 0) {
+            return {};
+        }
+        return last_lines(log.output, static_cast<std::size_t>(-1));
+    }
+
+    void tell_news(const std::function<void(std::string_view)>& notice, const std::vector<std::string>& commits,
+                   std::string_view intro) {
+        notice(std::format("{} ({} update{}):", intro, commits.size(), commits.size() == 1 ? "" : "s"));
+        for (std::size_t i = 0; i < commits.size() && i < shown_commits; ++i) {
+            notice(std::format("  - {}", commits[i]));
+        }
+        if (commits.size() > shown_commits) {
+            notice(std::format("  ... and {} more", commits.size() - shown_commits));
+        }
+    }
+
 #ifdef _WIN32
     // The old zchat waits for the new one: Ctrl+C and Ctrl+Break are for the new one only.
     BOOL WINAPI ignore_interrupts(DWORD event) {
@@ -117,6 +155,13 @@ Updater::~Updater() {
 }
 
 bool Updater::start() {
+    std::unique_lock lock(mutex_);
+    if (checking_) {
+        // The check's thread updates as soon as it is over.
+        update_after_check_ = true;
+        return true;
+    }
+    lock.unlock();
     if (running_.exchange(true)) {
         return false;
     }
@@ -129,6 +174,53 @@ bool Updater::start() {
         running_ = false;
     });
     return true;
+}
+
+void Updater::check() {
+    if (running_.exchange(true)) {
+        return;
+    }
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+    checking_ = true;
+    thread_ = std::jthread([this](std::stop_token stop) {
+        run_check(stop);
+        std::unique_lock lock(mutex_);
+        checking_ = false;
+        if (!update_after_check_.exchange(false)) {
+            running_ = false;
+            return;
+        }
+        lock.unlock();
+        if (!stop.stop_requested()) {
+            run(stop);
+        }
+        running_ = false;
+    });
+}
+
+void Updater::run_check(std::stop_token stop) {
+    const fs::path source = utf8_path(ZCHAT_SOURCE_DIR);
+    std::error_code ec;
+    if (executable().empty() || !fs::exists(source / ".git", ec)) {
+        return;
+    }
+    no_password_prompt();
+    const Git git = [&](std::vector<std::string> args) {
+        args.insert(args.begin(), {ZCHAT_GIT, "-C", utf8(source)});
+        return process::run(args, stop, git_timeout);
+    };
+    if (git({"fetch", "--quiet"}).exit_code != 0 || stop.stop_requested()) {
+        return;
+    }
+    const auto commits = news(git);
+    // Once /update is asked for, it tells what is new itself.
+    if (commits.empty() || stop.stop_requested() || update_after_check_) {
+        return;
+    }
+    tell_news(notice_, commits, "🆕 A new zchat is available");
+    notice_("   Type /update to install it: zchat builds it and restarts.");
 }
 
 void Updater::run(std::stop_token stop) {
@@ -146,12 +238,7 @@ void Updater::run(std::stop_token stop) {
         return;
     }
 
-    // Never ask for a password: there is nobody to type it, the terminal belongs to the chat.
-#ifdef _WIN32
-    SetEnvironmentVariableW(L"GIT_TERMINAL_PROMPT", L"0");
-#else
-    setenv("GIT_TERMINAL_PROMPT", "0", 1);
-#endif
+    no_password_prompt();
     auto git = [&](std::vector<std::string> args, std::chrono::milliseconds timeout = {}) {
         args.insert(args.begin(), {ZCHAT_GIT, "-C", utf8(source)});
         return process::run(args, stop, timeout);
@@ -184,27 +271,12 @@ void Updater::run(std::stop_token stop) {
     const std::string head_commit = trimmed(head.output);
     const std::string upstream_commit = trimmed(upstream.output);
 
-    // What changed since the running zchat was built: the subjects of the commits it does not have, newest first.
-    // The sources may already be ahead of it (pulled by hand, or an update that could not build), so it counts from
-    // the commit it was built from when that is known, else from the sources.
     auto list_news = [&] {
-        const bool from_built = !built_commit.empty() &&
-                                git({"merge-base", "--is-ancestor", built_commit, "@{upstream}"}).exit_code == 0;
-        const auto log = git({"log", "--no-merges", "--format=%s",
-                              std::format("{}..@{{upstream}}", from_built ? built_commit : "HEAD")});
-        if (log.exit_code != 0 || stop.stop_requested()) {
-            return;
-        }
-        const auto commits = last_lines(log.output, static_cast<std::size_t>(-1));
-        if (commits.empty()) {
-            return;
-        }
-        notice_(std::format("What's new ({} update{}):", commits.size(), commits.size() == 1 ? "" : "s"));
-        for (std::size_t i = 0; i < commits.size() && i < shown_commits; ++i) {
-            notice_(std::format("  - {}", commits[i]));
-        }
-        if (commits.size() > shown_commits) {
-            notice_(std::format("  ... and {} more", commits.size() - shown_commits));
+        const auto commits = news([&](std::vector<std::string> args) {
+            return git(std::move(args));
+        });
+        if (!commits.empty() && !stop.stop_requested()) {
+            tell_news(notice_, commits, "What's new");
         }
     };
 

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <functional>
+#include <mutex>
 #include <string_view>
 #include <thread>
 
@@ -19,15 +20,25 @@ public:
     Updater(const Updater&) = delete;
     Updater& operator=(const Updater&) = delete;
 
-    // Starts an update in the background. Returns false, doing nothing, when one is already in progress.
+    // Starts an update in the background. Returns false, doing nothing, when one is already in progress. During a
+    // check(), the update starts as soon as the check is over.
     bool start();
+
+    // Checks in the background whether there is a newer zchat, saying so (and that /update installs it) only when
+    // there is: meant for startup, so it is quiet when it cannot tell.
+    void check();
 
 private:
     void run(std::stop_token stop);
+    void run_check(std::stop_token stop);
 
     std::function<void(std::string_view)> notice_;
     std::function<void()> ready_;
     std::atomic<bool> running_ {false};
+    // A check() is in progress, and an update was asked for during it.
+    std::mutex mutex_;
+    bool checking_ = false;
+    std::atomic<bool> update_after_check_ {false};
     std::jthread thread_;
 };
 
