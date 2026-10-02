@@ -38,7 +38,7 @@ inline constexpr std::array items {
     Item {"trill", 5, "/trill: Fahhh at everybody else"},
     Item {"custom trill", 8, "/trill SOUND PICTURE: your own sound, picture, or both"},
     Item {"kick", 20, "/kick NAME: ask the chat to vote someone out (paid when the vote starts)"},
-    Item {"spy", 20, "/spy @NAME: peek at their screen(s) — only if they accept (then they get half)"},
+    Item {"spy", 10, "/spy @NAME: peek at their screen(s) — only if they accept (then they get half)"},
 };
 
 // The price of a thing by name; nullopt for none.
