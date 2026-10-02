@@ -41,6 +41,22 @@ Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
     games_.push_back(make_kick(chat, terminal, std::move(kicked), [this](std::string_view item) {
         return ratings_->spend(item);
     }));
+    // Spying is paid only when accepted: the asker pays, the one who agrees gets half. The reward is paid from the
+    // screenshot thread, so these lock like the rest of Games.
+    games_.push_back(make_spy(
+        chat, terminal,
+        [this](long long amount) {
+            std::scoped_lock lock(mutex_);
+            return ratings_->can_afford(amount);
+        },
+        [this](std::string_view item) {
+            std::scoped_lock lock(mutex_);
+            return ratings_->spend(item);
+        },
+        [this](long long amount) {
+            std::scoped_lock lock(mutex_);
+            ratings_->cash(amount);
+        }));
     std::vector<std::string> rated;
     for (const auto& g : games_) {
         if (g->rated()) {
@@ -154,6 +170,16 @@ void Games::rate(std::string_view game, const std::vector<Placing>& placings) {
 void Games::kick(std::string_view args) {
     std::scoped_lock lock(mutex_);
     const auto it = std::ranges::find(games_, "kick", &Game::name);
+    if (args.empty()) {
+        (*it)->start();
+    } else {
+        (*it)->command(args);
+    }
+}
+
+void Games::spy(std::string_view args) {
+    std::scoped_lock lock(mutex_);
+    const auto it = std::ranges::find(games_, "spy", &Game::name);
     if (args.empty()) {
         (*it)->start();
     } else {

@@ -99,6 +99,8 @@ public:
     virtual void shop() = 0;
     // Pays for one of coins::items, by name: returns false, saying why, when we cannot afford it.
     virtual bool spend(std::string_view item) = 0;
+    // Whether we have at least this many coins (to check before promising to pay, without spending yet).
+    virtual bool can_afford(long long amount) const = 0;
     // A bet at the casino (see casino.hpp): takes amount coins, or returns false, saying why, when we do not have
     // them. what is where, as in "blackjack".
     virtual bool stake(long long amount, std::string_view what) = 0;
@@ -130,6 +132,9 @@ public:
 
     // /kick ARGS: asks the others to vote someone out of the chat, or votes (see kick.cpp).
     void kick(std::string_view args);
+
+    // /spy ARGS: asks someone to let us see their screen(s), or answers a request about us (see spy.cpp).
+    void spy(std::string_view args);
 
     // /coins ARGS: ours, somebody's (NAME), who has the most (top), or what they buy (shop).
     void coins(std::string_view args);
@@ -186,5 +191,10 @@ std::unique_ptr<Game> make_horses(Chat& chat, Screen& terminal, Games& games);
 // Not a game: the votes of /kick, which travel as Game packets too; spend pays for one (see Games::spend()).
 std::unique_ptr<Game> make_kick(Chat& chat, Screen& terminal, std::function<void()> kicked,
                                 std::function<bool(std::string_view)> spend);
+// Not a game: /spy, which rides on Game packets too. Nobody pays unless the peek is accepted: can_afford checks the
+// asker has the coins before asking, spend takes them once it is accepted, and cash gives the agreeing person their
+// half. See spy.cpp.
+std::unique_ptr<Game> make_spy(Chat& chat, Screen& terminal, std::function<bool(long long)> can_afford,
+                               std::function<bool(std::string_view)> spend, std::function<void(long long)> cash);
 
 } // namespace zchat::game

@@ -96,7 +96,8 @@ While chatting:
 | `/trill [SOUND] [PICTURE]` | trill everybody else: 3 seconds to catch a STOP button running around their screen, or their window shakes, the sound (MP3, WAV) plays at full volume and the picture flies around the screen; `/trill` alone sends the built-in *Fahhh*. It costs coins (see below): 5, or 8 with your own sound or picture |
 | `/stop`            | stop the trills coming at you (or playing)             |
 | `/kick NAME`       | ask the rest of the chat to vote NAME out: nobody is kicked right away. The others (not NAME) have 20 seconds to answer `/kick yes` to kick them or `/kick no` to grace them (in the window, a card pops up with Kick and Grace buttons); asking counts as a vote to kick. When the time is up, or everybody voted, NAME is out if at least as many voted to kick as to grace (who does not answer does not count), and their zchat closes. It takes someone else in the chat to vote; with several votes on, `/kick yes NAME` says which; `/kick` alone shows the votes on. Asking costs 20 coins, paid when the vote starts, whatever the chat says; voting is free |
-| `/coins [NAME]`    | your coins, or somebody's: won in the games, spent on `/trill` and `/kick`. In the window they are by your name (💰), and a click on them shows `/shop` |
+| `/spy @NAME`       | ask NAME to let you see their screen(s). Nothing is captured behind their back: NAME is asked first and has 30 seconds to answer `/spy allow`, which makes *their* zchat take a picture of each of their monitors and share them with the chat, or `/spy deny` to refuse — and doing nothing refuses too, so no screenshot is ever taken without their yes. `/spy` alone shows the requests on; with several waiting, `/spy allow NAME` says which. Asking is free: only if they accept do you pay 20 coins, and they get 10 for letting you in. A refusal, no answer, or a machine that cannot take a screenshot costs nobody anything |
+| `/coins [NAME]`    | your coins, or somebody's: won in the games, spent on `/trill`, `/kick` and `/spy`. In the window they are by your name (💰), and a click on them shows `/shop` |
 | `/coins top`       | who has the most coins (`/game top coins` works too). Who left is on it too |
 | `/shop`            | what coins buy, and how to win them (`/coins shop` works too) |
 | `/casino`          | the casino: blackjack, roulette and a horse race, for coins, at tables the whole chat shares (see below). In the window it opens the casino's own window (🎰 Casino at the top); `/casino help` lists the commands to play in the chat |
@@ -200,7 +201,7 @@ chat shows what each player of a round won, with their new balance.
 |     5 | `/trill`: *Fahhh* at everybody else                     |
 |     8 | `/trill SOUND PICTURE`: your own sound, picture, or both |
 |    20 | `/kick NAME`: paid when the vote starts, whatever the chat says (voting is free) |
-|    15 | `/spy`: coming soon                                     |
+|    20 | `/spy @NAME`: ask to see their screen(s); paid only if they `/spy allow` (free otherwise), and they get 10 |
 
 Without enough coins, the command is not sent, and zchat says what it costs and how many you have. The prices are in
 `src/coins.hpp`, with what a round pays.
@@ -384,6 +385,13 @@ The window is built too (`-DZCHAT_GUI=OFF` leaves it out, for the terminal versi
 * **Kicks** (`/kick NAME`) travel as `GAME` packets too (`kick vote`, `kick ballot`, `kick voted`, `kick result`):
   whoever asks counts the votes, says each one it counts (so voters send theirs again until it is counted), and sends
   the result a few times, as the one kicked has to get it; their own zchat then closes. Older versions ignore it.
+* **Spying** (`/spy @NAME`) rides on `GAME` packets too (`spy ask`, `spy done`). The asker only sends a request; the
+  picture is taken by the *target's* own zchat, and only after they answer `/spy allow` — no machine ever reaches into
+  another to grab its screen, and no answer (or `/spy deny`) means no screenshot at all. On a yes, the target captures
+  each of its monitors with the system's screenshot tool (`screencapture`, ImageMagick/`grim`/…, or a PowerShell
+  snippet — see `src/capture.cpp`) and sends them as ordinary `IMAGE` packets, then a `spy done shot`. Nobody pays
+  until that yes: on a shot the asker is charged 20 coins and the one who agreed gets 10; a refusal, no answer or a
+  failed capture costs nobody anything. Older versions ignore it.
 * **Games** (`/game NAME`) have no server either: whoever starts a round is its referee, and sends everybody what
   happens in it as `GAME` packets, whose text starts with the game's name (`race go <round> <words>`). In the race
   the referee picks the words, and the first message with them that reaches it wins. One letter of each

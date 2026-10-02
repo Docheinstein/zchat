@@ -3,6 +3,7 @@ add_executable(zchat)
 target_sources(zchat PUBLIC
     blackjack.cpp
     bomber.cpp
+    capture.cpp
     casino.cpp
     channel.cpp
     chat.cpp
@@ -31,6 +32,7 @@ target_sources(zchat PUBLIC
     race.cpp
     ratings.cpp
     roulette.cpp
+    spy.cpp
     protocol.cpp
     sound.cpp
     terminal.cpp

@@ -305,6 +305,10 @@ namespace {
             return true;
         }
 
+        bool can_afford(long long amount) const override {
+            return coins_ >= amount;
+        }
+
         void cash(long long amount) override {
             if (amount <= 0) {
                 return;
