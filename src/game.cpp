@@ -34,6 +34,7 @@ Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
     games_.push_back(make_wordle(chat, terminal, *this));
     games_.push_back(make_pokemon(chat, terminal, *this));
     games_.push_back(make_bomber(chat, terminal, *this));
+    games_.push_back(make_arena(chat, terminal, *this));
     games_.push_back(make_blackjack(chat, terminal, *this));
     games_.push_back(make_roulette(chat, terminal, *this));
     games_.push_back(make_horses(chat, terminal, *this));

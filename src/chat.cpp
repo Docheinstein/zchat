@@ -1716,7 +1716,7 @@ void Chat::run(std::stop_token stop) {
     auto next_refresh = clock::now() + interfaces_refresh_interval;
     auto next_channels = clock::now() + channels_interval;
     while (!stop.stop_requested()) {
-        if (auto datagram = socket_.receive(fast_ticks_ ? 20ms : 200ms)) {
+        if (auto datagram = socket_.receive(fast_ticks_ != 0 ? 20ms : 200ms)) {
             // Older versions send plaintext: still understood, but never sent.
             const auto plain = cipher::unscramble(datagram->data);
             if (auto packet = decode(plain ? *plain : datagram->data); packet && packet->sender != id_) {
