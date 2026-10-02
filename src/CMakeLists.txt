@@ -1,6 +1,8 @@
 add_executable(zchat)
 
 target_sources(zchat PUBLIC
+    blackjack.cpp
+    casino.cpp
     channel.cpp
     chat.cpp
     cipher.cpp
@@ -12,6 +14,7 @@ target_sources(zchat PUBLIC
     file.cpp
     game.cpp
     history.cpp
+    horses.cpp
     image.cpp
     kick.cpp
     main.cpp
@@ -26,6 +29,7 @@ target_sources(zchat PUBLIC
     process.cpp
     race.cpp
     ratings.cpp
+    roulette.cpp
     protocol.cpp
     sound.cpp
     terminal.cpp

@@ -92,6 +92,11 @@ public:
     virtual void shop() = 0;
     // Pays for one of coins::items, by name: returns false, saying why, when we cannot afford it.
     virtual bool spend(std::string_view item) = 0;
+    // A bet at the casino (see casino.hpp): takes amount coins, or returns false, saying why, when we do not have
+    // them. what is where, as in "blackjack".
+    virtual bool stake(long long amount, std::string_view what) = 0;
+    // What the casino gives back: our winnings, or a bet back.
+    virtual void cash(long long amount) = 0;
 };
 
 // The games that can be played with /game NAME. All calls are safe from any thread.
@@ -124,6 +129,13 @@ public:
     // Pays for an annoying command, one of coins::items: returns false, saying why, when we cannot afford it.
     bool spend(std::string_view item);
 
+    // /casino ARGS: without any, the casino's tables (and its window opens, where there is one); "help" how to play;
+    // or a table's name (blackjack, roulette, horses), alone to show it, or with one of its commands.
+    void casino(std::string_view args);
+    // Bets at the casino, and what it pays back (see Ratings::stake() and Ratings::cash()).
+    bool stake(long long amount, std::string_view what);
+    void cash(long long amount);
+
 private:
     struct Score {
         std::string name;                             // colored, as last seen
@@ -133,11 +145,14 @@ private:
 
     // A game of /game, by lowercase name; nullptr for none.
     Game* find(std::string_view name) const;
+    // A table of the casino, by lowercase name or nickname (bj); nullptr for none.
+    Game* table(std::string_view name) const;
     void list() const;
     void print_help(std::string_view name) const;
     void print_scores() const;
 
     Chat& chat_;
+    Screen& screen_;
     // Recursive, as games count their wins while one of their calls holds it.
     mutable std::recursive_mutex mutex_;
     std::vector<std::unique_ptr<Game>> games_;
@@ -156,6 +171,10 @@ std::unique_ptr<Game> make_pokemon(Chat& chat, Screen& terminal, Games& games);
 // Not a game: the Elo ratings and the coins, told around as Game packets; rated_games are the names of the games
 // they are for.
 std::unique_ptr<Ratings> make_ratings(Chat& chat, Screen& terminal, std::vector<std::string> rated_games);
+// The tables of the casino (/casino), not games of /game: played for coins, and not rated.
+std::unique_ptr<Game> make_blackjack(Chat& chat, Screen& terminal, Games& games);
+std::unique_ptr<Game> make_roulette(Chat& chat, Screen& terminal, Games& games);
+std::unique_ptr<Game> make_horses(Chat& chat, Screen& terminal, Games& games);
 // Not a game: the votes of /kick, which travel as Game packets too; spend pays for one (see Games::spend()).
 std::unique_ptr<Game> make_kick(Chat& chat, Screen& terminal, std::function<void()> kicked,
                                 std::function<bool(std::string_view)> spend);

@@ -108,6 +108,18 @@
     font-size: 12px; user-select: none;
   }
   #dice-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  /* The same for the casino. A table taking bets or being played lights its button up. */
+  #casino-float {
+    position: fixed; top: 54px; right: 20px; width: min(780px, calc(100vw - 40px)); z-index: 18; display: none;
+    background: #0f1a14; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px #000b; overflow: hidden;
+  }
+  #casino-float.open { display: block; }
+  #casino-float-title {
+    display: flex; align-items: center; padding: 6px 10px; background: var(--panel); cursor: move; color: var(--muted);
+    font-size: 12px; user-select: none;
+  }
+  #casino-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  header button#casino-open.live { border-color: #3fb950; color: #3fb950; }
   /* The same for the Pokémon battle. */
   #pk-float {
     position: fixed; top: 54px; right: 20px; width: min(1000px, calc(100vw - 40px)); z-index: 18; display: none;
@@ -289,6 +301,7 @@
 </style>
 <style id="dice-style"></style>
 <style id="pk-style"></style>
+<style id="casino-style"></style>
 </head>
 <body>
 <header>
@@ -300,6 +313,7 @@
     <button id="channel-delete" class="danger" title="Delete this channel, for everybody" hidden>Delete</button>
   </span>
   <span class="spacer"></span>
+  <button id="casino-open" title="The casino: blackjack, roulette and the horse race, for coins">🎰 Casino</button>
   <button id="pk-challenge-open" title="Challenge someone to a Pokémon battle">⚔ Battle</button>
   <button id="dice-open" title="Dice" hidden>🎲</button>
   <button id="pk-open" title="Pokémon battle" hidden>⚔</button>
@@ -365,6 +379,8 @@
 <div id="channel-panel"></div>
 <div id="dice-float"><div id="dice-float-title">zchat · dice<button id="dice-float-close" title="Close">×</button></div>
   <div class="dice" id="dice-body"></div></div>
+<div id="casino-float"><div id="casino-float-title">zchat · casino<button id="casino-float-close" title="Close">×</button></div>
+  <div class="casino" id="casino-body"></div></div>
 <div id="pk-float"><div id="pk-float-title">zchat · Pokémon<button id="pk-float-close" title="Close">×</button></div>
   <div class="pk" id="pk-body"></div></div>
 <div id="drop">Drop a picture or a file to send it</div>
@@ -1753,6 +1769,544 @@ pkChallenge.addEventListener("keydown", e => {
   if (e.key === "Enter" && e.target.tagName !== "BUTTON" && !pkChallengeSend.disabled) { sendChallenge(); e.preventDefault(); }
 });
 
+// --- The casino, in a window of its own: zchat.game("casino", {open: true|TABLE}) opens it, and each table's state
+// comes as zchat.game("blackjack"|"roulette"|"horses", state), whether the window is open or not. A lobby with the
+// three tables, and each table, shared by the whole chat: everybody's bets are on it. Its buttons send the /casino
+// commands. Like the dice: a real window when the web view allows one, or else one floating over the chat. The wheel
+// and the race move on their own (requestAnimationFrame), from when the C++ side says they started.
+const casinoStyle = `
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0f1a14; color: #e6efe9; font: 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .casino { display: flex; flex-direction: column; min-height: 100vh; }
+  .bar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: #13221a; border-bottom: 1px solid #23372b; flex-wrap: wrap; }
+  .bar .title { font-weight: 800; font-size: 15px; margin-right: 8px; letter-spacing: .3px; }
+  .bar .tab { height: 28px; padding: 0 12px; border-radius: 14px; border: 1px solid #23372b; background: #172a20; color: #cfe0d5; font: inherit; cursor: pointer; position: relative; }
+  .bar .tab.on { background: #e3b341; border-color: #e3b341; color: #1a1406; font-weight: 700; }
+  .bar .tab .live { position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%; background: #3fb950; box-shadow: 0 0 0 2px #13221a; }
+  .bar .coins { margin-left: auto; color: #e3b341; font-weight: 700; font-size: 14px; }
+  .bar .close { background: none; border: 0; color: #8aa596; font-size: 18px; cursor: pointer; }
+  .body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .felt { background: radial-gradient(ellipse at 50% 0%, #1f6b45 0%, #165236 55%, #0f3d28 100%); border: 6px solid #5a3a1e; border-radius: 18px; padding: 14px; box-shadow: inset 0 0 30px #0007; }
+  .muted { color: #8aa596; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .status { display: flex; align-items: baseline; gap: 10px; }
+  .status .big { font-size: 20px; font-weight: 800; }
+  .status .left { font-variant-numeric: tabular-nums; font-weight: 700; color: #e3b341; }
+  .status .left.low { color: #ff6b6b; }
+  h3 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: #8aa596; margin: 0 0 6px; }
+  button.act { height: 36px; padding: 0 16px; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; border: 1px solid #2c4a39; background: #1b3427; color: #e6efe9; }
+  button.act.gold { background: #e3b341; border-color: #e3b341; color: #1a1406; }
+  button.act.green { background: #3fb950; border-color: #3fb950; color: #06180b; }
+  button.act.red { background: #e5534b; border-color: #e5534b; color: #fff; }
+  button.act:disabled { opacity: .35; cursor: default; }
+  button.act:not(:disabled):hover { filter: brightness(1.1); }
+  .chips { display: flex; gap: 6px; align-items: center; }
+  .chip { width: 40px; height: 40px; border-radius: 50%; border: 3px dashed #fff8; display: grid; place-items: center; font-weight: 800; font-size: 12px; cursor: pointer; color: #fff; text-shadow: 0 1px 2px #000a; box-shadow: 0 2px 4px #0008; padding: 0; font-family: inherit; }
+  .chip.on { outline: 3px solid #e3b341; outline-offset: 2px; }
+  .chip:disabled { opacity: .3; cursor: default; }
+  .result { font-size: 15px; font-weight: 800; text-align: center; padding: 8px; border-radius: 8px; background: #2a2410; color: #f2c94c; }
+  .note { color: #8aa596; font-size: 12px; }
+  .bets .bet { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #1d3127; }
+  .bets .bet .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .bets .bet .who { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bets .bet .what { flex: 1; color: #cfe0d5; }
+  .bets .bet .won { font-weight: 800; color: #3fb950; } .bets .bet .lost { color: #e5534b; font-weight: 700; }
+  /* The lobby. */
+  .lobby { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .table-card { border-radius: 14px; padding: 16px; cursor: pointer; border: 1px solid #2c4a39; background: linear-gradient(160deg, #1c3a2b, #12271c); display: flex; flex-direction: column; gap: 8px; min-height: 170px; transition: transform .15s; }
+  .table-card:hover { transform: translateY(-2px); border-color: #e3b341; }
+  .table-card .icon { font-size: 40px; }
+  .table-card .name { font-size: 17px; font-weight: 800; }
+  .table-card .what { color: #9fb8aa; font-size: 12px; line-height: 1.4; flex: 1; }
+  .table-card .state { font-weight: 700; color: #e3b341; }
+  .table-card .state.idle { color: #8aa596; font-weight: 400; }
+  /* Cards. */
+  .cards { display: flex; gap: 4px; min-height: 64px; }
+  .card { width: 44px; height: 62px; border-radius: 6px; background: #fdfdfb; color: #111; display: flex; flex-direction: column; justify-content: space-between; padding: 3px 5px; font-weight: 800; font-size: 15px; line-height: 1; box-shadow: 0 2px 5px #0009; }
+  .card .s { align-self: flex-end; font-size: 20px; }
+  .card.r { color: #c8102e; }
+  .card.back { background: repeating-linear-gradient(45deg, #8b1e2d 0 6px, #a3283a 6px 12px); border: 3px solid #fdfdfb; }
+  .dealer { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 14px; }
+  .total { font-weight: 800; font-size: 13px; background: #0008; border-radius: 10px; padding: 2px 10px; }
+  .seats { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .seat { background: #0d2f1fcc; border: 2px solid #2c4a39; border-radius: 12px; padding: 8px; min-width: 130px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .seat.you { border-color: #e3b341; }
+  .seat .nm { font-weight: 800; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seat .sub { font-size: 11px; color: #9fb8aa; }
+  .seat .hand { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px; border-radius: 8px; }
+  .seat .hand.active { background: #e3b34133; }
+  .seat .cards { min-height: 48px; }
+  .seat .card { width: 34px; height: 48px; font-size: 12px; } .seat .card .s { font-size: 15px; }
+  .badge { font-size: 11px; font-weight: 800; border-radius: 8px; padding: 1px 8px; text-transform: uppercase; }
+  .badge.win, .badge.blackjack { background: #3fb950; color: #06180b; }
+  .badge.lose, .badge.bust { background: #e5534b; color: #fff; }
+  .badge.push { background: #8aa596; color: #111; }
+  /* Roulette. */
+  .wheel-wrap { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .wheel { position: relative; width: 220px; height: 220px; flex: none; }
+  .wheel canvas { width: 220px; height: 220px; display: block; }
+  .wheel .pointer { position: absolute; top: -6px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 10px solid transparent; border-right: 10px solid transparent; border-top: 18px solid #f2c94c; filter: drop-shadow(0 2px 2px #000a); }
+  .wheel .hub { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+  .wheel .hub div { width: 74px; height: 74px; border-radius: 50%; background: radial-gradient(#d9b45a, #7a5a1c); display: grid; place-items: center; font-size: 26px; font-weight: 900; color: #1a1406; box-shadow: 0 0 10px #000a; }
+  .history { display: flex; gap: 4px; flex-wrap: wrap; }
+  .num { min-width: 26px; height: 26px; border-radius: 13px; display: grid; place-items: center; font-weight: 800; font-size: 12px; color: #fff; padding: 0 6px; }
+  .num.red { background: #c8102e; } .num.black { background: #1b1b1b; border: 1px solid #555; } .num.green { background: #138a4a; }
+  .board { display: grid; grid-template-columns: 40px repeat(12, 1fr) 46px; grid-template-rows: repeat(3, 38px) 32px 32px; gap: 3px; user-select: none; }
+  .cell { position: relative; border: 1px solid #ffffff55; border-radius: 4px; display: grid; place-items: center; font-weight: 800; font-size: 13px; cursor: pointer; color: #fff; }
+  .cell.red { background: #b5172b; } .cell.black { background: #1b1b1b; } .cell.green { background: #138a4a; } .cell.out { background: #ffffff14; font-size: 12px; }
+  .cell.hit { box-shadow: 0 0 0 3px #f2c94c, 0 0 14px #f2c94c; z-index: 1; }
+  .cell.off { cursor: default; }
+  .cell:not(.off):hover { filter: brightness(1.3); }
+  .cell .stack { position: absolute; bottom: 1px; right: 1px; display: flex; gap: 1px; }
+  .cell .stack span { min-width: 16px; height: 16px; border-radius: 8px; font-size: 9px; display: grid; place-items: center; color: #fff; border: 1px solid #fff; padding: 0 3px; text-shadow: 0 1px 1px #000; }
+  /* Horses. */
+  .track { display: flex; flex-direction: column; gap: 4px; background: #6b4a2b; border-radius: 12px; padding: 8px; border: 4px solid #e8e2d0; }
+  .lane { display: flex; align-items: center; gap: 8px; height: 40px; background: repeating-linear-gradient(90deg, #8a6038 0 30px, #84593a 30px 60px); border-radius: 6px; padding: 0 6px; }
+  .lane .no { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-weight: 900; color: #111; flex: none; }
+  .lane .run { position: relative; flex: 1; height: 100%; border-right: 4px dashed #fff; }
+  .lane .horse { position: absolute; top: 50%; transform: translate(0, -50%) scaleX(-1); font-size: 28px; line-height: 1; transition: none; }
+  .lane .place { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-weight: 900; color: #fff; background: #0008; border-radius: 8px; padding: 1px 8px; }
+  .lane .info { width: 190px; flex: none; display: flex; align-items: center; gap: 6px; }
+  .lane .info .hn { flex: 1; font-weight: 700; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 2px #000; }
+  .lane .info .odds { font-weight: 800; color: #f2c94c; text-shadow: 0 1px 2px #000; }
+  .lane .info button { height: 26px; padding: 0 10px; border-radius: 6px; border: 0; background: #e3b341; color: #1a1406; font-weight: 800; cursor: pointer; font: inherit; font-weight: 800; }
+  .lane .info button:disabled { opacity: .3; cursor: default; }
+  .lane .mine { font-size: 11px; color: #fff; background: #0006; border-radius: 6px; padding: 0 6px; }
+`;
+const casino = { view: "lobby", popup: null, tables: {}, coins: null, chip: 10, anim: null, wheelAngle: 0, spin: null, race: null, looping: false };
+try { casino.chip = Number(localStorage.getItem("zchat-casino-chip")) || 10; } catch {}
+document.getElementById("casino-style").textContent = casinoStyle.replace(/:root \{[^}]*\}/, "").replace(/(^|\})\s*([^{}@]+)\{/g,
+  (m, end, sel) => end + " " + sel.split(",").map(x => x.trim() === "body" ? "#casino-float" : "#casino-float " + x.trim()).join(", ") + " {")
+  + " #casino-float .casino { min-height: 0; max-height: calc(100vh - 100px); overflow-y: auto; }";
+const casinoFloat = document.getElementById("casino-float");
+const casinoChips = [[1, "#6c7a89"], [5, "#c8102e"], [10, "#1f6feb"], [25, "#138a4a"], [100, "#1b1b1b"], [500, "#8957e5"]];
+const wheelOrder = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+const redNumbers = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+const numberColor = n => n === 0 ? "green" : redNumbers.has(n) ? "red" : "black";
+function casinoDoc() {
+  if (casino.popup && !casino.popup.closed) return casino.popup.document;
+  return null;
+}
+function casinoOpen() {
+  return !!casinoDoc() || casinoFloat.classList.contains("open");
+}
+function openCasino(view) {
+  if (view) casino.view = view;
+  if (!casinoOpen()) {
+    let w = null;
+    try { w = window.open("", "zchat-casino", "popup,width=780,height=720"); } catch {}
+    if (w && w.document) {
+      w.document.open();
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · casino</title><style>${casinoStyle}</style></head><body><div class="casino" id="casino"></div></body></html>`);
+      w.document.close();
+      casino.popup = w;
+    } else {
+      casino.popup = null;
+      casinoFloat.classList.add("open");
+    }
+  }
+  renderCasino();
+  if (!casino.looping) { casino.looping = true; casinoFrame(); }
+}
+function closeCasino() {
+  if (casino.popup && !casino.popup.closed) casino.popup.close();
+  casino.popup = null;
+  casinoFloat.classList.remove("open");
+}
+const casinoSend = line => window.zchatSend(line);
+// A table taking bets or being played, for the dots on the tabs and the header's button.
+const tableLive = s => s && (s.phase === "betting" || s.phase === "playing" || s.phase === "spinning" || s.phase === "running");
+function casinoGame(game, state) {
+  casino.tables[game] = state;
+  document.getElementById("casino-open").classList.toggle("live", ["blackjack", "roulette", "horses"].some(t => tableLive(casino.tables[t])));
+  // Only what is shown is redone: the table, or the lobby of them all.
+  if (casinoOpen() && (casino.view === game || casino.view === "lobby")) renderCasino();
+}
+function renderCasino() {
+  const doc = casinoDoc() || document;
+  const root = casinoDoc() ? doc.getElementById("casino") : document.getElementById("casino-body");
+  if (!root || !casinoOpen()) return;
+  const el = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const button = (cls, text, onclick, disabled) => { const b = el("button", cls, text); b.onclick = onclick; b.disabled = !!disabled; return b; };
+  // Keeps the scroll of the floating window as it is redone.
+  const scroll = root.scrollTop;
+  root.textContent = "";
+  casino.anim = { doc };
+
+  const bar = el("div", "bar");
+  bar.append(el("span", "title", "🎰 Casino"));
+  for (const [view, label] of [["lobby", "Lobby"], ["blackjack", "🃏 Blackjack"], ["roulette", "🎡 Roulette"], ["horses", "🏇 Horses"]]) {
+    const tab = button("tab" + (casino.view === view ? " on" : ""), label, () => { casino.view = view; renderCasino(); });
+    if (view !== "lobby" && tableLive(casino.tables[view])) tab.append(el("span", "live"));
+    bar.append(tab);
+  }
+  bar.append(el("span", "coins", casino.coins === null ? "" : `💰 ${casino.coins}`));
+  if (casinoDoc()) bar.append(button("close", "×", closeCasino));
+  root.append(bar);
+  const body = el("div", "body");
+  root.append(body);
+
+  // The bet's size: a chip, kept for next time.
+  const chips = () => {
+    const box = el("div", "chips");
+    for (const [value, color] of casinoChips) {
+      const c = button("chip" + (casino.chip === value ? " on" : ""), String(value), () => {
+        casino.chip = value;
+        try { localStorage.setItem("zchat-casino-chip", String(value)); } catch {}
+        renderCasino();
+      }, casino.coins !== null && value > casino.coins);
+      c.style.background = color;
+      box.append(c);
+    }
+    return box;
+  };
+  const timer = (s, what) => {
+    const st = el("div", "status");
+    const left = el("span", "left" + (s.left <= 5 ? " low" : ""), s.left + "s");
+    st.append(el("span", "big", what), left);
+    if (s.dealer) st.append(el("span", "muted", (s.youDeal ? "you deal" : "dealt by " + s.dealer)));
+    return st;
+  };
+  const betList = (bets, label) => {
+    const box = el("div", "bets");
+    box.append(el("h3", "", "Bets"));
+    if (!bets.length) box.append(el("div", "note", "No bets yet."));
+    for (const b of bets) {
+      const row = el("div", "bet");
+      const dot = el("span", "dot"); dot.style.background = b.color;
+      const who = el("span", "who", b.name + (b.you ? " (you)" : "")); who.style.color = b.color;
+      row.append(dot, who, el("span", "what", `${b.amount} on ${label(b)}${b.ready ? " ✓" : ""}`));
+      if (b.back !== null && b.back !== undefined) row.append(el("span", b.back > 0 ? "won" : "lost", b.back > 0 ? "+" + b.back : "−" + b.amount));
+      box.append(row);
+    }
+    return box;
+  };
+
+  if (casino.view === "lobby") {
+    body.append(el("div", "note", "Tables the whole chat shares: whoever bets first deals, and everybody sees everybody's bets. Bets are won and lost in your coins, won in the games."));
+    const lobby = el("div", "lobby");
+    const cards = [
+      ["blackjack", "🃏", "Blackjack", "Beat the dealer to 21 without going over. Blackjack pays 3 to 2; double and split as you like."],
+      ["roulette", "🎡", "Roulette", "A European wheel, 0 to 36. Numbers pay 35 to 1, dozens and columns 2 to 1, red, black and the rest 1 to 1."],
+      ["horses", "🏇", "Horse race", "Six horses, each with its odds. Back the favourite, or the outsider that pays ten times your bet."],
+    ];
+    for (const [view, icon, name, what] of cards) {
+      const s = casino.tables[view];
+      const card = el("div", "table-card");
+      card.onclick = () => { casino.view = view; renderCasino(); };
+      let state = "Free table: bet to deal";
+      if (s && s.phase === "betting") {
+        const n = new Set((s.seats || s.bets || []).map(b => b.name)).size;
+        state = `Taking bets · ${s.left}s · ${n} player${n === 1 ? "" : "s"}`;
+      } else if (s && (s.phase === "playing" || s.phase === "spinning" || s.phase === "running")) {
+        state = view === "blackjack" ? "Cards being played" : view === "roulette" ? "The wheel is turning" : "They're off!";
+      }
+      card.append(el("div", "icon", icon), el("div", "name", name), el("div", "what", what), el("div", "state" + (tableLive(s) ? "" : " idle"), state));
+      lobby.append(card);
+    }
+    body.append(lobby);
+  } else if (casino.view === "blackjack") {
+    renderBlackjack(casino.tables.blackjack, body, el, button, chips, timer);
+  } else if (casino.view === "roulette") {
+    renderRoulette(casino.tables.roulette, body, el, button, chips, timer, betList);
+  } else {
+    renderHorses(casino.tables.horses, body, el, button, chips, timer, betList);
+  }
+  root.scrollTop = scroll;
+}
+
+const suitSigns = { S: "♠", H: "♥", D: "♦", C: "♣" };
+function cardElement(el, code) {
+  if (code === "XX") return el("div", "card back");
+  const card = el("div", "card" + (code[1] === "H" || code[1] === "D" ? " r" : ""));
+  card.append(el("span", "", code[0] === "T" ? "10" : code[0]), el("span", "s", suitSigns[code[1]] || "?"));
+  return card;
+}
+function renderBlackjack(s, body, el, button, chips, timer) {
+  s = s || { phase: "idle", seats: [], dealerCards: [], can: { bet: true }, hand: -1, min: 1, max: 500 };
+  const felt = el("div", "felt");
+  if (s.phase === "betting") felt.append(timer(s, "Taking bets"));
+  else if (s.phase === "playing") felt.append(timer(s, "Playing"));
+  else felt.append(el("div", "status", s.phase === "over" ? "Round over" : "The table is free"));
+  const dealer = el("div", "dealer");
+  dealer.append(el("h3", "", "Dealer"));
+  const dc = el("div", "cards");
+  for (const c of s.dealerCards) dc.append(cardElement(el, c));
+  dealer.append(dc);
+  if (s.dealerTotal) dealer.append(el("span", "total", s.dealerTotal));
+  felt.append(dealer);
+  const seats = el("div", "seats");
+  if (!s.seats.length) seats.append(el("div", "note", "Nobody is seated: bet to sit down and deal."));
+  for (const seat of s.seats) {
+    const box = el("div", "seat" + (seat.you ? " you" : ""));
+    const nm = el("div", "nm", seat.name + (seat.you ? " (you)" : ""));
+    nm.style.color = seat.color;
+    box.append(nm, el("div", "sub", `bet ${seat.bet}${s.phase === "betting" && seat.ready ? " · ready" : ""}`));
+    seat.hands.forEach((h, i) => {
+      const hand = el("div", "hand" + (seat.you && s.hand === i ? " active" : ""));
+      const cs = el("div", "cards");
+      for (const c of h.cards) cs.append(cardElement(el, c));
+      hand.append(cs, el("span", "total", h.total + (h.doubled ? " ×2" : "")));
+      if (h.result) {
+        const net = h.back - h.bet;
+        hand.append(el("span", "badge " + h.result, `${h.result}${net ? (net > 0 ? " +" + net : " −" + -net) : ""}`));
+      }
+      box.append(hand);
+    });
+    seats.append(box);
+  }
+  felt.append(seats);
+  body.append(felt);
+
+  const controls = el("div", "row");
+  if (s.can.bet) {
+    controls.append(chips(), button("act gold", `Bet ${casino.chip}`, () => casinoSend(`/casino blackjack bet ${casino.chip}`), casino.coins !== null && casino.chip > casino.coins));
+  }
+  if (s.can.deal) controls.append(button("act green", "Deal", () => casinoSend("/casino blackjack deal")));
+  if (s.phase === "playing" && s.seated) {
+    controls.append(button("act gold", "Hit", () => casinoSend("/casino blackjack hit"), !s.can.hit || s.pending),
+                    button("act", "Stand", () => casinoSend("/casino blackjack stand"), !s.can.stand || s.pending),
+                    button("act", "Double", () => casinoSend("/casino blackjack double"), !s.can.double || s.pending),
+                    button("act", "Split", () => casinoSend("/casino blackjack split"), !s.can.split || s.pending));
+    if (s.hand < 0) controls.append(el("span", "note", "Your hand is played: the dealer goes once everybody is done."));
+  }
+  if (s.phase === "betting" && s.seated && !s.can.deal) controls.append(el("span", "note", "Waiting for the others, or the time to bet."));
+  body.append(controls);
+  body.append(el("div", "note", `Bets from ${s.min} to ${s.max}. The dealer draws to 16 and stands on all 17s. Blackjack pays 3 to 2, a win 1 to 1; double for one more card, split two cards of the same value.`));
+}
+
+function renderRoulette(s, body, el, button, chips, timer, betList) {
+  s = s || { phase: "idle", history: [], bets: [], canBet: true, number: null, min: 1, max: 500 };
+  const top = el("div", "felt");
+  const wrap = el("div", "wheel-wrap");
+  const wheel = el("div", "wheel");
+  const canvas = el("canvas");
+  canvas.width = 440; canvas.height = 440;
+  drawWheel(canvas);
+  const hub = el("div", "hub"), hubNum = el("div");
+  hub.append(hubNum);
+  wheel.append(canvas, el("div", "pointer"), hub);
+  const side = el("div");
+  side.style.cssText = "display:flex;flex-direction:column;gap:10px;flex:1;min-width:200px";
+  if (s.phase === "betting") side.append(timer(s, "Place your bets"));
+  else if (s.phase === "spinning") side.append(el("div", "status big", "No more bets…"));
+  else if (s.phase === "over" && s.number !== null) {
+    const st = el("div", "status");
+    const n = el("span", "num " + numberColor(s.number), String(s.number));
+    n.style.cssText = "font-size:20px;height:36px;min-width:36px;border-radius:18px";
+    st.append(el("span", "big", "Ball on"), n);
+    side.append(st);
+  } else side.append(el("div", "status big", "The wheel is free"));
+  const hist = el("div", "history");
+  for (const n of s.history) hist.append(el("span", "num " + numberColor(n), String(n)));
+  side.append(el("h3", "", "Last numbers"), s.history.length ? hist : el("div", "note", "None yet."));
+  wrap.append(wheel, side);
+  top.append(wrap);
+  body.append(top);
+  // The wheel turns from where it was to the number, over the spin's time; or stands on it.
+  const pocket = n => wheelOrder.indexOf(n);
+  const seg = 360 / 37;
+  if (s.number !== null && s.phase !== "betting") {
+    const target = -(pocket(s.number) + 0.5) * seg;
+    if (!casino.spin || casino.spin.round !== s.round) {
+      const from = casino.wheelAngle % 360;
+      const to = from + 360 * 5 + ((target - from) % 360 + 360) % 360;
+      casino.spin = { round: s.round, number: s.number, from, to, t0: performance.now() - (s.phase === "spinning" ? s.spinElapsed : s.spinMs), ms: s.spinMs };
+    }
+  }
+  casino.anim.wheel = { canvas, hubNum, spinning: s.phase === "spinning" || s.phase === "over" };
+  if (!(s.phase === "spinning" || s.phase === "over")) hubNum.textContent = "";
+
+  // The board: a click bets the chip there.
+  const board = el("div", "board");
+  const canBet = s.canBet && (s.phase === "idle" || s.phase === "betting" || s.phase === "over");
+  const stakes = {};
+  for (const b of s.bets) (stakes[b.bet] = stakes[b.bet] || []).push(b);
+  const cell = (bet, text, cls, area) => {
+    const c = el("div", "cell " + cls + (canBet ? "" : " off"), text);
+    c.style.gridArea = area;
+    if (s.phase === "over" && s.number !== null && (bet === String(s.number) || winsOn(bet, s.number))) c.classList.add("hit");
+    c.title = canBet ? `Bet ${casino.chip} on ${text}` : "";
+    if (canBet) c.onclick = () => casinoSend(`/casino roulette bet ${casino.chip} ${bet}`);
+    const here = stakes[bet];
+    if (here) {
+      const stack = el("div", "stack");
+      const by = {};
+      for (const b of here) { by[b.name] = by[b.name] || { color: b.color, amount: 0 }; by[b.name].amount += b.amount; }
+      for (const name of Object.keys(by).slice(0, 3)) {
+        const chip = el("span", "", String(by[name].amount));
+        chip.style.background = by[name].color;
+        chip.title = name;
+        stack.append(chip);
+      }
+      c.append(stack);
+    }
+    board.append(c);
+  };
+  cell("0", "0", "green", "1 / 1 / 4 / 2");
+  for (let n = 1; n <= 36; n++) {
+    const col = Math.ceil(n / 3) + 1, row = 3 - ((n - 1) % 3);
+    cell(String(n), String(n), numberColor(n), `${row} / ${col} / ${row + 1} / ${col + 1}`);
+  }
+  for (let c = 1; c <= 3; c++) cell("column" + c, "2:1", "out", `${4 - c} / 14 / ${5 - c} / 15`);
+  ["1st 12", "2nd 12", "3rd 12"].forEach((t, i) => cell("dozen" + (i + 1), t, "out", `4 / ${2 + i * 4} / 5 / ${6 + i * 4}`));
+  [["low", "1–18"], ["even", "Even"], ["red", "Red"], ["black", "Black"], ["odd", "Odd"], ["high", "19–36"]]
+    .forEach(([bet, t], i) => cell(bet, t, bet === "red" ? "red" : bet === "black" ? "black" : "out", `5 / ${2 + i * 2} / 6 / ${4 + i * 2}`));
+  body.append(board);
+
+  const controls = el("div", "row");
+  controls.append(chips(), el("span", "note", canBet ? `Click the board to bet ${casino.chip}.` : "No more bets."));
+  if (s.canSpin) controls.append(button("act green", "Spin", () => casinoSend("/casino roulette spin")));
+  if (s.phase === "betting" && s.ready) controls.append(el("span", "note", "Waiting for the others, or the time to bet."));
+  body.append(controls);
+  body.append(betList(s.bets, b => b.label));
+}
+function winsOn(bet, n) {
+  if (n === 0) return false;
+  if (bet === "red") return redNumbers.has(n);
+  if (bet === "black") return !redNumbers.has(n);
+  if (bet === "odd") return n % 2 === 1;
+  if (bet === "even") return n % 2 === 0;
+  if (bet === "low") return n <= 18;
+  if (bet === "high") return n >= 19;
+  if (bet.startsWith("dozen")) return Math.floor((n - 1) / 12) === Number(bet[5]) - 1;
+  if (bet.startsWith("column")) return (n - 1) % 3 === Number(bet[6]) - 1;
+  return false;
+}
+function drawWheel(canvas) {
+  const g = canvas.getContext("2d"), r = canvas.width / 2, seg = Math.PI * 2 / 37;
+  g.translate(r, r);
+  g.fillStyle = "#5a3a1e"; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
+  wheelOrder.forEach((n, i) => {
+    const a0 = -Math.PI / 2 + i * seg;
+    g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, r - 14, a0, a0 + seg); g.closePath();
+    g.fillStyle = n === 0 ? "#138a4a" : redNumbers.has(n) ? "#b5172b" : "#1b1b1b"; g.fill();
+    g.strokeStyle = "#d9b45a"; g.lineWidth = 1.5; g.stroke();
+    g.save(); g.rotate(a0 + seg / 2 + Math.PI / 2);
+    g.fillStyle = "#fff"; g.font = "bold 22px system-ui, sans-serif"; g.textAlign = "center";
+    g.fillText(String(n), 0, -(r - 42)); g.restore();
+  });
+  g.beginPath(); g.arc(0, 0, r - 70, 0, Math.PI * 2); g.fillStyle = "#0f3d28"; g.fill();
+}
+
+function renderHorses(s, body, el, button, chips, timer, betList) {
+  const idle = !s || s.phase === "idle" || !s.horses.length;
+  const felt = el("div", "felt");
+  if (s && s.phase === "betting") felt.append(timer(s, "Place your bets"));
+  else if (s && s.phase === "running") felt.append(el("div", "status big", "And they're off!"));
+  else if (s && s.phase === "over" && s.order) felt.append(el("div", "result", `🏁 ${s.horses[s.order[0]].name} wins (×${s.horses[s.order[0]].odds})!`));
+  else felt.append(el("div", "status big", "The track is free"));
+  if (idle) {
+    felt.append(el("div", "note", "Open a race to see its six horses and their odds, then bet on the one that wins."));
+    felt.append(button("act gold", "Open a race", () => casinoSend("/casino horses open")));
+    body.append(felt);
+    return;
+  }
+  const canBet = s.canBet && s.phase === "betting";
+  const track = el("div", "track");
+  const lanes = [];
+  s.horses.forEach((h, i) => {
+    const lane = el("div", "lane");
+    const no = el("span", "no", String(h.n)); no.style.background = h.color;
+    const info = el("div", "info");
+    const mine = s.bets.filter(b => b.you && b.horse === i).reduce((a, b) => a + b.amount, 0);
+    info.append(el("span", "hn", h.name), el("span", "odds", "×" + h.odds));
+    if (mine) info.append(el("span", "mine", "yours " + mine));
+    if (s.phase === "betting") info.append(button("", `Bet ${casino.chip}`, () => casinoSend(`/casino horses bet ${casino.chip} ${h.n}`), !canBet));
+    const run = el("div", "run");
+    const horse = el("span", "horse", "🏇");
+    horse.style.filter = `drop-shadow(0 0 3px ${h.color})`;
+    const place = el("span", "place", "");
+    place.style.display = "none";
+    run.append(horse, place);
+    lane.append(no, info, run);
+    track.append(lane);
+    lanes.push({ run, horse, place });
+  });
+  felt.append(track);
+  body.append(felt);
+  if (s.track && (!casino.race || casino.race.round !== s.round)) {
+    casino.race = { round: s.round, t0: performance.now() - (s.phase === "running" ? s.elapsed : s.raceMs) };
+  }
+  casino.anim.horses = { lanes, s };
+
+  const controls = el("div", "row");
+  if (s.phase === "betting") controls.append(chips(), el("span", "note", `Bet ${casino.chip} on a horse with its button.`));
+  if (s.canGo) controls.append(button("act green", "Go!", () => casinoSend("/casino horses go")));
+  if (s.phase === "betting" && s.ready) controls.append(el("span", "note", "Waiting for the others, or the time to bet."));
+  if (s.phase === "over") controls.append(button("act gold", "Open the next race", () => casinoSend("/casino horses open")));
+  body.append(controls);
+  body.append(betList(s.bets, b => `${s.horses[b.horse].name} (×${s.horses[b.horse].odds})`));
+  body.append(el("div", "note", "A winning bet gives back its odds times the bet. The horses are as likely to win as their odds say, less the house's tenth."));
+}
+// Where a horse is on its track at checkpoint c (fractional): straight between the checkpoints, from 0 at the start.
+function horseAt(positions, c) {
+  if (c <= 0) return 0;
+  const k = Math.min(Math.floor(c), positions.length);
+  const before = k === 0 ? 0 : positions[k - 1];
+  const after = k >= positions.length ? positions[positions.length - 1] : positions[k];
+  return before + (after - before) * (c - k);
+}
+function horseFinish(positions, finish) {
+  let before = 0;
+  for (let k = 0; k < positions.length; k++) {
+    if (positions[k] >= finish) return k + (finish - before) / Math.max(1, positions[k] - before);
+    before = positions[k];
+  }
+  return positions.length + 1;
+}
+// Moves the wheel and the horses, while the window is open.
+function casinoFrame() {
+  const win = casinoDoc() ? casinoDoc().defaultView : window;
+  if (!casinoOpen()) { casino.looping = false; return; }
+  const a = casino.anim;
+  if (a && a.wheel) {
+    if (a.wheel.spinning && casino.spin) {
+      const t = Math.min(1, (performance.now() - casino.spin.t0) / casino.spin.ms);
+      const eased = 1 - Math.pow(1 - t, 3);
+      casino.wheelAngle = casino.spin.from + (casino.spin.to - casino.spin.from) * eased;
+      a.wheel.hubNum.textContent = t >= 1 ? String(casino.spin.number) : "";
+    }
+    a.wheel.canvas.style.transform = `rotate(${casino.wheelAngle}deg)`;
+  }
+  if (a && a.horses && a.horses.s.track && casino.race) {
+    const s = a.horses.s;
+    const c = Math.min(s.checkpoints, (performance.now() - casino.race.t0) / s.raceMs * s.checkpoints);
+    a.horses.lanes.forEach((lane, i) => {
+      const at = Math.min(s.finish, horseAt(s.track[i], c));
+      const width = lane.run.clientWidth - 34;
+      lane.horse.style.left = Math.max(0, at / s.finish * width) + "px";
+      if (c >= horseFinish(s.track[i], s.finish)) {
+        const place = s.order.indexOf(i) + 1;
+        lane.place.textContent = place === 1 ? "🏆 1st" : place === 2 ? "2nd" : place === 3 ? "3rd" : place + "th";
+        lane.place.style.display = "";
+      }
+    });
+  }
+  win.requestAnimationFrame(casinoFrame);
+}
+document.getElementById("casino-open").onclick = () => openCasino();
+document.getElementById("casino-float-close").onclick = closeCasino;
+// The floating one can be dragged by its title.
+(() => {
+  const handle = document.getElementById("casino-float-title");
+  let dx = 0, dy = 0, dragging = false;
+  handle.addEventListener("mousedown", e => {
+    dragging = true;
+    const r = casinoFloat.getBoundingClientRect();
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    casinoFloat.style.left = Math.max(0, e.clientX - dx) + "px";
+    casinoFloat.style.top = Math.max(0, e.clientY - dy) + "px";
+    casinoFloat.style.right = "auto";
+  });
+  document.addEventListener("mouseup", () => { dragging = false; });
+})();
+
 // --- The games' windows: the C++ side calls zchat.game(game, state) with each game's state.
 zchat.game = (game, state) => {
   if (game === "dice") diceGame(state);
@@ -1760,6 +2314,8 @@ zchat.game = (game, state) => {
   else if (game === "pokemon-challenge") pokemonChallenges(state);
   else if (game === "kick") kickVotes(state);
   else if (game === "coins") showCoins(state);
+  else if (game === "casino") openCasino(typeof state.open === "string" ? state.open : undefined);
+  else if (game === "blackjack" || game === "roulette" || game === "horses") casinoGame(game, state);
 };
 
 // --- Our coins (zchat.game("coins", {coins: N})), by our name: clicking them shows what they buy (/shop).
@@ -1767,6 +2323,8 @@ const coinsLabel = document.querySelector("#me .coins");
 function showCoins(state) {
   coinsLabel.textContent = `💰 ${state.coins}`;
   coinsLabel.title = `${state.coins} coin${state.coins === 1 ? "" : "s"}, won in the games: click for what they buy`;
+  casino.coins = state.coins;
+  if (casinoOpen()) renderCasino();
 }
 coinsLabel.addEventListener("click", e => { e.stopPropagation(); window.zchatSend("/shop"); });
 

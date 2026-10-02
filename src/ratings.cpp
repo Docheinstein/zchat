@@ -292,6 +292,26 @@ namespace {
             return true;
         }
 
+        bool stake(long long amount, std::string_view what) override {
+            if (coins_ < amount) {
+                chat_.notice(std::format("💸 You have {}, not enough to bet {} at {}: win rounds of /game to earn "
+                                         "more.",
+                                         plural(coins_, "coin"), amount, what));
+                return false;
+            }
+            coins_ -= amount;
+            changed_coins();
+            return true;
+        }
+
+        void cash(long long amount) override {
+            if (amount <= 0) {
+                return;
+            }
+            coins_ = std::min(coins::most, coins_ + amount);
+            changed_coins();
+        }
+
         void leaderboard(std::string_view game) override {
             if (game.empty() || game == elo::general) {
                 show_board(elo::general, board_size);
@@ -424,6 +444,13 @@ namespace {
             if (changed) {
                 save_others();
             }
+        }
+
+        // Ours changed: kept, told, and shown.
+        void changed_coins() {
+            config::set("coins", coins::encode(coins_));
+            announce();
+            show_coins();
         }
 
         // Our coins in the window, by our name.
