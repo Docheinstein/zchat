@@ -119,6 +119,8 @@
     font-size: 12px; user-select: none;
   }
   #casino-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  /* The Poké Ball of the Pokémon buttons: there is no emoji for it. */
+  svg.pokeball { width: 1em; height: 1em; vertical-align: -.15em; }
   header button#casino-open.live { border-color: #3fb950; color: #3fb950; }
   /* The same for the Pokémon battle. */
   #pk-float {
@@ -340,9 +342,9 @@
   </span>
   <span class="spacer"></span>
   <button id="casino-open" title="The casino: blackjack, roulette and the horse race, for coins">🎰 Casino</button>
-  <button id="pk-challenge-open" title="Challenge someone to a Pokémon battle">⚔ Battle</button>
+  <button id="pk-challenge-open" title="Challenge someone to a Pokémon battle"><svg class="pokeball" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8a7 7 0 0 1 14 0z" fill="#e5534b"/><path d="M1 8a7 7 0 0 0 14 0z" fill="#f4f4f4"/><circle cx="8" cy="8" r="7" fill="none" stroke="#15161a" stroke-width="1.2"/><path d="M1 8h14" stroke="#15161a" stroke-width="1.4"/><circle cx="8" cy="8" r="2.3" fill="#f4f4f4" stroke="#15161a" stroke-width="1.2"/></svg> Pokémon</button>
   <button id="dice-open" title="Dice" hidden>🎲</button>
-  <button id="pk-open" title="Pokémon battle" hidden>⚔</button>
+  <button id="pk-open" title="Your Pokémon battle: show it again" hidden><svg class="pokeball" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8a7 7 0 0 1 14 0z" fill="#e5534b"/><path d="M1 8a7 7 0 0 0 14 0z" fill="#f4f4f4"/><circle cx="8" cy="8" r="7" fill="none" stroke="#15161a" stroke-width="1.2"/><path d="M1 8h14" stroke="#15161a" stroke-width="1.4"/><circle cx="8" cy="8" r="2.3" fill="#f4f4f4" stroke="#15161a" stroke-width="1.2"/></svg></button>
   <button id="bm-open" title="Bomber: start a round, or show the one on">💣 Bomber</button>
   <button id="am-open" title="Arena: start a round of the shooter, or show the one on">🎯 Arena</button>
   <select id="font" title="Font"></select>
@@ -401,7 +403,7 @@
     <div class="note" id="pk-challenge-nobody" hidden>Nobody else is in the chat.</div>
     <label>Generation</label>
     <div class="gens" id="pk-challenge-gens"></div>
-    <div class="buttons"><button id="pk-challenge-cancel">Cancel</button><button class="primary" id="pk-challenge-send">⚔ Send</button></div>
+    <div class="buttons"><button id="pk-challenge-cancel">Cancel</button><button class="primary" id="pk-challenge-send"><svg class="pokeball" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8a7 7 0 0 1 14 0z" fill="#e5534b"/><path d="M1 8a7 7 0 0 0 14 0z" fill="#f4f4f4"/><circle cx="8" cy="8" r="7" fill="none" stroke="#15161a" stroke-width="1.2"/><path d="M1 8h14" stroke="#15161a" stroke-width="1.4"/><circle cx="8" cy="8" r="2.3" fill="#f4f4f4" stroke="#15161a" stroke-width="1.2"/></svg> Send</button></div>
   </div>
 </div>
 <div id="channel-panel"></div>
@@ -1663,7 +1665,8 @@ function pokemonChallenges(state) {
     const sub = document.createElement("span");
     sub.className = "sub";
     sub.textContent = "Pokémon Showdown · " + (c.format || "Gen 9 Random Battle");
-    what.append("⚔ ", name, " challenges you to a Pokémon battle!", sub);
+    const ball = document.getElementById("pk-challenge-open").querySelector("svg.pokeball").cloneNode(true);
+    what.append(ball, " ", name, " challenges you to a Pokémon battle!", sub);
     const row = document.createElement("div");
     row.className = "row";
     const answer = command => {
