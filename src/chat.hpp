@@ -191,10 +191,14 @@ public:
     // Sends a Game packet to everybody (not to us).
     void send_game(std::string_view text);
 
-    // While a game is played in real time (see the bomber game), the game hooks tick about 50 times a second instead
-    // of a few. Thread-safe.
-    void set_fast_ticks(bool fast) {
-        fast_ticks_ = fast;
+    // While a game is played in real time (see the bomber and arena games), the game hooks tick about 50 times a
+    // second instead of a few. Each game holds its own bit, so one ending does not slow down another. Thread-safe.
+    void set_fast_ticks(bool fast, unsigned bit = 1) {
+        if (fast) {
+            fast_ticks_ |= bit;
+        } else {
+            fast_ticks_ &= ~bit;
+        }
     }
 
 private:
@@ -309,7 +313,7 @@ private:
     net::BroadcastSocket socket_;
     std::atomic<std::uint64_t> seq_ {0};
     std::atomic<bool> stopped_ {false};
-    std::atomic<bool> fast_ticks_ {false};
+    std::atomic<unsigned> fast_ticks_ {0};
     // See Screen::games_apart().
     const bool games_apart_;
 

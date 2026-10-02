@@ -143,6 +143,18 @@
   }
   #bm-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
   #bm-float:focus-within { border-color: var(--accent); }
+  /* And for arena. */
+  #am-float {
+    position: fixed; top: 54px; right: 20px; width: min(920px, calc(100vw - 40px)); z-index: 18; display: none;
+    background: #111317; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px #000b; overflow: hidden;
+  }
+  #am-float.open { display: block; }
+  #am-float-title {
+    display: flex; align-items: center; padding: 6px 10px; background: var(--panel); cursor: move; color: var(--muted);
+    font-size: 12px; user-select: none;
+  }
+  #am-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  #am-float:focus-within { border-color: var(--accent); }
   #new-channel { display: none; margin: 4px 14px 8px; }
   #new-channel.open { display: block; }
   #new-channel input, #new-channel select {
@@ -315,6 +327,7 @@
 <style id="pk-style"></style>
 <style id="casino-style"></style>
 <style id="bm-style"></style>
+<style id="am-style"></style>
 </head>
 <body>
 <header>
@@ -331,6 +344,7 @@
   <button id="dice-open" title="Dice" hidden>🎲</button>
   <button id="pk-open" title="Pokémon battle" hidden>⚔</button>
   <button id="bm-open" title="Bomber: start a round, or show the one on">💣 Bomber</button>
+  <button id="am-open" title="Arena: start a round of the shooter, or show the one on">🎯 Arena</button>
   <select id="font" title="Font"></select>
   <button id="smaller" title="Smaller text">A−</button>
   <button id="bigger" title="Bigger text">A+</button>
@@ -399,6 +413,8 @@
   <div class="pk" id="pk-body"></div></div>
 <div id="bm-float" tabindex="-1"><div id="bm-float-title">zchat · bomber<button id="bm-float-close" title="Close">×</button></div>
   <div class="bm" id="bm-body"></div></div>
+<div id="am-float" tabindex="-1"><div id="am-float-title">zchat · arena<button id="am-float-close" title="Close">×</button></div>
+  <div class="am" id="am-body"></div></div>
 <div id="drop">Drop a picture or a file to send it</div>
 <div id="viewer"><img alt="picture"></div>
 <script>
@@ -2746,11 +2762,482 @@ document.getElementById("casino-float-close").onclick = closeCasino;
   document.addEventListener("mouseup", () => { dragging = false; });
 })();
 
+// --- Arena, in a window of its own (zchat.game("arena", state)): a top-down shooter, the map drawn on a canvas. Like
+// bomber: a real window when the web view allows one, or else one floating over the chat. The state comes after every
+// step of the referee (20 a second); the players are drawn between where the last two put them, the shots ahead of
+// where the last one did, so they glide. WASD (or the arrows) move, the mouse aims, its button (or Space) shoots: they
+// go as /game arena in MOVE AIM FIRE when they change, the aim at most 20 times a second.
+const amStyle = bmStyle.replace(".bm {", ".am {").replaceAll("bm-blink", "am-blink") + `
+  .field canvas { cursor: crosshair; }
+  .player .kd { font-variant-numeric: tabular-nums; }
+  .feed { display: flex; flex-direction: column; gap: 3px; min-height: 20px; }
+  .feed .kill { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .feed .kill b { font-weight: 700; }
+  .feed .kill .gun { color: #7d8491; margin: 0 4px; }
+  .top .clock.last { color: #e5534b; animation: am-blink .6s steps(2) infinite; }
+`;
+let amState = null, amPopup = null, amClosedRound = null;
+// The players' places in the state before the last one and in the last one, and when that came.
+let amPrev = null, amCur = null, amAt = 0, amFrame = -1, amLooping = false;
+// What we hold: the direction keys, the trigger (the mouse's button, Space), where the mouse is (in units of the
+// map), and what was last sent.
+let amHeld = [], amMouse = false, amSpace = false, amPointer = null, amAim = 0, amSent = "", amSentAt = 0, amTimer = 0;
+// Who took out whom lately, for the feed.
+let amFeed = [];
+document.getElementById("am-style").textContent = amStyle.replace(/:root \{[^}]*\}/, "").replace(/@keyframes[^{]*\{[^{}]*\{[^}]*\}\s*\}/g, "")
+  .replace(/(^|\})\s*([^{}@]+)\{/g,
+  (m, end, sel) => end + " " + sel.split(",").map(x => x.trim() === "body" ? "#am-float" : "#am-float " + x.trim()).join(", ") + " {")
+  + "@keyframes am-blink { 50% { opacity: .35; } }";
+const amFloat = document.getElementById("am-float");
+function amDoc() {
+  if (amPopup && !amPopup.closed) return amPopup.document;
+  return null;
+}
+function amRoot() {
+  return amDoc() ? amDoc().getElementById("am") : amFloat.classList.contains("open") ? document.getElementById("am-body") : null;
+}
+function openArena(focus) {
+  if (!amDoc()) {
+    let w = null;
+    try { w = window.open("", "zchat-arena", "popup,width=960,height=720"); } catch {}
+    if (w && w.document) {
+      w.document.open();
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · arena</title><style>${amStyle}</style></head><body><div class="am" id="am" tabindex="-1"></div></body></html>`);
+      w.document.close();
+      amPopup = w;
+      amListen(w.document, () => true);
+      w.addEventListener("blur", amRelease);
+      w.addEventListener("resize", () => { amBuilt = null; renderArena(); });
+      if (!focus) setTimeout(() => { try { window.focus(); } catch {} }, 50);
+    } else {
+      amPopup = null;
+      amFloat.classList.add("open");
+    }
+  }
+  amBuilt = null;
+  renderArena();
+  if (focus) amFocus();
+}
+function closeArena() {
+  if (amState) amClosedRound = amState.round;
+  amRelease();
+  if (amPopup && !amPopup.closed) amPopup.close();
+  amPopup = null;
+  amFloat.classList.remove("open");
+  input.focus();
+}
+function amFocus() {
+  if (amDoc()) { try { amPopup.focus(); amDoc().getElementById("am").focus(); } catch {} }
+  else if (amFloat.classList.contains("open")) amFloat.focus();
+}
+
+// --- The controls.
+const amKeys = { ArrowUp: "u", ArrowDown: "d", ArrowLeft: "l", ArrowRight: "r", w: "u", s: "d", a: "l", d: "r", W: "u", S: "d", A: "l", D: "r" };
+function amMe() {
+  return amState && amState.players.findIndex(p => p.you);
+}
+// Where a player is drawn now, in units: between their last two places.
+function amPlace(i, now) {
+  const cur = amCur && amCur[i];
+  if (!cur) return null;
+  const prev = amPrev && amPrev[i] ? amPrev[i] : cur;
+  // Back in somewhere else: no gliding across the map.
+  if (Math.abs(cur[0] - prev[0]) + Math.abs(cur[1] - prev[1]) > 2 * amState.unit) return cur;
+  const a = Math.min(1, (now - amAt) / 50);
+  return [prev[0] + (cur[0] - prev[0]) * a, prev[1] + (cur[1] - prev[1]) * a];
+}
+function amUpdateAim() {
+  const i = amMe();
+  if (i < 0 || !amPointer) return;
+  const at = amPlace(i, performance.now());
+  if (!at) return;
+  const a = Math.round(Math.atan2(amPointer[1] - at[1], amPointer[0] - at[0]) * 180 / Math.PI);
+  amAim = (a % 360 + 360) % 360;
+}
+function amSend() {
+  if (!amState || !amState.playing) return;
+  const dx = (amHeld.includes("r") ? 1 : 0) - (amHeld.includes("l") ? 1 : 0);
+  const dy = (amHeld.includes("d") ? 1 : 0) - (amHeld.includes("u") ? 1 : 0);
+  const move = (dy + 1) * 3 + (dx + 1), fire = amMouse || amSpace ? 1 : 0;
+  const line = `${move} ${amAim} ${fire}`;
+  if (line === amSent) return;
+  // Moving and the trigger go right away; only aiming waits, not to send more than a state a step.
+  const [m, , f] = amSent.split(" ");
+  const now = performance.now();
+  if (m === String(move) && f === String(fire) && now - amSentAt < 50) {
+    if (!amTimer) amTimer = setTimeout(() => { amTimer = 0; amSend(); }, 50 - (now - amSentAt));
+    return;
+  }
+  amSent = line;
+  amSentAt = now;
+  window.zchatSend("/game arena in " + line);
+}
+function amRelease() {
+  amHeld = [];
+  amMouse = amSpace = false;
+  if (amState && amState.playing) amSend();
+}
+function amPlaying() {
+  return amState && amState.playing && (amState.phase === "play" || amState.phase === "countdown");
+}
+function amListen(doc, active) {
+  doc.addEventListener("keydown", e => {
+    if (!active() || !amPlaying() || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = amKeys[e.key];
+    if (k) {
+      if (!amHeld.includes(k)) amHeld.push(k);
+      amSend();
+      e.preventDefault();
+    } else if (e.key === " ") {
+      amSpace = true;
+      amSend();
+      e.preventDefault();
+    }
+  });
+  doc.addEventListener("keyup", e => {
+    const k = amKeys[e.key];
+    if (k) amHeld = amHeld.filter(h => h !== k);
+    else if (e.key === " ") amSpace = false;
+    else return;
+    amSend();
+  });
+  doc.addEventListener("mouseup", e => {
+    if (e.button === 0 && amMouse) { amMouse = false; amSend(); }
+  });
+}
+// The mouse on the canvas aims, and its button shoots.
+function amCanvasMouse(canvas) {
+  const point = e => {
+    const r = canvas.getBoundingClientRect();
+    amPointer = [(e.clientX - r.left) / canvas._tile * amState.unit, (e.clientY - r.top) / canvas._tile * amState.unit];
+    amUpdateAim();
+  };
+  canvas.addEventListener("mousemove", e => { if (!amState) return; point(e); amSend(); });
+  canvas.addEventListener("mousedown", e => {
+    if (!amState || e.button !== 0) return;
+    point(e);
+    if (amPlaying()) { amMouse = true; amSend(); }
+    e.preventDefault();
+    if (!amDoc()) setTimeout(() => amFloat.focus(), 0);
+  });
+  canvas.addEventListener("contextmenu", e => e.preventDefault());
+}
+amListen(document, () => amFloat.classList.contains("open") && amFloat.contains(document.activeElement));
+amFloat.addEventListener("focusout", e => { if (!amFloat.contains(e.relatedTarget)) amRelease(); });
+amFloat.addEventListener("mousedown", e => { if (e.target.tagName !== "BUTTON") setTimeout(() => amFloat.focus(), 0); });
+
+// --- Drawing: the floor and the walls, the med kits, the shots, then the players with their guns.
+let amBuilt = null;
+function amTileSize(s) {
+  const view = amDoc() ? amPopup : window;
+  const wide = amDoc() ? view.innerWidth - 240 : Math.min(920, window.innerWidth - 40) - 230;
+  const high = (amDoc() ? view.innerHeight : window.innerHeight - 70) - 110;
+  return Math.max(14, Math.min(44, Math.floor(Math.min(wide / s.w, high / s.h))));
+}
+function amDraw() {
+  const s = amState, root = amRoot();
+  const canvas = root && root.querySelector("canvas");
+  if (!s || !canvas || !s.grid) return;
+  const ctx = canvas.getContext("2d");
+  const t = canvas._tile, ratio = canvas._ratio, u = t / s.unit;
+  const now = performance.now();
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  const g = s.grid;
+  let kit = 0;
+  for (let y = 0; y < s.h; y++) {
+    for (let x = 0; x < s.w; x++) {
+      const c = g[y * s.w + x], px = x * t, py = y * t;
+      if (c === "#") {
+        const border = x === 0 || y === 0 || x === s.w - 1 || y === s.h - 1;
+        ctx.fillStyle = border ? "#4a505c" : "#6b7383";
+        ctx.fillRect(px, py, t, t);
+        ctx.fillStyle = border ? "#5a616e" : "#8b94a5";
+        ctx.fillRect(px, py, t, t * .12); ctx.fillRect(px, py, t * .12, t);
+        ctx.fillStyle = border ? "#353941" : "#4d5361";
+        ctx.fillRect(px, py + t * .88, t, t * .12); ctx.fillRect(px + t * .88, py, t * .12, t);
+        continue;
+      }
+      ctx.fillStyle = (x + y) % 2 ? "#23272f" : "#20242b";
+      ctx.fillRect(px, py, t, t);
+      // The walls cast a shadow down and to the right.
+      ctx.fillStyle = "#00000038";
+      if (y > 0 && g[(y - 1) * s.w + x] === "#") ctx.fillRect(px, py, t, t * .2);
+      if (x > 0 && g[y * s.w + x - 1] === "#") ctx.fillRect(px, py, t * .2, t);
+      if (c === "h") {
+        const there = s.kits[kit++];
+        const cx = px + t / 2, cy = py + t / 2, a = t * .14, b = t * .36;
+        ctx.globalAlpha = there ? .85 + .15 * Math.sin(now / 200) : .18;
+        ctx.fillStyle = "#e9edf2";
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(cx - b, cy - b, 2 * b, 2 * b, t * .1) : ctx.rect(cx - b, cy - b, 2 * b, 2 * b); ctx.fill();
+        ctx.fillStyle = "#3fb950";
+        ctx.fillRect(cx - a, cy - b * .75, 2 * a, b * 1.5); ctx.fillRect(cx - b * .75, cy - a, b * 1.5, 2 * a);
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+  // The shots, ahead of where the last state saw them, as streaks.
+  const ahead = Math.min(1, (now - amAt) / 50) * s.shotSpeed;
+  for (const [x, y, dir, owner] of s.shots) {
+    const a = dir * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
+    const hx = (x + cos * ahead) * u, hy = (y + sin * ahead) * u;
+    const len = t * .45;
+    const owner_ = s.players[owner];
+    ctx.strokeStyle = owner_ ? owner_.color + "90" : "#ffffff90";
+    ctx.lineWidth = Math.max(2, t * .12); ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(hx - cos * len, hy - sin * len); ctx.lineTo(hx, hy); ctx.stroke();
+    ctx.fillStyle = "#fff6c0";
+    ctx.beginPath(); ctx.arc(hx, hy, Math.max(1.5, t * .07), 0, 7); ctx.fill();
+  }
+  // The players, with the gun where they aim (ours where the mouse is now).
+  s.players.forEach((p, i) => {
+    if (p.state >= 2) return;
+    const at = amPlace(i, now);
+    if (!at) return;
+    const cx = at[0] * u, cy = at[1] * u, r = s.body * u * 1.1;
+    const aim = (p.you && amPointer ? amAim : p.aim) * Math.PI / 180;
+    if (p.state === 1 && Math.floor(now / 100) % 2) ctx.globalAlpha = .45;
+    ctx.fillStyle = "#00000050"; ctx.beginPath(); ctx.ellipse(cx + r * .15, cy + r * .9, r * .9, r * .3, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#15161a"; ctx.lineWidth = Math.max(3, t * .16); ctx.lineCap = "butt";
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(aim) * r * 1.7, cy + Math.sin(aim) * r * 1.7); ctx.stroke();
+    ctx.strokeStyle = "#9aa3b2"; ctx.lineWidth = Math.max(1.5, t * .08);
+    ctx.beginPath(); ctx.moveTo(cx + Math.cos(aim) * r * .6, cy + Math.sin(aim) * r * .6); ctx.lineTo(cx + Math.cos(aim) * r * 1.65, cy + Math.sin(aim) * r * 1.65); ctx.stroke();
+    ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+    ctx.strokeStyle = p.you ? "#ffffff" : "#000000a0"; ctx.lineWidth = p.you ? 2 : 1.5; ctx.stroke();
+    // Eyes, looking where they aim.
+    ctx.fillStyle = "#15161a";
+    for (const side of [-1, 1]) {
+      const ea = aim + side * .55;
+      ctx.beginPath(); ctx.arc(cx + Math.cos(ea) * r * .5, cy + Math.sin(ea) * r * .5, r * .14, 0, 7); ctx.fill();
+    }
+    if (p.state === 1) {
+      ctx.strokeStyle = "#8fb0ff"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(cx, cy, r * 1.45, 0, 7); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    // The hits left, and who it is.
+    const bw = t * .9, bh = Math.max(3, t * .1), bx = cx - bw / 2, by = cy - r - bh - t * .12;
+    ctx.fillStyle = "#000000a0"; ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+    ctx.fillStyle = p.hits > s.maxHits / 2 ? "#3fb950" : p.hits > 1 ? "#f2c94c" : "#e5534b";
+    ctx.fillRect(bx, by, bw * p.hits / s.maxHits, bh);
+    const label = p.you ? "YOU" : p.name.split(" ")[0].slice(0, 10);
+    ctx.font = `700 ${Math.max(9, Math.floor(t * .3))}px system-ui, sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    ctx.lineWidth = 3; ctx.strokeStyle = "#000000b0"; ctx.strokeText(label, cx, by - 2);
+    ctx.fillStyle = p.you ? "#ffffff" : p.color; ctx.fillText(label, cx, by - 2);
+  });
+}
+function amLoop() {
+  if (!amLooping) return;
+  const view = amDoc() ? amPopup : window;
+  if (!amRoot() || !amState || amState.phase === "lobby" || amState.phase === "none") { amLooping = false; return; }
+  // We move under the mouse: the aim follows.
+  const was = amAim;
+  amUpdateAim();
+  if (amAim !== was) amSend();
+  amDraw();
+  view.requestAnimationFrame(amLoop);
+}
+function amStartLoop() {
+  if (amLooping) return;
+  amLooping = true;
+  (amDoc() ? amPopup : window).requestAnimationFrame(amLoop);
+}
+
+function renderArena() {
+  const s = amState, root = amRoot();
+  if (!s || !root) return;
+  const doc = root.ownerDocument;
+  const el = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const field = s.phase !== "lobby" && s.phase !== "none";
+  const kind = s.round + (field ? "field" : "lobby") + s.w + "x" + s.h;
+  if (amBuilt !== kind) {
+    amBuilt = kind;
+    root.textContent = "";
+    const top = el("div", "top");
+    top.append(el("span", "title", "🎯 Arena"), el("span", "by"), el("span", "clock"));
+    if (amDoc()) {
+      const close = el("button", "", "×");
+      close.style.cssText = "margin-left:8px;background:none;border:0;color:#7d8491;font-size:18px;cursor:pointer";
+      close.onclick = closeArena;
+      top.append(close);
+    }
+    root.append(top);
+    const main = el("div", "main");
+    if (field) {
+      const box = el("div", "field");
+      const canvas = el("canvas");
+      const t = amTileSize(s), ratio = (doc.defaultView.devicePixelRatio || 1);
+      canvas._tile = t; canvas._ratio = ratio;
+      canvas.width = s.w * t * ratio; canvas.height = s.h * t * ratio;
+      canvas.style.width = s.w * t + "px"; canvas.style.height = s.h * t + "px";
+      amCanvasMouse(canvas);
+      box.append(canvas, el("div", "overlay"));
+      main.append(box);
+    } else {
+      main.append(el("div", "lobby"));
+    }
+    const side = el("div", "side");
+    side.append(el("div", "result"), el("h3", "", "Players"), el("div", "list"), el("div", "buttons"),
+      el("h3", "feed-title", "Taken out"), el("div", "feed"), el("div", "hint"));
+    main.append(side);
+    root.append(main);
+  }
+  const q = sel => root.querySelector(sel);
+  q(".top .by").textContent = s.referee ? "by " + s.referee : "";
+  const clock = q(".top .clock");
+  clock.className = "clock" + (s.phase === "play" && s.left <= 10 ? " last" : "");
+  clock.textContent = s.phase === "play" ? Math.floor(s.left / 60) + ":" + String(s.left % 60).padStart(2, "0") : "";
+
+  const result = q(".result");
+  result.hidden = !s.result;
+  result.textContent = s.result ? "🏆 " + s.result : "";
+
+  if (field) {
+    const overlay = q(".overlay");
+    overlay.className = "overlay" + (s.phase === "over" ? " small" : "");
+    const me = s.players.find(p => p.you);
+    overlay.textContent = s.phase === "countdown" ? (s.left > 0 ? String(s.left) : "GO!")
+      : s.phase === "over" ? (s.result || "Over")
+      : me && me.state >= 2 ? "💀 " + (me.state - 2) : "";
+    amStartLoop();
+  } else {
+    const lobby = q(".lobby");
+    lobby.textContent = "";
+    lobby.append(el("div", "big", s.joinLeft + "s"),
+      el("div", "hint", s.joined ? (s.players.some(p => p.you) ? "You are in! The round starts when the time is up." : "Joining…")
+        : "Join to play: three minutes, whoever takes out the most wins."));
+  }
+
+  // The players, the best first: taken out and times out; at the end, where they finished.
+  const list = q(".list");
+  list.textContent = "";
+  if (!s.players.length) list.append(el("div", "none", "Nobody yet."));
+  const order = s.players.map((p, i) => i);
+  if (field) order.sort((a, b) => s.players[b].kills - s.players[a].kills || s.players[a].deaths - s.players[b].deaths);
+  for (const i of order) {
+    const p = s.players[i];
+    const out = field && p.state >= 2 && s.phase !== "over";
+    const row = el("div", "player" + (out ? " out" : "") + (p.place === 0 ? " win" : ""));
+    const dot = el("span", "dot");
+    dot.style.background = p.color;
+    const name = el("span", "name", p.name + (p.you ? " (you)" : ""));
+    name.style.color = p.color;
+    const stats = el("span", "stats kd", !field ? "ready" : (p.place === 0 ? "🏆 " : p.place > 0 ? "#" + (p.place + 1) + " " : "")
+      + `🎯${p.kills} 💀${p.deaths}`);
+    stats.title = `${p.kills} taken out, out ${p.deaths} times`;
+    row.append(dot, name, stats);
+    list.append(row);
+  }
+
+  const buttons = q(".buttons");
+  buttons.textContent = "";
+  if (s.phase === "lobby") {
+    const inIt = s.players.some(p => p.you);
+    const join = el("button", "primary", inIt ? "Joined" : s.joined ? "Joining…" : "Join");
+    join.disabled = s.joined;
+    join.onclick = () => window.zchatSend("/game arena join");
+    buttons.append(join);
+    if (s.isReferee) {
+      const go = el("button", "", "Start now");
+      go.disabled = s.players.length < 2;
+      go.onclick = () => window.zchatSend("/game arena go");
+      buttons.append(go);
+    }
+  } else if (s.phase === "over") {
+    const again = el("button", "primary", "New round");
+    again.onclick = () => window.zchatSend("/game arena");
+    buttons.append(again);
+  }
+  buttons.hidden = !buttons.childElementCount;
+
+  // Who took out whom, the last few.
+  const feed = q(".feed"), now = performance.now();
+  amFeed = amFeed.filter(k => now - k.at < 8000).slice(-6);
+  feed.textContent = "";
+  q(".feed-title").hidden = feed.hidden = !field || !amFeed.length;
+  for (const k of amFeed) {
+    const row = el("div", "kill");
+    const who = (p, fallback) => { const b = el("b", "", p ? (p.you ? "You" : p.name) : fallback); if (p) b.style.color = p.color; return b; };
+    row.append(who(k.killer, "Somebody"), el("span", "gun", "▸"), who(k.victim, "somebody"));
+    feed.append(row);
+  }
+
+  const hint = q(".side .hint");
+  hint.textContent = "";
+  if (s.playing || s.phase === "lobby") {
+    hint.innerHTML = "<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrows move, the mouse aims, " +
+      "click (or hold <kbd>Space</kbd>) to shoot. Four hits take you out, for 3 seconds; ✚ heals." +
+      (amDoc() ? "" : " Click the map first, for the keys to come here.");
+  } else if (field && s.phase !== "over") {
+    hint.textContent = "You are watching this round.";
+  }
+}
+function arenaGame(state) {
+  const fresh = !amState || amState.round !== state.round;
+  const was = amState ? amState.phase : "none";
+  const before = amState;
+  amState = state;
+  if (state.phase === "none") {
+    renderArena();
+    return;
+  }
+  if (state.frame !== amFrame && state.players.length) {
+    // Who was taken out since the last state, for the feed.
+    if (!fresh && before && before.players.length === state.players.length && state.frame > amFrame && amFrame >= 0) {
+      state.players.forEach((p, i) => {
+        if (before.players[i].state < 2 && p.state >= 2) amFeed.push({ killer: state.players[p.killer], victim: p, at: performance.now() });
+      });
+    }
+    amPrev = fresh || !amCur || state.frame < amFrame ? null : amCur;
+    amCur = state.players.map(p => [p.x, p.y]);
+    amAt = performance.now();
+    amFrame = state.frame;
+  }
+  if (fresh) { amFrame = state.frame; amHeld = []; amMouse = amSpace = false; amSent = ""; amPointer = null; amFeed = []; }
+  const starting = state.playing && was === "lobby" && state.phase !== "lobby";
+  if ((fresh && state.phase !== "over" && amClosedRound !== state.round) || (starting && !amRoot())) {
+    if (starting) amClosedRound = null;
+    openArena(state.isReferee || state.playing || starting);
+  } else {
+    renderArena();
+    if (starting) amFocus();
+  }
+  if (state.phase === "over") amRelease();
+}
+document.getElementById("am-open").onclick = () => {
+  if (!amState || amState.phase === "none" || amState.phase === "over" && !amRoot()) {
+    window.zchatSend("/game arena");
+    return;
+  }
+  amClosedRound = null;
+  openArena(true);
+};
+document.getElementById("am-float-close").onclick = closeArena;
+(() => {
+  const handle = document.getElementById("am-float-title");
+  let dx = 0, dy = 0, dragging = false;
+  handle.addEventListener("mousedown", e => {
+    if (e.target.tagName === "BUTTON") return;
+    dragging = true;
+    const r = amFloat.getBoundingClientRect();
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    amFloat.style.left = Math.max(0, e.clientX - dx) + "px";
+    amFloat.style.top = Math.max(0, e.clientY - dy) + "px";
+    amFloat.style.right = "auto";
+  });
+  document.addEventListener("mouseup", () => { dragging = false; });
+})();
+
 // --- The games' windows: the C++ side calls zchat.game(game, state) with each game's state.
 zchat.game = (game, state) => {
   if (game === "dice") diceGame(state);
   else if (game === "pokemon") pokemonGame(state);
   else if (game === "bomber") bomberGame(state);
+  else if (game === "arena") arenaGame(state);
   else if (game === "pokemon-challenge") pokemonChallenges(state);
   else if (game === "kick") kickVotes(state);
   else if (game === "coins") showCoins(state);
@@ -3074,10 +3561,10 @@ input.addEventListener("input", async e => {
 });
 input.addEventListener("blur", () => setTimeout(closeMentions, 150));
 // Typing anywhere types in the input box, except in another field (like the name in the profile panel) and in the
-// floating bomber window, whose keys play.
+// floating bomber and arena windows, whose keys play.
 document.addEventListener("keydown", e => {
   const el = document.activeElement;
-  if (bmFloat.contains(el)) return;
+  if (bmFloat.contains(el) || amFloat.contains(el)) return;
   const field = el && el !== input && (el.matches("input, textarea, select") || el.isContentEditable);
   if (el !== input && !field && !e.ctrlKey && !e.metaKey && e.key.length === 1) input.focus();
 });
