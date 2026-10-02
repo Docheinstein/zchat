@@ -2,6 +2,7 @@ add_executable(zchat)
 
 target_sources(zchat PUBLIC
     blackjack.cpp
+    bomber.cpp
     casino.cpp
     channel.cpp
     chat.cpp
