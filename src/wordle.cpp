@@ -206,10 +206,9 @@ namespace {
                 if (const Player* me = own(); me && me->status != Status::Guessing) {
                     played_already();
                 } else {
-                    chat_.notice(std::format("{} of Wordle {}: /game wordle WORD to guess.",
-                                             board_.empty() ? "6 guesses"
-                                                            : guesses(max_guesses - board_.size()) + " left",
-                                             puzzle_->id));
+                    chat_.game_notice(std::format(
+                        "{} of Wordle {}: /game wordle WORD to guess.",
+                        board_.empty() ? "6 guesses" : guesses(max_guesses - board_.size()) + " left", puzzle_->id));
                 }
                 standings();
                 return;
@@ -310,12 +309,12 @@ namespace {
         void fetch() {
             std::scoped_lock lock(fetch_mutex_);
             if (fetching_) {
-                chat_.notice("The Wordle is on its way from the New York Times…");
+                chat_.game_notice("The Wordle is on its way from the New York Times…");
                 return;
             }
             fetching_ = true;
             const std::string date = day_;
-            chat_.notice(std::format("📰 Getting the Wordle of {} from the New York Times…", date));
+            chat_.game_notice(std::format("📰 Getting the Wordle of {} from the New York Times…", date));
             if (fetcher_.joinable()) {
                 fetcher_.join();
             }
@@ -348,8 +347,8 @@ namespace {
                 failed_ = false;
                 fetching_ = false;
                 pending_.reset();
-                chat_.notice("Could not get the Wordle from the New York Times: is curl installed, and is there "
-                             "internet?");
+                chat_.game_notice("Could not get the Wordle from the New York Times: is curl installed, and is there "
+                                  "internet?");
             }
             if (!fetched_) {
                 return std::nullopt;
@@ -379,13 +378,14 @@ namespace {
 
             const Player* me = own();
             if (!me) {
-                chat_.notice(std::format("🟩 Wordle {} ({}): guess the five-letter word with /game wordle WORD, "
-                                         "until midnight. You see which letters are in it, the others only see your "
-                                         "colors; the fewest guesses win the day.",
-                                         puzzle_->id, puzzle_->date));
+                chat_.game_notice(
+                    std::format("🟩 Wordle {} ({}): guess the five-letter word with /game wordle WORD, "
+                                "until midnight. You see which letters are in it, the others only see your "
+                                "colors; the fewest guesses win the day.",
+                                puzzle_->id, puzzle_->date));
             } else if (me->status == Status::Guessing) {
-                chat_.notice(std::format("🟩 Wordle {}: you started it earlier, {} left.", puzzle_->id,
-                                         guesses(max_guesses - board_.size())));
+                chat_.game_notice(std::format("🟩 Wordle {}: you started it earlier, {} left.", puzzle_->id,
+                                              guesses(max_guesses - board_.size())));
                 // The guess waiting, if any, draws the board anyway.
                 if (!pending_) {
                     draw();
@@ -400,7 +400,7 @@ namespace {
         }
 
         void played_already() const {
-            chat_.notice("You played today's Wordle already: there is one a day, a new one at midnight!");
+            chat_.game_notice("You played today's Wordle already: there is one a day, a new one at midnight!");
         }
 
         // Our guesses of today's Wordle, as saved; none if they are another day's.
@@ -431,7 +431,7 @@ namespace {
                 words += std::format("{}{}", words.empty() ? "" : ",", word);
             }
             if (!config::set(saved_key, std::format("{} {}", day_, words))) {
-                chat_.notice(std::format("Could not save your Wordle to {}", config::file().string()));
+                chat_.game_notice(std::format("Could not save your Wordle to {}", config::file().string()));
             }
         }
 
@@ -453,7 +453,7 @@ namespace {
 
         void guess(std::string_view word) {
             if (!is_word(word)) {
-                chat_.notice("A guess is a word of five letters, from a to z.");
+                chat_.game_notice("A guess is a word of five letters, from a to z.");
                 return;
             }
             if (const Player* me = own(); me && me->status != Status::Guessing) {
@@ -462,7 +462,7 @@ namespace {
             }
             // The Times' word always counts, even if the list does not have it.
             if (word != puzzle_->word && !std::ranges::binary_search(dictionary(), word)) {
-                chat_.notice(std::format("{} is not in the word list: it does not count as a guess.", big(word)));
+                chat_.game_notice(std::format("{} is not in the word list: it does not count as a guess.", big(word)));
                 return;
             }
             const std::string mark = marks(word, puzzle_->word);
@@ -473,12 +473,12 @@ namespace {
             Player& me = player(chat_.id(), chat_.name());
             guessed(me, board_.size(), mark);
             if (me.status == Status::Guessing && board_.size() == max_guesses) {
-                chat_.notice(std::format("No guesses left! The word was {}. A new Wordle at midnight.",
-                                         big(puzzle_->word)));
+                chat_.game_notice(
+                    std::format("No guesses left! The word was {}. A new Wordle at midnight.", big(puzzle_->word)));
                 send(std::format("lost {}", day_));
                 lost(me);
             } else if (me.status == Status::Solved) {
-                chat_.notice("The winner of the day is told at midnight: /game wordle shows how the others do.");
+                chat_.game_notice("The winner of the day is told at midnight: /game wordle shows how the others do.");
             }
         }
 
@@ -522,7 +522,7 @@ namespace {
                     }
                 }
             }
-            terminal_.print(out);
+            chat_.game_print(out);
         }
 
         std::string big(std::string_view word) const {
@@ -548,11 +548,11 @@ namespace {
             p.guesses = n;
             if (mark == "ggggg") {
                 p.status = Status::Solved;
-                chat_.notice(std::format("🎉 {} found today's Wordle in {} ({}/{})!", p.colored_name,
-                                         guesses(n), n, max_guesses));
+                chat_.game_notice(std::format("🎉 {} found today's Wordle in {} ({}/{})!", p.colored_name, guesses(n),
+                                              n, max_guesses));
             } else if (p.id != chat_.id()) {
-                chat_.notice(std::format("{} {} ({}/{}){}", emoji(mark), p.colored_name, n, max_guesses,
-                                         puzzle_ ? "" : ": /game wordle to play today's Wordle too"));
+                chat_.game_notice(std::format("{} {} ({}/{}){}", emoji(mark), p.colored_name, n, max_guesses,
+                                              puzzle_ ? "" : ": /game wordle to play today's Wordle too"));
             }
         }
 
@@ -562,13 +562,13 @@ namespace {
             }
             p.status = Status::Lost;
             p.guesses = max_guesses;
-            chat_.notice(std::format("💀 {} is out of guesses for today's Wordle!", p.colored_name));
+            chat_.game_notice(std::format("💀 {} is out of guesses for today's Wordle!", p.colored_name));
         }
 
         // How today is going, as far as we heard.
         void standings() const {
             if (players_.empty()) {
-                chat_.notice("Nobody has played today's Wordle yet.");
+                chat_.game_notice("Nobody has played today's Wordle yet.");
                 return;
             }
             std::string line;
@@ -579,7 +579,7 @@ namespace {
                                                                : std::format("playing ({}/{})", p.guesses,
                                                                              max_guesses));
             }
-            chat_.notice(std::format("Today's Wordle so far: {}", line));
+            chat_.game_notice(std::format("Today's Wordle so far: {}", line));
         }
 
         // Midnight: whoever found the word in the fewest guesses wins the day, and a new Wordle starts.
@@ -608,9 +608,9 @@ namespace {
                                               max_guesses);
                     }
                 }
-                chat_.notice(std::format("🏆 {} win{} {} in {}!{}{}", winners, tied == 1 ? "s" : "", title,
-                                         guesses(best), word,
-                                         others.empty() ? "" : std::format(" Then: {}.", others)));
+                chat_.game_notice(std::format("🏆 {} win{} {} in {}!{}{}", winners, tied == 1 ? "s" : "", title,
+                                              guesses(best), word,
+                                              others.empty() ? "" : std::format(" Then: {}.", others)));
                 // For the ratings, by the guesses it took: those who did not find the word are last, tied.
                 std::vector<Placing> placings;
                 for (const Player& p : players_) {
@@ -623,10 +623,10 @@ namespace {
                 }
                 games_.rate(game_name, placings);
             } else if (!players_.empty()) {
-                chat_.notice(std::format("🟩 Nobody found {}.{}", title, word));
+                chat_.game_notice(std::format("🟩 Nobody found {}.{}", title, word));
             }
             if (puzzle_ || !players_.empty()) {
-                chat_.notice("🟩 A new Wordle is out: /game wordle to play it.");
+                chat_.game_notice("🟩 A new Wordle is out: /game wordle to play it.");
             }
             puzzle_.reset();
             players_.clear();

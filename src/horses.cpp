@@ -73,13 +73,13 @@ namespace {
                 return;
             }
             if (!live()) {
-                chat_.notice(phase_ == 'r' ? "🏇 A race is running: wait for the next one."
-                                           : "🏇 The track is free: /casino horses open starts a race, with its "
-                                             "horses and their odds.");
+                chat_.game_notice(phase_ == 'r' ? "🏇 A race is running: wait for the next one."
+                                                : "🏇 The track is free: /casino horses open starts a race, with its "
+                                                  "horses and their odds.");
                 return;
             }
-            chat_.notice(std::format("🏇 The horses, off in {} seconds (started by {}):", seconds_left(deadline_),
-                                     colored(dealer_)));
+            chat_.game_notice(std::format("🏇 The horses, off in {} seconds (started by {}):", seconds_left(deadline_),
+                                          colored(dealer_)));
             for (std::size_t i = 0; i < field_.size(); ++i) {
                 std::string bets;
                 for (const Bet& b : bets_) {
@@ -87,7 +87,8 @@ namespace {
                         bets += std::format("{}{} {}", bets.empty() ? " · " : ", ", colored(b.id), b.amount);
                     }
                 }
-                chat_.notice(std::format("   {}. {} x{}{}", i + 1, horse_name(i), hs::odds_text(field_[i].odds), bets));
+                chat_.game_notice(
+                    std::format("   {}. {} x{}{}", i + 1, horse_name(i), hs::odds_text(field_[i].odds), bets));
             }
         }
 
@@ -99,10 +100,11 @@ namespace {
                     // A free track: the horses come with the race, so the bet is on a number.
                     const auto n = parse_number(args);
                     if (!n || *n < 1 || *n > static_cast<std::uint64_t>(hs::runners)) {
-                        chat_.notice(std::format("🏇 The track is free: /casino horses bet N HORSE starts a race, "
-                                                 "with HORSE a number from 1 to {}; the horses and their odds come "
-                                                 "with it.",
-                                                 hs::runners));
+                        chat_.game_notice(
+                            std::format("🏇 The track is free: /casino horses bet N HORSE starts a race, "
+                                        "with HORSE a number from 1 to {}; the horses and their odds come "
+                                        "with it.",
+                                        hs::runners));
                         return true;
                     }
                     if (const auto c = amount(coins); c && games_.stake(*c, "the horse race")) {
@@ -113,8 +115,8 @@ namespace {
                 }
                 const auto horse = find_horse(args);
                 if (!horse) {
-                    chat_.notice(std::format("🏇 No horse {} in this race: bet on one by number (1 to {}) or name.",
-                                             args, field_.size()));
+                    chat_.game_notice(std::format(
+                        "🏇 No horse {} in this race: bet on one by number (1 to {}) or name.", args, field_.size()));
                     return true;
                 }
                 if (const auto c = amount(coins)) {
@@ -124,8 +126,8 @@ namespace {
             }
             if (verb == "open" && args.empty()) {
                 if (live() || phase_ == 'r') {
-                    chat_.notice(live() ? "🏇 A race is open: /casino horses bet N HORSE to bet on it."
-                                        : "🏇 A race is running: wait for the next one.");
+                    chat_.game_notice(live() ? "🏇 A race is open: /casino horses bet N HORSE to bet on it."
+                                             : "🏇 A race is running: wait for the next one.");
                 } else {
                     open_race();
                     start();
@@ -163,8 +165,8 @@ namespace {
                 if (horse && *horse < field_.size() && coins && *coins >= casino::min_bet &&
                     *coins <= casino::max_bet) {
                     bets_.push_back({sender, static_cast<std::size_t>(*horse), static_cast<long long>(*coins)});
-                    chat_.notice(std::format("🏇 {} bets {} on {} (x{}).", colored(sender), plural(*coins, "coin"),
-                                             horse_name(*horse), hs::odds_text(field_[*horse].odds)));
+                    chat_.game_notice(std::format("🏇 {} bets {} on {} (x{}).", colored(sender), plural(*coins, "coin"),
+                                                  horse_name(*horse), hs::odds_text(field_[*horse].odds)));
                     publish();
                 }
             } else if (event == "ready" && phase_ == 'b') {
@@ -195,7 +197,7 @@ namespace {
                 send(std::format("race {:x} {}", round_, hs::encode_race(race_->order, race_->track)));
             }
             if (live() && !dealing_ && now >= heard_at_ + patience) {
-                chat_.notice(std::format("🏇 The race's starter, {}, is gone: no race.", colored(dealer_)));
+                chat_.game_notice(std::format("🏇 The race's starter, {}, is gone: no race.", colored(dealer_)));
                 give_back();
                 round_ = 0;
                 phase_ = 'o';
@@ -268,15 +270,15 @@ namespace {
             staked_ = 0;
             deadline_ = clock::now() + bet_time;
             tell();
-            chat_.notice(std::format("🏇 You open a horse race: everybody has {} seconds to bet (/casino horses "
-                                     "bet N HORSE), or /casino horses go starts it now.",
-                                     bet_time.count()));
+            chat_.game_notice(std::format("🏇 You open a horse race: everybody has {} seconds to bet (/casino horses "
+                                          "bet N HORSE), or /casino horses go starts it now.",
+                                          bet_time.count()));
             publish();
         }
 
         void place(long long coins, std::size_t horse) {
             if (phase_ == 'r') {
-                chat_.notice("🏇 The race is on: wait for the next one.");
+                chat_.game_notice("🏇 The race is on: wait for the next one.");
                 return;
             }
             if (!games_.stake(coins, "the horse race")) {
@@ -289,15 +291,15 @@ namespace {
             staked_ += coins;
             bets_.push_back({chat_.id(), horse, coins});
             send(std::format("bet {:x} {} {}", round_, horse, coins));
-            chat_.notice(std::format("🏇 You bet {} on {} (x{}: it would give back {}).", plural(coins, "coin"),
-                                     horse_name(horse), hs::odds_text(field_[horse].odds),
-                                     hs::payout(coins, field_[horse].odds)));
+            chat_.game_notice(std::format("🏇 You bet {} on {} (x{}: it would give back {}).", plural(coins, "coin"),
+                                          horse_name(horse), hs::odds_text(field_[horse].odds),
+                                          hs::payout(coins, field_[horse].odds)));
             publish();
         }
 
         void ready() {
             if (!live() || std::ranges::find(bets_, chat_.id(), &Bet::id) == bets_.end()) {
-                chat_.notice("🏇 You have no bets on this race: /casino horses bet N HORSE first.");
+                chat_.game_notice("🏇 You have no bets on this race: /casino horses bet N HORSE first.");
                 return;
             }
             ready_.insert(chat_.id());
@@ -341,8 +343,8 @@ namespace {
                     return;
                 }
                 if (live() && staked_ > 0) {
-                    chat_.notice(std::format("🏇 Two races opened at once: {}'s is the one. Bet again there.",
-                                             colored(sender)));
+                    chat_.game_notice(
+                        std::format("🏇 Two races opened at once: {}'s is the one. Bet again there.", colored(sender)));
                 }
                 give_back();
                 round_ = round;
@@ -354,10 +356,10 @@ namespace {
                 race_.reset();
                 bets_.clear();
                 ready_.clear();
-                chat_.notice(std::format("🏇 {} opens a horse race: /casino horses bet N HORSE to bet, /casino to "
-                                         "see it. Favourite: {} (x{}).",
-                                         colored(sender), horse_name(favourite()),
-                                         hs::odds_text(field_[favourite()].odds)));
+                chat_.game_notice(std::format("🏇 {} opens a horse race: /casino horses bet N HORSE to bet, /casino to "
+                                              "see it. Favourite: {} (x{}).",
+                                              colored(sender), horse_name(favourite()),
+                                              hs::odds_text(field_[favourite()].odds)));
             } else if (sender != dealer_ || dealing_ || phase_ != 'b') {
                 return;
             }
@@ -376,7 +378,7 @@ namespace {
             race_ = std::move(race);
             started_ = clock::now();
             halfway_ = false;
-            chat_.notice("🏇 And they're off!");
+            chat_.game_notice("🏇 And they're off!");
             terminal_.bell();
             publish();
         }
@@ -395,8 +397,8 @@ namespace {
 
         void halfway() {
             const auto at = standings(hs::checkpoints / 2 - 1);
-            chat_.notice(std::format("🏇 Halfway: {} leads, then {} and {}.", horse_name(at[0]), horse_name(at[1]),
-                                     horse_name(at[2])));
+            chat_.game_notice(std::format("🏇 Halfway: {} leads, then {} and {}.", horse_name(at[0]), horse_name(at[1]),
+                                          horse_name(at[2])));
         }
 
         void finish() {
@@ -426,14 +428,13 @@ namespace {
                 results += std::format("{}{} {}", results.empty() ? "" : " · ", who(id, results.empty()),
                                        net_text(theirs - staked, staked, id == chat_.id()));
             }
-            chat_.notice(std::format("🏁 {} wins (x{})! Then {}, {}.{}", horse_name(winner),
-                                     hs::odds_text(field_[winner].odds),
-                                     horse_name(static_cast<std::size_t>(order[1])),
-                                     horse_name(static_cast<std::size_t>(order[2])),
-                                     results.empty() ? "" : " " + results));
+            chat_.game_notice(
+                std::format("🏁 {} wins (x{})! Then {}, {}.{}", horse_name(winner), hs::odds_text(field_[winner].odds),
+                            horse_name(static_cast<std::size_t>(order[1])),
+                            horse_name(static_cast<std::size_t>(order[2])), results.empty() ? "" : " " + results));
             if (staked_ > 0) {
                 games_.cash(back);
-                chat_.notice(std::format("💰 You {} at the races.", net_text(back - staked_, staked_)));
+                chat_.game_notice(std::format("💰 You {} at the races.", net_text(back - staked_, staked_)));
             }
             staked_ = 0;
             publish();
@@ -442,7 +443,7 @@ namespace {
         void give_back() {
             if (staked_ > 0) {
                 games_.cash(staked_);
-                chat_.notice(std::format("🏇 Your {} on the race are back.", plural(staked_, "coin")));
+                chat_.game_notice(std::format("🏇 Your {} on the race are back.", plural(staked_, "coin")));
             }
             staked_ = 0;
         }

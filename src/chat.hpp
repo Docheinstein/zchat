@@ -158,6 +158,11 @@ public:
     // Prints an informational line (joins, leaves, command output).
     void notice(std::string_view text) const;
 
+    // What the games say: a notice, or a full line (a board drawn with characters). In a window they go to the games
+    // log (see channel::games_log), so the chat stays a chat; a terminal shows them in the chat. Thread-safe.
+    void game_notice(std::string_view text);
+    void game_print(std::string_view line);
+
     // Prints messages from the history (see history.hpp), each with the time it was sent at.
     void print_history(const std::vector<history::Entry>& entries);
 
@@ -175,6 +180,9 @@ public:
         std::function<void(std::uint64_t sender, std::string_view name, std::string_view text)> message;
         // Called a few times per second, for the game's timers.
         std::function<void()> tick;
+        // Whether a chat line of another peer is a move of a game (a race's words): where the games have a log of
+        // their own, it is shown there, and not in #general.
+        std::function<bool(std::uint64_t sender, std::string_view text)> claims;
     };
 
     // Replaces the game hooks; empty ones are not called. Once it returns, the old ones are not running anymore.
@@ -204,7 +212,8 @@ private:
 
     // Something said, drawn or sent in a channel, kept to show it again (see deliver()).
     struct Entry {
-        enum class Kind { Message, Art, Picture, File, Trill };
+        // A Line is printed as it is: what a game said, in the games log.
+        enum class Kind { Message, Art, Picture, File, Trill, Line };
         Kind kind = Kind::Message;
         std::time_t time = 0;
         std::uint64_t id = 0;
@@ -252,6 +261,12 @@ private:
     void show(const Entry& entry, bool live);
     // Something for a channel: kept, and shown if it is the current one, or else told about once.
     void deliver(const std::string& channel, Entry entry);
+    // A notice as it is printed, with the time.
+    std::string notice_line(std::string_view text) const;
+    // Whether the games log is being shown; and the channel what we say, draw and send goes to: the current one, or
+    // #general from the games log.
+    bool in_games_log() const;
+    std::string speaking_channel() const;
     // Channels: whether we are in one, who a user is, and who someone named is.
     bool in_channel(const std::string& name) const;
     std::string user_name(std::uint64_t user) const;
@@ -295,6 +310,8 @@ private:
     std::atomic<std::uint64_t> seq_ {0};
     std::atomic<bool> stopped_ {false};
     std::atomic<bool> fast_ticks_ {false};
+    // See Screen::games_apart().
+    const bool games_apart_;
 
     mutable std::mutex peers_mutex_;
     std::map<std::uint64_t, Peer> peers_;

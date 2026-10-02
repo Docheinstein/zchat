@@ -136,7 +136,8 @@ Chat::Chat(std::uint16_t port, std::string name, std::optional<Color> color, Scr
     id_(make_id(color)),
     name_(std::move(name)),
     terminal_(terminal),
-    socket_(port) {
+    socket_(port),
+    games_apart_(terminal.games_apart()) {
     // Without it, pictures too big for a packet can still be sent in Chunks.
     try {
         listener_.emplace();
@@ -187,7 +188,7 @@ void Chat::stop() {
 
 void Chat::say(std::string_view text) {
     const std::string clean = text::sanitize(text, max_text_bytes);
-    const std::string channel = current_channel();
+    const std::string channel = speaking_channel();
     if (channel != channel::general) {
         if (!in_channel(channel)) {
             notice(std::format("You are not in #{} anymore.", channel));
@@ -199,8 +200,25 @@ void Chat::say(std::string_view text) {
         return;
     }
     send(PacketType::Message, clean);
-    deliver(channel, {Entry::Kind::Message, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)});
-    history::add({std::time(nullptr), id_, name(), clean});
+    Entry entry {Entry::Kind::Message, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)};
+    if (in_games_log()) {
+        // Said from the games log: shown there if it is a move of a game (a race's words), and else in #general.
+        bool move = false;
+        {
+            std::scoped_lock lock(hooks_mutex_);
+            move = hooks_.claims && hooks_.claims(id_, clean);
+        }
+        if (move) {
+            deliver(std::string(channel::games_log), std::move(entry));
+        } else {
+            deliver(channel, std::move(entry));
+            history::add({std::time(nullptr), id_, name(), clean});
+            game_notice("Said in #general: the games log is for the games.");
+        }
+    } else {
+        deliver(channel, std::move(entry));
+        history::add({std::time(nullptr), id_, name(), clean});
+    }
     std::scoped_lock lock(hooks_mutex_);
     if (hooks_.message) {
         hooks_.message(id_, name(), clean);
@@ -223,7 +241,10 @@ void Chat::draw(std::string_view art) {
     packet.text = std::string(art);
     // Cleaned up the same way the others will see it.
     const std::string clean = decode(encode(packet)).value_or(Packet {}).text;
-    const std::string channel = current_channel();
+    const std::string channel = speaking_channel();
+    if (in_games_log()) {
+        game_notice("Drawn in #general: the games log is for the games.");
+    }
     if (channel == channel::general) {
         send(PacketType::Art, clean);
     } else {
@@ -237,7 +258,10 @@ void Chat::send_picture(std::string_view picture) {
     packet.type = PacketType::Image;
     packet.name = name();
     // In a channel other than general, a line saying which comes first (older versions then ignore it).
-    const std::string channel = current_channel();
+    const std::string channel = speaking_channel();
+    if (in_games_log()) {
+        game_notice("Sent in #general: the games log is for the games.");
+    }
     packet.text = channel == channel::general ? std::string(picture) : std::format("channel {}\n{}", channel, picture);
     const std::string clean = decode(encode(packet)).value_or(Packet {}).text;
     receive_picture(id_, name(), clean);
@@ -730,6 +754,14 @@ std::string Chat::current_channel() const {
     return current_;
 }
 
+bool Chat::in_games_log() const {
+    return games_apart_ && current_channel() == channel::games_log;
+}
+
+std::string Chat::speaking_channel() const {
+    return in_games_log() ? std::string(channel::general) : current_channel();
+}
+
 std::string Chat::user_name(std::uint64_t user) const {
     if (user == user_) {
         return colored_own_name();
@@ -812,6 +844,9 @@ std::optional<std::string> Chat::create_channel(std::string_view name, bool is_p
     if (clean == channel::general) {
         return "#general is always there.";
     }
+    if (clean == channel::games_log) {
+        return std::format("#{} is where a window shows what the games say: pick another name.", clean);
+    }
     const auto error = change_channel(clean, [&](channel::Channel& c) -> std::optional<std::string> {
         if (c.version > 0 && !c.deleted) {
             return std::format("#{} already exists: /join {}", clean, clean);
@@ -833,6 +868,10 @@ std::optional<std::string> Chat::join_channel(std::string_view name) {
     const std::string clean = channel::clean_name(name);
     if (clean.empty()) {
         return std::format("{} is not a channel name (see /channels).", name);
+    }
+    if (games_apart_ && clean == channel::games_log) {
+        switch_to(clean);
+        return std::nullopt;
     }
     if (clean != channel::general && !in_channel(clean)) {
         const auto error = change_channel(clean, [&](channel::Channel& c) -> std::optional<std::string> {
@@ -858,6 +897,9 @@ std::optional<std::string> Chat::leave_channel(std::string_view name) {
     if (clean == channel::general) {
         return "Everybody is always in #general.";
     }
+    if (games_apart_ && clean == channel::games_log) {
+        return std::format("#{} is always there: it is where the games say what happens in them.", clean);
+    }
     if (clean.empty() || !in_channel(clean)) {
         return std::format("You are not in #{}.", clean.empty() ? std::string(name) : clean);
     }
@@ -878,6 +920,9 @@ std::optional<std::string> Chat::delete_channel(std::string_view name) {
     const std::string clean = channel::clean_name(name);
     if (clean == channel::general) {
         return "#general can never be removed.";
+    }
+    if (games_apart_ && clean == channel::games_log) {
+        return std::format("#{} can never be removed: it is where the games say what happens in them.", clean);
     }
     if (clean.empty()) {
         return std::format("{} is not a channel name (see /channels).", name);
@@ -912,6 +957,9 @@ std::optional<std::string> Chat::add_to_channel(std::string_view name, std::stri
     if (clean == channel::general) {
         return "Everybody is always in #general: /join another channel first, or name it (/add #CHANNEL NAME).";
     }
+    if (games_apart_ && clean == channel::games_log) {
+        return std::format("#{} is yours alone: what the games say, as your zchat hears it.", clean);
+    }
     if (clean.empty() || !in_channel(clean)) {
         return std::format("You are not in #{}.", clean.empty() ? std::string(name) : clean);
     }
@@ -937,6 +985,9 @@ std::optional<std::string> Chat::remove_from_channel(std::string_view name, std:
     const std::string clean = name.empty() ? current_channel() : channel::clean_name(name);
     if (clean == channel::general) {
         return "Nobody can be removed from #general.";
+    }
+    if (games_apart_ && clean == channel::games_log) {
+        return std::format("#{} is yours alone: what the games say, as your zchat hears it.", clean);
     }
     if (clean.empty() || !in_channel(clean)) {
         return std::format("You are not in #{}.", clean.empty() ? std::string(name) : clean);
@@ -972,9 +1023,13 @@ std::vector<Chat::ChannelInfo> Chat::channels() const {
     }
     out.push_back({std::string(channel::general), true, true, current_ == channel::general,
                    unread_.contains(std::string(channel::general)), everyone});
+    if (games_apart_) {
+        out.push_back({std::string(channel::games_log), false, true, current_ == channel::games_log,
+                       unread_.contains(std::string(channel::games_log)), 1});
+    }
     for (const auto& [name, c] : channels_) {
-        // Private ones only for their members.
-        if (c.deleted || (!c.is_public && !c.has(user_))) {
+        // Private ones only for their members; and none can be the games log (from versions without it).
+        if (c.deleted || (!c.is_public && !c.has(user_)) || (games_apart_ && name == channel::games_log)) {
             continue;
         }
         out.push_back({name, c.is_public, c.has(user_), current_ == name, unread_.contains(name), c.members.size(),
@@ -991,6 +1046,9 @@ std::vector<std::string> Chat::channel_members(std::string_view name, std::size_
         std::vector<std::string> names = peers();
         names.push_back(colored_own_name());
         return names;
+    }
+    if (games_apart_ && clean == channel::games_log) {
+        return {colored_own_name()};
     }
     {
         std::scoped_lock lock(channels_mutex_);
@@ -1080,8 +1138,14 @@ void Chat::switch_to(const std::string& name) {
         terminal_.print(terminal_.colors() ? std::format("\x1b[90m──────── #{} ────────\x1b[0m", name)
                                            : std::format("-------- #{} --------", name));
     }
-    notice(std::format("You are in #{}{}.{}", name, what,
-                       entries.empty() ? " Nothing said here yet (since zchat started)." : ""));
+    if (games_apart_ && name == channel::games_log) {
+        notice(std::format("You are in #{}: what the games say is here, so the chat stays a chat. What you type "
+                           "here is said in #general (but a race's words, shown here).{}",
+                           name, entries.empty() ? " No game has said anything yet (since zchat started)." : ""));
+    } else {
+        notice(std::format("You are in #{}{}.{}", name, what,
+                           entries.empty() ? " Nothing said here yet (since zchat started)." : ""));
+    }
     for (const auto& entry : entries) {
         show(entry, false);
     }
@@ -1504,6 +1568,9 @@ void Chat::show(const Entry& entry, bool live) {
     case Entry::Kind::Trill:
         print_trill(entry, when);
         break;
+    case Entry::Kind::Line:
+        terminal_.print(*entry.data);
+        break;
     }
 }
 
@@ -1533,7 +1600,10 @@ void Chat::deliver(const std::string& channel, Entry entry) {
         show(entry, true);
         return;
     }
-    // Elsewhere: said once until it is visited, and tags always.
+    // Elsewhere: said once until it is visited, and tags always. The games log only gets its dot in the list.
+    if (games_apart_ && channel == channel::games_log) {
+        return;
+    }
     bool tags_us = false;
     if (entry.kind == Entry::Kind::Message && entry.id != id_) {
         mark_mentions(*entry.data, tags_us);
@@ -1602,12 +1672,31 @@ std::string Chat::colored_name(std::uint64_t id, std::string_view name) const {
     return std::format("\x1b[{}{}m{}\x1b[0m", id == id_ ? "1;" : "", ansi_foreground(color_of_id(id)), name);
 }
 
+std::string Chat::notice_line(std::string_view text) const {
+    return terminal_.colors() ? std::format("\x1b[90m{} *\x1b[0m {}", timestamp(), text)
+                              : std::format("{} * {}", timestamp(), text);
+}
+
 void Chat::notice(std::string_view text) const {
-    if (terminal_.colors()) {
-        terminal_.print(std::format("\x1b[90m{} *\x1b[0m {}", timestamp(), text));
-    } else {
-        terminal_.print(std::format("{} * {}", timestamp(), text));
+    terminal_.print(notice_line(text));
+}
+
+void Chat::game_notice(std::string_view text) {
+    if (!games_apart_) {
+        notice(text);
+        return;
     }
+    deliver(std::string(channel::games_log), {Entry::Kind::Line, std::time(nullptr), id_, name(),
+                                              std::make_shared<const std::string>(notice_line(text))});
+}
+
+void Chat::game_print(std::string_view line) {
+    if (!games_apart_) {
+        terminal_.print(line);
+        return;
+    }
+    deliver(std::string(channel::games_log),
+            {Entry::Kind::Line, std::time(nullptr), id_, name(), std::make_shared<const std::string>(line)});
 }
 
 void Chat::send(PacketType type, std::string_view text, bool once) {
@@ -1740,9 +1829,18 @@ void Chat::handle(const Packet& packet, std::uint32_t from) {
         send_channel_states();
         break;
     case PacketType::Message: {
-        deliver(std::string(channel::general), {Entry::Kind::Message, std::time(nullptr), packet.sender, packet.name,
-                                                std::make_shared<const std::string>(packet.text)});
-        history::add({std::time(nullptr), packet.sender, packet.name, packet.text});
+        // A move of a game (a race's words) goes to the games log, where there is one.
+        bool move = false;
+        if (games_apart_) {
+            std::scoped_lock lock(hooks_mutex_);
+            move = hooks_.claims && hooks_.claims(packet.sender, packet.text);
+        }
+        deliver(std::string(move ? channel::games_log : channel::general),
+                {Entry::Kind::Message, std::time(nullptr), packet.sender, packet.name,
+                 std::make_shared<const std::string>(packet.text)});
+        if (!move) {
+            history::add({std::time(nullptr), packet.sender, packet.name, packet.text});
+        }
         std::scoped_lock lock(hooks_mutex_);
         if (hooks_.message) {
             hooks_.message(packet.sender, packet.name, packet.text);

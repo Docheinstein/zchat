@@ -576,6 +576,8 @@ window.zchat = {
 };
 
 // --- Channels: listed from zchatChannels() ([[name, public, member, current, unread], ...]); a click joins one.
+// After #general comes the games log: what the games say goes there, and not in the chat.
+const gamesLog = "games-log";
 let port = 0, currentChannel = "general", channelsShown = "";
 function showHeader() {
   document.getElementById("channel").textContent = "# " + currentChannel + (port ? `  ·  UDP port ${port}` : "");
@@ -591,12 +593,19 @@ async function refreshChannels() {
   channelList = channels;
   for (const [name, isPublic, member, current, unread] of channels) {
     const item = document.createElement("div");
+    const log = name === gamesLog;
     item.className = "item" + (current ? " active" : "") + (member ? "" : " away");
-    item.title = (isPublic ? "Public" : "Private") + (member ? "" : ": click to join");
+    item.title = log ? "What the games say, kept out of the chat"
+      : (isPublic ? "Public" : "Private") + (member ? "" : ": click to join");
     const label = document.createElement("span");
     label.textContent = "# " + name;
     item.append(label);
-    if (!isPublic) {
+    if (log) {
+      const icon = document.createElement("span");
+      icon.className = "lock";
+      icon.textContent = "🎮";
+      item.append(icon);
+    } else if (!isPublic) {
       const lock = document.createElement("span");
       lock.className = "lock";
       lock.textContent = "🔒";
@@ -613,7 +622,7 @@ async function refreshChannels() {
       join.textContent = "Join";
       join.title = "Join #" + name;
       item.append(join);
-    } else if (name !== "general") {
+    } else if (name !== "general" && !log) {
       const leave = document.createElement("button");
       leave.className = "act leave";
       leave.textContent = "×";
@@ -637,8 +646,10 @@ let channelList = [];
 function showChannelActions() {
   const here = channelList.find(c => c[3]);
   const general = !here || here[0] === "general";
-  document.getElementById("channel-leave").hidden = general;
-  document.getElementById("channel-delete").hidden = general || !here[5];
+  const log = !!here && here[0] === gamesLog;
+  document.getElementById("channel-members").hidden = log;
+  document.getElementById("channel-leave").hidden = general || log;
+  document.getElementById("channel-delete").hidden = general || log || !here[5];
 }
 document.getElementById("channel-leave").onclick = () => channelCommand("/leave " + currentChannel);
 // Deleting asks for a second click.
@@ -3031,6 +3042,12 @@ input.addEventListener("keydown", e => {
     if (line.trim() && sent[sent.length - 1] !== line) sent.push(line);
     sentPos = sent.length;
     draft = "";
+    // A game's command typed here: its answer is in the games log, so that is shown. (The games' own buttons do not
+    // move the chat.)
+    if (/^\/(game|casino|coins|shop)(\s|$)/i.test(line.trim()) && currentChannel !== gamesLog &&
+        channelList.some(c => c[0] === gamesLog)) {
+      channelCommand("/join " + gamesLog);
+    }
     window.zchatSend(line);
     // A new name or color (/nick, /color) shows right away.
     setTimeout(refreshSelf, 150);
