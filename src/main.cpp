@@ -303,8 +303,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /kick NAME   ask the others to vote NAME out of the chat: /kick yes kicks, /kick no graces;");
     chat.notice("               they are out (their zchat closes) if at least as many vote to kick as to grace;");
     chat.notice("               asking costs coins (/shop), voting is free");
-    chat.notice("  /spy @NAME   ask NAME to let you see their screen(s): if they /spy allow, their zchat shares");
-    chat.notice("               them; /spy deny (or no answer) refuses and nothing is captured. Asking is free:");
+    chat.notice("  /spy @NAME   ask NAME to let you see their screen(s): if they /spy allow (or do not answer in");
+    chat.notice("               time), their zchat shares them; /spy deny refuses and nothing is captured. Asking is free:");
     chat.notice("               only if they accept do you pay 10 coins, and they get 5 for letting you in");
     chat.notice("  /game        list the games everyone in the chat can play (/game help NAME: how to play one)");
     chat.notice("  /coins [NAME]  your coins, or somebody's: won in the games, spent on /trill, /kick and /spy");
