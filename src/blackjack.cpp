@@ -82,19 +82,19 @@ namespace {
                 return;
             }
             if (!live()) {
-                chat_.notice("🃏 The blackjack table is free: /casino blackjack bet N sits down with N coins, and "
-                             "deals.");
+                chat_.game_notice("🃏 The blackjack table is free: /casino blackjack bet N sits down with N coins, and "
+                                  "deals.");
                 return;
             }
-            chat_.notice(std::format("🃏 Blackjack, dealt by {}: {}", colored(dealer_),
-                                     table_.phase == 'b' ? std::format("taking bets for {} more seconds", left())
-                                                         : std::format("being played, {} seconds left", left())));
+            chat_.game_notice(std::format("🃏 Blackjack, dealt by {}: {}", colored(dealer_),
+                                          table_.phase == 'b' ? std::format("taking bets for {} more seconds", left())
+                                                              : std::format("being played, {} seconds left", left())));
             if (table_.phase == 'p') {
-                chat_.notice(std::format("   The dealer shows {}.", hand_text(table_.dealer)));
+                chat_.game_notice(std::format("   The dealer shows {}.", hand_text(table_.dealer)));
             }
             for (const bj::Seat& s : table_.seats) {
-                chat_.notice(std::format("   {}: {}{}", colored(s.id), plural(s.bet, "coin"),
-                                         s.hands.empty() ? "" : " · " + hands_text(s)));
+                chat_.game_notice(std::format("   {}: {}{}", colored(s.id), plural(s.bet, "coin"),
+                                              s.hands.empty() ? "" : " · " + hands_text(s)));
             }
         }
 
@@ -162,7 +162,8 @@ namespace {
                     tell();
                 }
             } else if (live() && now >= heard_at_ + patience) {
-                chat_.notice(std::format("🃏 The blackjack dealer, {}, is gone: the round is off.", colored(dealer_)));
+                chat_.game_notice(
+                    std::format("🃏 The blackjack dealer, {}, is gone: the round is off.", colored(dealer_)));
                 give_back();
                 table_ = {};
                 round_ = 0;
@@ -214,20 +215,20 @@ namespace {
 
         void bet(long long coins) {
             if (live() && table_.phase == 'p') {
-                chat_.notice("🃏 The cards are being played: wait for the next round to bet.");
+                chat_.game_notice("🃏 The cards are being played: wait for the next round to bet.");
                 return;
             }
             if (live() && own_seat()) {
-                chat_.notice(std::format("🃏 You are seated with {}: /casino blackjack deal deals the cards.",
-                                         plural(own_seat()->bet, "coin")));
+                chat_.game_notice(std::format("🃏 You are seated with {}: /casino blackjack deal deals the cards.",
+                                              plural(own_seat()->bet, "coin")));
                 return;
             }
             if (live() && table_.seats.size() >= bj::seats) {
-                chat_.notice("🃏 The blackjack table is full: wait for the next round.");
+                chat_.game_notice("🃏 The blackjack table is full: wait for the next round.");
                 return;
             }
             if (live() && pending_) {
-                chat_.notice("🃏 Your bet is on its way to the dealer.");
+                chat_.game_notice("🃏 Your bet is on its way to the dealer.");
                 return;
             }
             if (!games_.stake(coins, game_name)) {
@@ -243,15 +244,16 @@ namespace {
                 pending_.reset();
                 table_ = {};
                 deadline_ = clock::now() + bet_time;
-                chat_.notice(std::format("🃏 You open the blackjack table with {}: the others have {} seconds to bet "
-                                         "(/casino blackjack bet N), or /casino blackjack deal deals now.",
-                                         plural(coins, "coin"), bet_time.count()));
+                chat_.game_notice(
+                    std::format("🃏 You open the blackjack table with {}: the others have {} seconds to bet "
+                                "(/casino blackjack bet N), or /casino blackjack deal deals now.",
+                                plural(coins, "coin"), bet_time.count()));
                 bj::Table next = table_;
                 next.seats.push_back({chat_.id(), coins, false, {}});
                 commit(std::move(next));
                 return;
             }
-            chat_.notice(std::format("🃏 You bet {} at blackjack.", plural(coins, "coin")));
+            chat_.game_notice(std::format("🃏 You bet {} at blackjack.", plural(coins, "coin")));
             if (dealing_) {
                 seat(chat_.id(), coins);
             } else {
@@ -262,8 +264,9 @@ namespace {
         void ready() {
             const bj::Seat* s = own_seat();
             if (!live() || table_.phase != 'b' || !s) {
-                chat_.notice(live() && table_.phase == 'p' ? "🃏 The cards are dealt already."
-                                                           : "🃏 You are not seated: /casino blackjack bet N first.");
+                chat_.game_notice(live() && table_.phase == 'p'
+                                      ? "🃏 The cards are dealt already."
+                                      : "🃏 You are not seated: /casino blackjack bet N first.");
                 return;
             }
             if (dealing_) {
@@ -276,24 +279,25 @@ namespace {
         void move(std::string_view verb) {
             const auto hand = own_hand();
             if (!hand) {
-                chat_.notice(live() && table_.phase == 'p' && own_seat()
-                                 ? "🃏 Your hand is played: wait for the dealer."
-                                 : "🃏 You have no hand to play: /casino blackjack bet N sits you down for the next "
-                                   "round.");
+                chat_.game_notice(
+                    live() && table_.phase == 'p' && own_seat()
+                        ? "🃏 Your hand is played: wait for the dealer."
+                        : "🃏 You have no hand to play: /casino blackjack bet N sits you down for the next "
+                          "round.");
                 return;
             }
             const bj::Seat& s = *own_seat();
             const bj::Hand& h = s.hands[*hand];
             if (verb == "double" && (h.cards.size() != 2 || h.doubled)) {
-                chat_.notice("🃏 Only a hand of two cards can be doubled.");
+                chat_.game_notice("🃏 Only a hand of two cards can be doubled.");
                 return;
             }
             if (verb == "split" && (s.hands.size() != 1 || !bj::can_split(h.cards))) {
-                chat_.notice("🃏 Only two cards of the same value can be split, once.");
+                chat_.game_notice("🃏 Only two cards of the same value can be split, once.");
                 return;
             }
             if (pending_) {
-                chat_.notice("🃏 Your last move is on its way to the dealer.");
+                chat_.game_notice("🃏 Your last move is on its way to the dealer.");
                 return;
             }
             if (verb == "double" || verb == "split") {
@@ -494,9 +498,9 @@ namespace {
                     return;
                 }
                 if (live() && staked_ > 0) {
-                    chat_.notice(std::format("🃏 Two blackjack tables opened at once: {}'s is the one. Bet again "
-                                             "there.",
-                                             colored(sender)));
+                    chat_.game_notice(std::format("🃏 Two blackjack tables opened at once: {}'s is the one. Bet again "
+                                                  "there.",
+                                                  colored(sender)));
                 }
                 give_back();
                 round_ = round;
@@ -525,18 +529,18 @@ namespace {
             const bool fresh = before.seats.empty() && before.dealer.empty();
             if (fresh && table_.phase == 'b' && dealer != chat_.id()) {
                 const auto theirs = std::ranges::find(table_.seats, dealer, &bj::Seat::id);
-                chat_.notice(std::format("🃏 {} opens the blackjack table{}: /casino blackjack bet N to sit down, "
-                                         "/casino to see it.",
-                                         colored(dealer),
-                                         theirs == table_.seats.end()
-                                             ? ""
-                                             : std::format(" with a bet of {}", plural(theirs->bet, "coin"))));
+                chat_.game_notice(std::format(
+                    "🃏 {} opens the blackjack table{}: /casino blackjack bet N to sit down, "
+                    "/casino to see it.",
+                    colored(dealer),
+                    theirs == table_.seats.end() ? "" : std::format(" with a bet of {}", plural(theirs->bet, "coin"))));
             }
             if (table_.phase == 'b') {
                 for (const bj::Seat& s : table_.seats) {
                     if (s.id != chat_.id() && s.id != dealer &&
                         std::ranges::find(before.seats, s.id, &bj::Seat::id) == before.seats.end()) {
-                        chat_.notice(std::format("🃏 {} bets {} at blackjack.", colored(s.id), plural(s.bet, "coin")));
+                        chat_.game_notice(
+                            std::format("🃏 {} bets {} at blackjack.", colored(s.id), plural(s.bet, "coin")));
                     }
                 }
             }
@@ -550,15 +554,13 @@ namespace {
                                      hands_text(*was) != hands_text(*mine);
                 if (changed) {
                     const auto hand = own_hand();
-                    chat_.notice(std::format("🃏 {} · the dealer shows {}{}", hands_text(*mine),
-                                             casino::card_label(table_.dealer.front()),
-                                             hand ? std::format(". /casino blackjack hit, stand{}{}",
-                                                                mine->hands[*hand].cards.size() == 2 ? ", double" : "",
-                                                                mine->hands.size() == 1 &&
-                                                                        bj::can_split(mine->hands[0].cards)
-                                                                    ? ", split"
-                                                                    : "")
-                                                  : ""));
+                    chat_.game_notice(std::format(
+                        "🃏 {} · the dealer shows {}{}", hands_text(*mine), casino::card_label(table_.dealer.front()),
+                        hand ? std::format(". /casino blackjack hit, stand{}{}",
+                                           mine->hands[*hand].cards.size() == 2 ? ", double" : "",
+                                           mine->hands.size() == 1 && bj::can_split(mine->hands[0].cards) ? ", split"
+                                                                                                          : "")
+                             : ""));
                     if (hand) {
                         terminal_.bell();
                     }
@@ -616,8 +618,8 @@ namespace {
                     own_back_ = back;
                 }
             }
-            chat_.notice(std::format("🃏 The dealer has {} ({}). {}", hand_text(table_.dealer),
-                                     bj::describe(table_.dealer), results));
+            chat_.game_notice(std::format("🃏 The dealer has {} ({}). {}", hand_text(table_.dealer),
+                                          bj::describe(table_.dealer), results));
             settle();
         }
 
@@ -631,10 +633,10 @@ namespace {
             const long long back = (mine ? own_back_ : 0) + std::max(0LL, staked_ - on_table);
             games_.cash(back);
             if (!mine) {
-                chat_.notice(std::format("🃏 Your bet did not reach the dealer in time: your {} are back.",
-                                         plural(staked_, "coin")));
+                chat_.game_notice(std::format("🃏 Your bet did not reach the dealer in time: your {} are back.",
+                                              plural(staked_, "coin")));
             } else {
-                chat_.notice(std::format("💰 You {} at blackjack.", net_text(back - staked_, staked_)));
+                chat_.game_notice(std::format("💰 You {} at blackjack.", net_text(back - staked_, staked_)));
             }
             staked_ = 0;
             own_back_ = 0;
@@ -644,7 +646,7 @@ namespace {
         void give_back() {
             if (staked_ > 0 && live()) {
                 games_.cash(staked_);
-                chat_.notice(std::format("🃏 Your {} at blackjack are back.", plural(staked_, "coin")));
+                chat_.game_notice(std::format("🃏 Your {} at blackjack are back.", plural(staked_, "coin")));
             }
             staked_ = 0;
             pending_.reset();

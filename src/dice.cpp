@@ -81,8 +81,8 @@ namespace {
 
         void start() override {
             if (on_) {
-                chat_.notice(joinable() ? "A round of dice is on: /game dice roll to join it!"
-                                        : "A round of dice is on: wait for it to end.");
+                chat_.game_notice(joinable() ? "A round of dice is on: /game dice roll to join it!"
+                                             : "A round of dice is on: wait for it to end.");
                 return;
             }
             std::uint64_t round = 0;
@@ -113,7 +113,7 @@ namespace {
             }
             if (event == "play") {
                 player(sender, name);
-                chat_.notice(std::format("🎲 {} is rolling…", chat_.colored_name(sender, name)));
+                chat_.game_notice(std::format("🎲 {} is rolling…", chat_.colored_name(sender, name)));
                 publish();
             } else if (event == "keep" || event == "stop") {
                 const auto points = parse_number(next_field(text));
@@ -143,8 +143,8 @@ namespace {
             }
             if (me_ && own().status == Status::Rolling && !warned_ && now >= started_ + round_time - warning_time) {
                 warned_ = true;
-                chat_.notice(std::format("⏳ {} seconds left: /game dice stop to keep your {}, or lose them!",
-                                         warning_time.count(), plural(own().points, "point")));
+                chat_.game_notice(std::format("⏳ {} seconds left: /game dice stop to keep your {}, or lose them!",
+                                              warning_time.count(), plural(own().points, "point")));
                 terminal_.bell();
             }
             const bool all_done = std::ranges::none_of(players_, [](const Player& p) {
@@ -197,13 +197,15 @@ namespace {
             last_face_ = 0;
             result_.clear();
             starter_ = referee_name;
-            chat_.notice(std::format("🎲 Dice, started by {}! /game dice roll rolls a die: each roll adds to your "
-                                     "points, which only you see, but a 1 loses them all. /game dice stop keeps them "
-                                     "(the others see them when the round ends).",
-                                     referee_name));
-            chat_.notice(std::format("   The highest points kept in {} seconds win; whoever has not stopped by then "
-                                     "loses theirs. Roll within {} seconds to join.",
-                                     round_time.count(), join_time.count()));
+            chat_.game_notice(
+                std::format("🎲 Dice, started by {}! /game dice roll rolls a die: each roll adds to your "
+                            "points, which only you see, but a 1 loses them all. /game dice stop keeps them "
+                            "(the others see them when the round ends).",
+                            referee_name));
+            chat_.game_notice(
+                std::format("   The highest points kept in {} seconds win; whoever has not stopped by then "
+                            "loses theirs. Roll within {} seconds to join.",
+                            round_time.count(), join_time.count()));
             publish();
         }
 
@@ -223,12 +225,12 @@ namespace {
 
         void roll() {
             if (!on_) {
-                chat_.notice("No round of dice is on: /game dice starts one.");
+                chat_.game_notice("No round of dice is on: /game dice starts one.");
                 return;
             }
             if (!me_) {
                 if (!joinable()) {
-                    chat_.notice("Too late to join this round of dice: wait for the next one.");
+                    chat_.game_notice("Too late to join this round of dice: wait for the next one.");
                     return;
                 }
                 me_ = chat_.id();
@@ -238,13 +240,13 @@ namespace {
             }
             Player& me = own();
             if (me.status != Status::Rolling) {
-                chat_.notice("You are done for this round of dice.");
+                chat_.game_notice("You are done for this round of dice.");
                 return;
             }
             const auto face = std::uniform_int_distribution<std::uint64_t>(1, 6)(rng_);
             if (face == 1) {
-                chat_.notice(me.points == 0 ? std::string("🎲 1! You are out of this round.")
-                                            : std::format("🎲 1! You lose your {}.", plural(me.points, "point")));
+                chat_.game_notice(me.points == 0 ? std::string("🎲 1! You are out of this round.")
+                                                 : std::format("🎲 1! You lose your {}.", plural(me.points, "point")));
                 send(std::format("bust {:x} {}", round_, me.rolls + 1));
                 last_face_ = 1;
                 bust(me, me.rolls + 1);
@@ -254,7 +256,7 @@ namespace {
             me.points += face;
             last_face_ = face;
             publish();
-            chat_.notice(
+            chat_.game_notice(
                 std::format("🎲 {}: you have {} (only you see them). /game dice roll again, or /game dice stop "
                             "to keep them.",
                             face, plural(me.points, "point")));
@@ -262,13 +264,13 @@ namespace {
 
         void stop() {
             if (!on_ || !me_) {
-                chat_.notice(on_ ? "You are not playing this round of dice: /game dice roll to join it."
-                                 : "No round of dice is on: /game dice starts one.");
+                chat_.game_notice(on_ ? "You are not playing this round of dice: /game dice roll to join it."
+                                      : "No round of dice is on: /game dice starts one.");
                 return;
             }
             Player& me = own();
             if (me.status != Status::Rolling) {
-                chat_.notice("You are done for this round of dice.");
+                chat_.game_notice("You are done for this round of dice.");
                 return;
             }
             send(std::format("keep {:x} {} {}", round_, me.points, me.rolls));
@@ -288,10 +290,10 @@ namespace {
             p.points = points;
             p.rolls = rolls;
             // Nobody else is told how many: they are shown at the end.
-            chat_.notice(me_ && p.id == *me_
-                             ? std::format("✋ You stop with {}: the others see them when the round ends.",
-                                           plural(points, "point"))
-                             : std::format("✋ {} stops.", p.colored_name));
+            chat_.game_notice(me_ && p.id == *me_
+                                  ? std::format("✋ You stop with {}: the others see them when the round ends.",
+                                                plural(points, "point"))
+                                  : std::format("✋ {} stops.", p.colored_name));
             publish();
         }
 
@@ -303,9 +305,9 @@ namespace {
             p.points = 0;
             p.rolls = rolls;
             publish();
-            chat_.notice(rolls <= 1 ? std::format("💥 {} rolled a 1 on the first roll and is out!", p.colored_name)
-                                    : std::format("💥 {} rolled a 1 after {} and is out!", p.colored_name,
-                                                  plural(rolls - 1, "good roll")));
+            chat_.game_notice(rolls <= 1 ? std::format("💥 {} rolled a 1 on the first roll and is out!", p.colored_name)
+                                         : std::format("💥 {} rolled a 1 after {} and is out!", p.colored_name,
+                                                       plural(rolls - 1, "good roll")));
         }
 
         void end() {
@@ -317,7 +319,7 @@ namespace {
         void finish() {
             if (players_.empty()) {
                 result_ = "Nobody played that round.";
-                chat_.notice("🎲 Nobody played that round of dice.");
+                chat_.game_notice("🎲 Nobody played that round of dice.");
                 return;
             }
             std::string late;
@@ -328,7 +330,7 @@ namespace {
                 }
             }
             if (!late.empty()) {
-                chat_.notice(std::format("⏰ Time's up! Not stopped in time, and out: {}", late));
+                chat_.game_notice(std::format("⏰ Time's up! Not stopped in time, and out: {}", late));
             }
 
             std::vector<const Player*> ranking;
@@ -340,7 +342,7 @@ namespace {
             std::ranges::stable_sort(ranking, std::ranges::greater {}, &Player::points);
             if (ranking.empty() || ranking.front()->points == 0) {
                 result_ = "Nobody kept any points.";
-                chat_.notice("🎲 Dice is over: nobody kept any points.");
+                chat_.game_notice("🎲 Dice is over: nobody kept any points.");
                 return;
             }
             const std::uint64_t best = ranking.front()->points;
@@ -359,8 +361,9 @@ namespace {
                 }
             }
             result_ = std::format("{} win{} with {}!", plain_winners, tied == 1 ? "s" : "", plural(best, "point"));
-            chat_.notice(std::format("🏆 {} win{} dice with {}!{}", winners, tied == 1 ? "s" : "",
-                                     plural(best, "point"), others.empty() ? "" : std::format(" Then: {}", others)));
+            chat_.game_notice(std::format("🏆 {} win{} dice with {}!{}", winners, tied == 1 ? "s" : "",
+                                          plural(best, "point"),
+                                          others.empty() ? "" : std::format(" Then: {}", others)));
             // For the ratings, by the points kept: those who lost them all are last, tied.
             std::vector<Placing> placings;
             for (const Player& p : players_) {

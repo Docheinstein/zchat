@@ -78,6 +78,13 @@ Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
                     g->tick();
                 }
             },
+        .claims =
+            [this](std::uint64_t sender, std::string_view text) {
+                std::scoped_lock lock(mutex_);
+                return std::ranges::any_of(games_, [&](const auto& g) {
+                    return g->claims(sender, text);
+                });
+            },
     });
 }
 
@@ -120,14 +127,14 @@ void Games::command(std::string_view arg) {
     }
     Game* game = find(name);
     if (!game) {
-        chat_.notice(std::format("Unknown game {} (try /game)", text::sanitize(arg.substr(0, space), 32)));
+        chat_.game_notice(std::format("Unknown game {} (try /game)", text::sanitize(arg.substr(0, space), 32)));
         return;
     }
     if (args.empty()) {
         game->start();
     } else if (!game->command(game->keeps_case() ? std::string(args) : lowercase(args))) {
-        chat_.notice(std::format("Unknown command {} for {} (try /game help {})", text::sanitize(args, 32), name,
-                                 name));
+        chat_.game_notice(
+            std::format("Unknown command {} for {} (try /game help {})", text::sanitize(args, 32), name, name));
     }
 }
 
@@ -184,35 +191,38 @@ void Games::casino(std::string_view args) {
     }
     if (name.empty() || name == "help") {
         if (name.empty() && screen_.show_game("casino", "{\"open\":true}")) {
-            chat_.notice("🎰 The casino is open, in its own window: blackjack, roulette and the horse race, for "
-                         "coins. /casino help: how to play in the chat.");
+            chat_.game_notice("🎰 The casino is open, in its own window: blackjack, roulette and the horse race, for "
+                              "coins. /casino help: how to play in the chat.");
             return;
         }
-        chat_.notice("🎰 The casino: bet your coins at tables the whole chat shares. Whoever bets first at a table "
-                     "deals, and everybody sees everybody's bets.");
+        chat_.game_notice(
+            "🎰 The casino: bet your coins at tables the whole chat shares. Whoever bets first at a table "
+            "deals, and everybody sees everybody's bets.");
         for (const std::string_view t : casino_tables) {
             const Game* game = table(t);
-            chat_.notice(std::format("  {}: {}", game->name(), game->summary()));
+            chat_.game_notice(std::format("  {}: {}", game->name(), game->summary()));
             for (const Help& h : game->help()) {
-                chat_.notice(std::format("    /casino {}{}{}  {}", game->name(), h.args.empty() ? "" : " ", h.args,
-                                         h.what));
+                chat_.game_notice(
+                    std::format("    /casino {}{}{}  {}", game->name(), h.args.empty() ? "" : " ", h.args, h.what));
             }
         }
-        chat_.notice(std::format("  Bets are from {} to {} coins. /coins: yours.", casino::min_bet, casino::max_bet));
+        chat_.game_notice(
+            std::format("  Bets are from {} to {} coins. /coins: yours.", casino::min_bet, casino::max_bet));
         return;
     }
     Game* game = table(name);
     if (!game) {
-        chat_.notice(std::format("No table {} at the casino: there are blackjack, roulette and horses (try /casino "
-                                 "help).",
-                                 text::sanitize(args.substr(0, space), 32)));
+        chat_.game_notice(
+            std::format("No table {} at the casino: there are blackjack, roulette and horses (try /casino "
+                        "help).",
+                        text::sanitize(args.substr(0, space), 32)));
         return;
     }
     if (rest.empty()) {
         game->start();
     } else if (!game->command(lowercase(rest))) {
-        chat_.notice(std::format("Unknown command {} at {} (try /casino help)", text::sanitize(rest, 32),
-                                 game->name()));
+        chat_.game_notice(
+            std::format("Unknown command {} at {} (try /casino help)", text::sanitize(rest, 32), game->name()));
     }
 }
 
@@ -246,20 +256,21 @@ Game* Games::find(std::string_view name) const {
 }
 
 void Games::list() const {
-    chat_.notice("Games everyone in the chat can play:");
+    chat_.game_notice("Games everyone in the chat can play:");
     for (const auto& g : games_) {
         if (!g->listed()) {
             continue;
         }
-        chat_.notice(std::format("  {:<8} {}", g->name(), g->summary()));
+        chat_.game_notice(std::format("  {:<8} {}", g->name(), g->summary()));
     }
-    chat_.notice("  /game NAME        start one, like /game race");
-    chat_.notice("  /game help NAME   how to play one, and its commands");
-    chat_.notice("  /game scores      who won what in this session");
-    chat_.notice("  /game top [NAME]  the Elo leaderboard of all games, or of one (all: each of them); also "
-                 "/game leaderboard");
-    chat_.notice("  /game elo [NAME]  somebody's Elo ratings, yours without a name");
-    chat_.notice("  /game top coins   who has the most coins, won in the games (/coins: yours, /shop: what they buy)");
+    chat_.game_notice("  /game NAME        start one, like /game race");
+    chat_.game_notice("  /game help NAME   how to play one, and its commands");
+    chat_.game_notice("  /game scores      who won what in this session");
+    chat_.game_notice("  /game top [NAME]  the Elo leaderboard of all games, or of one (all: each of them); also "
+                      "/game leaderboard");
+    chat_.game_notice("  /game elo [NAME]  somebody's Elo ratings, yours without a name");
+    chat_.game_notice(
+        "  /game top coins   who has the most coins, won in the games (/coins: yours, /shop: what they buy)");
 }
 
 void Games::print_help(std::string_view name) const {
@@ -269,11 +280,11 @@ void Games::print_help(std::string_view name) const {
     }
     const Game* found = find(name);
     if (!found) {
-        chat_.notice(std::format("Unknown game {} (try /game)", text::sanitize(name, 32)));
+        chat_.game_notice(std::format("Unknown game {} (try /game)", text::sanitize(name, 32)));
         return;
     }
     const Game& game = *found;
-    chat_.notice(std::format("{}: {}", game.name(), game.summary()));
+    chat_.game_notice(std::format("{}: {}", game.name(), game.summary()));
     auto help = game.help();
     if (help.empty()) {
         help.push_back({"", "start a round"});
@@ -289,13 +300,13 @@ void Games::print_help(std::string_view name) const {
         }
     }
     for (std::size_t i = 0; i < help.size(); ++i) {
-        chat_.notice(std::format("  {:<{}}  {}", usages[i], width, help[i].what));
+        chat_.game_notice(std::format("  {:<{}}  {}", usages[i], width, help[i].what));
     }
 }
 
 void Games::print_scores() const {
     if (scores_.empty()) {
-        chat_.notice("Nobody has won a game yet: /game lists them.");
+        chat_.game_notice("Nobody has won a game yet: /game lists them.");
         return;
     }
     std::vector<const Score*> ranking;
@@ -303,13 +314,13 @@ void Games::print_scores() const {
         ranking.push_back(&score);
     }
     std::ranges::stable_sort(ranking, std::ranges::greater {}, &Score::total);
-    chat_.notice("Wins in this session:");
+    chat_.game_notice("Wins in this session:");
     for (const Score* score : ranking) {
         std::string games;
         for (const auto& [game, wins] : score->wins) {
             games += std::format("{}{} {}", games.empty() ? "" : ", ", game, wins);
         }
-        chat_.notice(std::format("  {} {} ({})", score->total, score->name, games));
+        chat_.game_notice(std::format("  {} {} ({})", score->total, score->name, games));
     }
 }
 

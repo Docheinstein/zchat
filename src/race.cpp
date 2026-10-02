@@ -16,11 +16,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <format>
 #include <optional>
 #include <random>
+#include <ranges>
 #include <vector>
 
 namespace zchat::game {
@@ -34,6 +36,8 @@ namespace {
     // From "ready" to "go": time to get the hands on the keyboard.
     constexpr auto countdown = 3s;
     constexpr auto answer_time = 30s;
+    // How long after a race the words typed late are still taken for a move of it (see Race::claims()).
+    constexpr auto claim_grace = 5s;
     // How much longer the players wait for the referee's result, before thinking it left.
     constexpr auto patience = 5s;
     constexpr std::size_t phrase_words = 3;
@@ -69,6 +73,14 @@ namespace {
         {'x', "\u0445"},
         {'y', "\u0443"},
     });
+
+    std::string lowercase(std::string_view s) {
+        std::string out(s);
+        std::ranges::transform(out, out.begin(), [](char c) {
+            return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        });
+        return out;
+    }
 
     // The text with the lookalike letters back to the Latin ones.
     std::string unswap(std::string_view text) {
@@ -134,9 +146,8 @@ namespace {
 
         void start() override {
             if (stage_ != Stage::Idle) {
-                chat_.notice(stage_ == Stage::Ready
-                                 ? "A race is about to start: get ready!"
-                                 : std::format("A race is on: type {}", bold(phrase_)));
+                chat_.game_notice(stage_ == Stage::Ready ? "A race is about to start: get ready!"
+                                                         : std::format("A race is on: type {}", bold(phrase_)));
                 return;
             }
             do {
@@ -223,14 +234,42 @@ namespace {
             stage_ = Stage::Idle;
         }
 
+        bool claims(std::uint64_t sender, std::string_view text) const override {
+            (void)sender;
+            // While the words are up, and a little after (for the late ones): what looks like them, typos and all.
+            if (phrase_.empty() || clock::now() > shown_ + answer_time + claim_grace) {
+                return false;
+            }
+            const auto words_of = [](std::string_view s) {
+                const std::string clean = lowercase(unswap(s));
+                std::vector<std::string> out;
+                for (const auto word : std::views::split(clean, ' ')) {
+                    if (!std::ranges::empty(word)) {
+                        out.emplace_back(std::ranges::begin(word), std::ranges::end(word));
+                    }
+                }
+                return out;
+            };
+            const auto typed = words_of(text);
+            const auto shown = words_of(phrase_);
+            if (typed.size() != shown.size()) {
+                return false;
+            }
+            std::size_t same = 0;
+            for (std::size_t i = 0; i < typed.size(); ++i) {
+                same += typed[i] == shown[i] ? 1 : 0;
+            }
+            return same * 2 >= shown.size();
+        }
+
         void tick() override {
             if (stage_ == Stage::Idle || clock::now() < deadline_) {
                 return;
             }
             if (!referee_) {
-                chat_.notice(std::format("The race started by {} ended without a result: they may have "
-                                         "left.",
-                                         referee_name_));
+                chat_.game_notice(std::format("The race started by {} ended without a result: they may have "
+                                              "left.",
+                                              referee_name_));
                 stage_ = Stage::Idle;
             } else if (stage_ == Stage::Ready) {
                 make_phrase();
@@ -301,20 +340,22 @@ namespace {
         }
 
         void announce_ready() {
-            chat_.notice(std::format("⌨️  Typing race, started by {}! Some words show up in {} seconds: the first to "
-                                     "type them exactly wins.",
-                                     referee_name_, countdown.count()));
+            chat_.game_notice(
+                std::format("⌨️  Typing race, started by {}! Some words show up in {} seconds: the first to "
+                            "type them exactly wins.",
+                            referee_name_, countdown.count()));
         }
 
         void announce_go() {
-            chat_.notice(std::format("GO! Type: {}", bold(phrase_)));
+            shown_ = clock::now();
+            chat_.game_notice(std::format("GO! Type: {}", bold(phrase_)));
         }
 
         void announce_win(std::uint64_t id, std::string_view name, std::chrono::milliseconds time) {
             const int wins = games_.add_win(game_name, id, name);
-            chat_.notice(std::format("🏆 {} wins the race in {:.1f} seconds!{}", chat_.colored_name(id, name),
-                                     static_cast<double>(time.count()) / 1000,
-                                     wins > 1 ? std::format(" That's {} wins.", wins) : ""));
+            chat_.game_notice(std::format("🏆 {} wins the race in {:.1f} seconds!{}", chat_.colored_name(id, name),
+                                          static_cast<double>(time.count()) / 1000,
+                                          wins > 1 ? std::format(" That's {} wins.", wins) : ""));
             // The winner first, then everybody else who typed, tied.
             std::vector<Placing> placings {{id, std::string(name), 0}};
             for (const Placing& p : racers_) {
@@ -327,12 +368,12 @@ namespace {
         }
 
         void announce_paste(std::uint64_t id, std::string_view name) {
-            chat_.notice(std::format("📋 {} pasted the words instead of typing them: out of this round!",
-                                     chat_.colored_name(id, name)));
+            chat_.game_notice(std::format("📋 {} pasted the words instead of typing them: out of this round!",
+                                          chat_.colored_name(id, name)));
         }
 
         void announce_none() {
-            chat_.notice(std::format("⏰ Time's up! Nobody typed {}", bold(phrase_)));
+            chat_.game_notice(std::format("⏰ Time's up! Nobody typed {}", bold(phrase_)));
         }
 
         Chat& chat_;
@@ -356,6 +397,8 @@ namespace {
         clock::time_point deadline_;
         // When the phrase showed up, for the referee.
         clock::time_point started_;
+        // When we showed the phrase, for claims().
+        clock::time_point shown_;
     };
 
 } // namespace

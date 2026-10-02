@@ -42,6 +42,9 @@ public:
     void set_avatars(std::function<std::optional<std::string>(std::string_view hash)> source) override;
     void set_channels(std::function<std::vector<ChannelItem>()> source) override;
     void set_channel_people(std::function<ChannelPeople(std::string_view channel)> source) override;
+    bool games_apart() const override {
+        return true;
+    }
     bool clear() override;
     bool show_game(std::string_view game, std::string_view state) override;
     void set_rewriter(std::function<std::optional<std::string>(std::string_view)> rewriter) override;

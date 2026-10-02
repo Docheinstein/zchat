@@ -200,7 +200,7 @@ namespace {
                                             signed_change(shown(r.rating) - shown(before[i].rating)));
                 }
             }
-            chat_.notice(std::format("📈 Elo in {}: {}. In all games: {}.", game, lines[0], lines[1]));
+            chat_.game_notice(std::format("📈 Elo in {}: {}. In all games: {}.", game, lines[0], lines[1]));
             pay(players, places);
             if (us) {
                 config::set("elo", elo::encode(own_));
@@ -215,16 +215,16 @@ namespace {
             name = trimmed(name);
             const auto found = find_person(name);
             if (!found) {
-                chat_.notice(std::format("Nobody called {} has coins: /coins top lists who has.", name));
+                chat_.game_notice(std::format("Nobody called {} has coins: /coins top lists who has.", name));
             } else if (found->us) {
-                chat_.notice(std::format("💰 You have {}. /shop: what they buy; win rounds of /game to earn more.",
-                                         plural(coins_, "coin")));
+                chat_.game_notice(std::format("💰 You have {}. /shop: what they buy; win rounds of /game to earn more.",
+                                              plural(coins_, "coin")));
             } else if (found->coins) {
-                chat_.notice(std::format("💰 {} has {}.", found->name, plural(*found->coins, "coin")));
+                chat_.game_notice(std::format("💰 {} has {}.", found->name, plural(*found->coins, "coin")));
             } else {
-                chat_.notice(std::format("{} has no coins: their zchat is from before coins (/update gets the "
-                                         "latest).",
-                                         found->name));
+                chat_.game_notice(std::format("{} has no coins: their zchat is from before coins (/update gets the "
+                                              "latest).",
+                                              found->name));
             }
         }
 
@@ -241,10 +241,10 @@ namespace {
                 }
             }
             std::ranges::stable_sort(rows, std::ranges::greater {}, &Rich::coins);
-            chat_.notice("💰 Who has the most coins:");
+            chat_.game_notice("💰 Who has the most coins:");
             const auto line = [&](std::size_t i) {
-                chat_.notice(std::format("  {:>2}. {:>6} {}{}", i + 1, rows[i].coins, rows[i].name,
-                                         rows[i].us ? " (you)" : ""));
+                chat_.game_notice(
+                    std::format("  {:>2}. {:>6} {}{}", i + 1, rows[i].coins, rows[i].name, rows[i].us ? " (you)" : ""));
             };
             for (std::size_t i = 0; i < rows.size() && i < board_size; ++i) {
                 line(i);
@@ -253,23 +253,24 @@ namespace {
             if (const auto us = std::ranges::find(rows, true, &Rich::us);
                 us - rows.begin() >= static_cast<std::ptrdiff_t>(board_size)) {
                 if (us - rows.begin() > static_cast<std::ptrdiff_t>(board_size)) {
-                    chat_.notice("  ...");
+                    chat_.game_notice("  ...");
                 }
                 line(static_cast<std::size_t>(us - rows.begin()));
             }
             if (rows.size() > board_size) {
-                chat_.notice(std::format("  ({} with coins in all)", rows.size()));
+                chat_.game_notice(std::format("  ({} with coins in all)", rows.size()));
             }
         }
 
         void shop() override {
-            chat_.notice(std::format("🛒 What coins buy (you have {}):", plural(coins_, "coin")));
+            chat_.game_notice(std::format("🛒 What coins buy (you have {}):", plural(coins_, "coin")));
             for (const coins::Item& item : coins::items) {
-                chat_.notice(std::format("  {:>3}  {}", item.price, item.what));
+                chat_.game_notice(std::format("  {:>3}  {}", item.price, item.what));
             }
-            chat_.notice(std::format("  Win rounds of /game to earn more: {} for playing, and {} more for each player "
-                                     "you beat ({} for a tie).",
-                                     plural(coins::for_playing, "coin"), coins::per_beaten, coins::per_tie));
+            chat_.game_notice(
+                std::format("  Win rounds of /game to earn more: {} for playing, and {} more for each player "
+                            "you beat ({} for a tie).",
+                            plural(coins::for_playing, "coin"), coins::per_beaten, coins::per_tie));
         }
 
         bool spend(std::string_view item) override {
@@ -294,9 +295,9 @@ namespace {
 
         bool stake(long long amount, std::string_view what) override {
             if (coins_ < amount) {
-                chat_.notice(std::format("💸 You have {}, not enough to bet {} at {}: win rounds of /game to earn "
-                                         "more.",
-                                         plural(coins_, "coin"), amount, what));
+                chat_.game_notice(std::format("💸 You have {}, not enough to bet {} at {}: win rounds of /game to earn "
+                                              "more.",
+                                              plural(coins_, "coin"), amount, what));
                 return false;
             }
             coins_ -= amount;
@@ -324,14 +325,15 @@ namespace {
                     }
                 }
                 if (!any) {
-                    chat_.notice("Nobody has an Elo rating yet: play a game (see /game), and win!");
+                    chat_.game_notice("Nobody has an Elo rating yet: play a game (see /game), and win!");
                 }
             } else if (std::ranges::find(rated_, game) != rated_.end()) {
                 show_board(game, board_size);
             } else {
-                chat_.notice(std::format("No Elo leaderboard for {}: there is one for {}, all of them, and all games "
-                                         "together (/game leaderboard).",
-                                         game, list_games()));
+                chat_.game_notice(
+                    std::format("No Elo leaderboard for {}: there is one for {}, all of them, and all games "
+                                "together (/game leaderboard).",
+                                game, list_games()));
             }
         }
 
@@ -339,7 +341,7 @@ namespace {
             name = trimmed(name);
             const auto found = find_person(name);
             if (!found) {
-                chat_.notice(
+                chat_.game_notice(
                     std::format("Nobody called {} has an Elo rating: /game leaderboard lists who has one.", name));
                 return;
             }
@@ -359,17 +361,17 @@ namespace {
                                             plural(it->second.games, "game")));
             }
             if (lines.empty()) {
-                chat_.notice(std::format("{} has not played a rated game yet.", shown_name));
+                chat_.game_notice(std::format("{} has not played a rated game yet.", shown_name));
                 return;
             }
-            chat_.notice(std::format("📊 Elo ratings of {}:", shown_name));
+            chat_.game_notice(std::format("📊 Elo ratings of {}:", shown_name));
             for (const std::string& line : lines) {
-                chat_.notice(line);
+                chat_.game_notice(line);
             }
             if (std::ranges::any_of(*ratings, [](const auto& r) {
                     return r.second.games > 0 && r.second.games < elo::provisional_games;
                 })) {
-                chat_.notice(std::format("  ? fewer than {} games: still settling", elo::provisional_games));
+                chat_.game_notice(std::format("  ? fewer than {} games: still settling", elo::provisional_games));
             }
         }
 
@@ -423,7 +425,7 @@ namespace {
                                     chat_.colored_name(players[i].id, players[i].name), payouts[i],
                                     balance ? std::format(" ({})", *balance) : "");
             }
-            chat_.notice(std::format("💰 Coins: {}.", line));
+            chat_.game_notice(std::format("💰 Coins: {}.", line));
         }
 
         // Somebody's coins, as they tell them.
@@ -534,17 +536,17 @@ namespace {
             const auto rows = board(kind);
             const std::string what = kind == elo::general ? std::string("all games") : std::string(kind);
             if (rows.empty()) {
-                chat_.notice(std::format("Nobody has an Elo rating in {} yet.", what));
+                chat_.game_notice(std::format("Nobody has an Elo rating in {} yet.", what));
                 return;
             }
-            chat_.notice(std::format("🏆 Elo leaderboard, {}:", what));
+            chat_.game_notice(std::format("🏆 Elo leaderboard, {}:", what));
             bool provisional = false;
             const auto line = [&](std::size_t i) {
                 const Row& row = rows[i];
                 provisional = provisional || row.rating.games < elo::provisional_games;
-                chat_.notice(std::format("  {:>2}. {:>4}{} {}{} · {}", i + 1, shown(row.rating.rating),
-                                         mark(row.rating), row.name, row.us ? " (you)" : "",
-                                         plural(row.rating.games, "game")));
+                chat_.game_notice(std::format("  {:>2}. {:>4}{} {}{} · {}", i + 1, shown(row.rating.rating),
+                                              mark(row.rating), row.name, row.us ? " (you)" : "",
+                                              plural(row.rating.games, "game")));
             };
             for (std::size_t i = 0; i < rows.size() && i < size; ++i) {
                 line(i);
@@ -553,15 +555,15 @@ namespace {
             if (const auto us = std::ranges::find(rows, true, &Row::us);
                 us != rows.end() && us - rows.begin() >= static_cast<std::ptrdiff_t>(size)) {
                 if (us - rows.begin() > static_cast<std::ptrdiff_t>(size)) {
-                    chat_.notice("  ...");
+                    chat_.game_notice("  ...");
                 }
                 line(static_cast<std::size_t>(us - rows.begin()));
             }
             if (rows.size() > size) {
-                chat_.notice(std::format("  ({} rated in all)", rows.size()));
+                chat_.game_notice(std::format("  ({} rated in all)", rows.size()));
             }
             if (provisional) {
-                chat_.notice(std::format("  ? fewer than {} games: still settling", elo::provisional_games));
+                chat_.game_notice(std::format("  ? fewer than {} games: still settling", elo::provisional_games));
             }
         }
 

@@ -12,6 +12,10 @@ namespace zchat::channel {
 // the plain Message packets older versions know.
 inline constexpr std::string_view general = "general";
 
+// Where a window shows what the games say, so the chat stays a chat (see Screen::games_apart()). Not a Channel
+// either: each zchat has its own, as the games' lines are its own, and nobody can create one called so.
+inline constexpr std::string_view games_log = "games-log";
+
 inline constexpr std::size_t max_name = 32;
 inline constexpr std::size_t max_members = 48;
 

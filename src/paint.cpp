@@ -205,18 +205,19 @@ namespace {
         void start() override {
             if (!open_) {
                 open_ = true;
-                chat_.notice("🎨 The shared canvas: /game paint c7 red colors a square, /game paint c7-f9 blue a "
-                             "rectangle, /game paint c7 none empties it, /game paint undo takes back your last change.");
-                chat_.notice(std::format("   Without a color, /game paint c7 uses your brush, now {}: /game paint "
-                                         "color red changes it.",
-                                         colors[brush()].name));
+                chat_.game_notice(
+                    "🎨 The shared canvas: /game paint c7 red colors a square, /game paint c7-f9 blue a "
+                    "rectangle, /game paint c7 none empties it, /game paint undo takes back your last change.");
+                chat_.game_notice(std::format("   Without a color, /game paint c7 uses your brush, now {}: /game paint "
+                                              "color red changes it.",
+                                              colors[brush()].name));
                 std::string names;
                 for (std::size_t i = 1; i < colors.size(); ++i) {
                     names += std::format("{}{}", names.empty() ? "" : ", ", colors[i].name);
                 }
-                chat_.notice(std::format("   Colors: {} (or any color, like #ff8800: the closest is used). Each "
-                                         "square painted takes a second before the next change.",
-                                         names));
+                chat_.game_notice(std::format("   Colors: {} (or any color, like #ff8800: the closest is used). Each "
+                                              "square painted takes a second before the next change.",
+                                              names));
                 // Catch up with the others right away, rather than at their next sum.
                 send_sum();
             }
@@ -295,7 +296,7 @@ namespace {
             }
             const auto color = rest.empty() ? std::optional(brush()) : parse_canvas_color(rest);
             if (!color) {
-                chat_.notice(std::format("Unknown color {}: try red, #ff8800 or none", rest));
+                chat_.game_notice(std::format("Unknown color {}: try red, #ff8800 or none", rest));
                 return true;
             }
             paint(*rect, *color);
@@ -337,21 +338,21 @@ namespace {
         void pick_brush(std::string_view name) {
             if (name.empty()) {
                 const std::uint8_t color = brush();
-                chat_.notice(color == 0 ? std::string("🎨 Your brush empties squares: /game paint color red changes it.")
-                                        : std::format("🎨 Your brush is {}{}: /game paint color red changes it.",
-                                                      colors[color].name,
-                                                      brush_ ? "" : ", the closest to your name color"));
+                chat_.game_notice(
+                    color == 0 ? std::string("🎨 Your brush empties squares: /game paint color red changes it.")
+                               : std::format("🎨 Your brush is {}{}: /game paint color red changes it.",
+                                             colors[color].name, brush_ ? "" : ", the closest to your name color"));
                 return;
             }
             const auto color = parse_canvas_color(name);
             if (!color) {
-                chat_.notice(std::format("Unknown color {}: try red, #ff8800 or none", name));
+                chat_.game_notice(std::format("Unknown color {}: try red, #ff8800 or none", name));
                 return;
             }
             brush_ = *color;
-            chat_.notice(*color == 0 ? std::string("🎨 Your brush now empties squares: /game paint c7 erases c7.")
-                                     : std::format("🎨 Your brush is now {}: /game paint c7 paints c7 {}.",
-                                                   colors[*color].name, colors[*color].name));
+            chat_.game_notice(*color == 0 ? std::string("🎨 Your brush now empties squares: /game paint c7 erases c7.")
+                                          : std::format("🎨 Your brush is now {}: /game paint c7 paints c7 {}.",
+                                                        colors[*color].name, colors[*color].name));
         }
 
         static bool newer(const Cell& a, const Cell& b) {
@@ -410,7 +411,8 @@ namespace {
                 draw(std::format("🎨 {} {}", colored, what));
             } else if (!invited_) {
                 invited_ = true;
-                chat_.notice(std::format("🎨 {} is painting on the shared canvas: /game paint shows it.", colored));
+                chat_.game_notice(
+                    std::format("🎨 {} is painting on the shared canvas: /game paint shows it.", colored));
             }
         }
 
@@ -418,7 +420,7 @@ namespace {
             const auto now = clock::now();
             if (now < next_paint_) {
                 const auto wait = std::chrono::ceil<std::chrono::seconds>(next_paint_ - now);
-                chat_.notice(std::format("🎨 Wait {} more to paint again.", plural(wait.count(), "second")));
+                chat_.game_notice(std::format("🎨 Wait {} more to paint again.", plural(wait.count(), "second")));
                 return;
             }
             open_ = true;
@@ -443,7 +445,7 @@ namespace {
 
         void undo() {
             if (undo_.empty()) {
-                chat_.notice("🎨 You have no change to take back.");
+                chat_.game_notice("🎨 You have no change to take back.");
                 return;
             }
             const std::vector<Previous> previous = std::move(undo_.back());
@@ -459,7 +461,7 @@ namespace {
                 }
             }
             if (fixes.empty()) {
-                chat_.notice("🎨 Those squares have all been painted over since: nothing to take back.");
+                chat_.game_notice("🎨 Those squares have all been painted over since: nothing to take back.");
                 return;
             }
             for (const auto& [index, cell] : fixes) {
@@ -520,7 +522,7 @@ namespace {
             const bool painted = std::ranges::any_of(board_, [](const Cell& c) {
                 return c.color != 0;
             });
-            chat_.notice(painted ? header + ":" : header + ", still empty:");
+            chat_.game_notice(painted ? header + ":" : header + ", still empty:");
 
             // Every square is two characters wide, which makes it about square in most fonts.
             const bool vt = terminal_.colors();
@@ -548,7 +550,7 @@ namespace {
                 }
                 out += "\n        " + legend;
             }
-            terminal_.print(out);
+            chat_.game_print(out);
         }
 
         void send(std::string_view event) {

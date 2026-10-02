@@ -67,15 +67,15 @@ namespace {
                 return;
             }
             if (!live()) {
-                chat_.notice(std::format("🎡 The roulette is free: /casino roulette bet N WHAT spins it.{}",
-                                         history_.empty() ? "" : " Last numbers: " + history_text()));
+                chat_.game_notice(std::format("🎡 The roulette is free: /casino roulette bet N WHAT spins it.{}",
+                                              history_.empty() ? "" : " Last numbers: " + history_text()));
                 return;
             }
-            chat_.notice(std::format("🎡 Roulette, spun by {} in {} seconds{}", colored(dealer_),
-                                     seconds_left(deadline_), bets_.empty() ? "." : ":"));
+            chat_.game_notice(std::format("🎡 Roulette, spun by {} in {} seconds{}", colored(dealer_),
+                                          seconds_left(deadline_), bets_.empty() ? "." : ":"));
             for (const Bet& b : bets_) {
-                chat_.notice(std::format("   {}: {} on {}", colored(b.id), plural(b.amount, "coin"),
-                                         rl::describe(b.bet)));
+                chat_.game_notice(
+                    std::format("   {}: {} on {}", colored(b.id), plural(b.amount, "coin"), rl::describe(b.bet)));
             }
         }
 
@@ -85,8 +85,8 @@ namespace {
                 const std::string_view coins = next_field(args);
                 const auto bet = rl::parse(args);
                 if (!bet) {
-                    chat_.notice("🎡 Bet on a number (0 to 36), red, black, odd, even, low, high, 1st, 2nd, 3rd "
-                                 "(dozens) or col1, col2, col3: like /casino roulette bet 10 red.");
+                    chat_.game_notice("🎡 Bet on a number (0 to 36), red, black, odd, even, low, high, 1st, 2nd, 3rd "
+                                      "(dozens) or col1, col2, col3: like /casino roulette bet 10 red.");
                     return true;
                 }
                 if (const auto n = amount(coins)) {
@@ -124,8 +124,8 @@ namespace {
                 if (coins && *coins >= casino::min_bet && *coins <= casino::max_bet && bet &&
                     static_cast<std::size_t>(count) < rl::most_bets) {
                     bets_.push_back({sender, *bet, static_cast<long long>(*coins)});
-                    chat_.notice(std::format("🎡 {} bets {} on {}.", colored(sender), plural(*coins, "coin"),
-                                             rl::describe(*bet)));
+                    chat_.game_notice(std::format("🎡 {} bets {} on {}.", colored(sender), plural(*coins, "coin"),
+                                                  rl::describe(*bet)));
                     publish();
                 }
             } else if (event == "ready" && phase_ == 'b') {
@@ -157,7 +157,7 @@ namespace {
                 send(std::format("spin {:x} {}", round_, number_));
             }
             if (live() && !dealing_ && now >= heard_at_ + patience) {
-                chat_.notice(std::format("🎡 The roulette's croupier, {}, is gone: no spin.", colored(dealer_)));
+                chat_.game_notice(std::format("🎡 The roulette's croupier, {}, is gone: no spin.", colored(dealer_)));
                 give_back();
                 round_ = 0;
                 bets_.clear();
@@ -189,11 +189,11 @@ namespace {
 
         void place(long long coins, const std::string& bet) {
             if (round_ != 0 && phase_ == 's') {
-                chat_.notice("🎡 The wheel is turning: wait for the next spin.");
+                chat_.game_notice("🎡 The wheel is turning: wait for the next spin.");
                 return;
             }
             if (live() && static_cast<std::size_t>(std::ranges::count(bets_, chat_.id(), &Bet::id)) >= rl::most_bets) {
-                chat_.notice(std::format("🎡 That is {} bets already: enough for one spin.", rl::most_bets));
+                chat_.game_notice(std::format("🎡 That is {} bets already: enough for one spin.", rl::most_bets));
                 return;
             }
             if (!games_.stake(coins, game_name)) {
@@ -211,20 +211,21 @@ namespace {
                 staked_ = 0;
                 deadline_ = clock::now() + bet_time;
                 tell();
-                chat_.notice(std::format("🎡 You open the roulette: the others have {} seconds to bet too (/casino "
-                                         "roulette bet N WHAT), or /casino roulette spin spins it now.",
-                                         bet_time.count()));
+                chat_.game_notice(
+                    std::format("🎡 You open the roulette: the others have {} seconds to bet too (/casino "
+                                "roulette bet N WHAT), or /casino roulette spin spins it now.",
+                                bet_time.count()));
             }
             staked_ += coins;
             bets_.push_back({chat_.id(), bet, coins});
             send(std::format("bet {:x} {} {}", round_, coins, bet));
-            chat_.notice(std::format("🎡 You bet {} on {}.", plural(coins, "coin"), rl::describe(bet)));
+            chat_.game_notice(std::format("🎡 You bet {} on {}.", plural(coins, "coin"), rl::describe(bet)));
             publish();
         }
 
         void ready() {
             if (!live() || std::ranges::find(bets_, chat_.id(), &Bet::id) == bets_.end()) {
-                chat_.notice("🎡 You have no bets on the wheel: /casino roulette bet N WHAT first.");
+                chat_.game_notice("🎡 You have no bets on the wheel: /casino roulette bet N WHAT first.");
                 return;
             }
             ready_.insert(chat_.id());
@@ -268,8 +269,8 @@ namespace {
                     return;
                 }
                 if (live() && staked_ > 0) {
-                    chat_.notice(std::format("🎡 Two roulettes opened at once: {}'s is the one. Bet again there.",
-                                             colored(sender)));
+                    chat_.game_notice(std::format("🎡 Two roulettes opened at once: {}'s is the one. Bet again there.",
+                                                  colored(sender)));
                 }
                 if (live()) {
                     give_back();
@@ -285,9 +286,10 @@ namespace {
                 bets_.clear();
                 ready_.clear();
                 staked_ = 0;
-                chat_.notice(std::format("🎡 {} opens the roulette: /casino roulette bet N WHAT to bet too, /casino "
-                                         "to see it.",
-                                         colored(sender)));
+                chat_.game_notice(
+                    std::format("🎡 {} opens the roulette: /casino roulette bet N WHAT to bet too, /casino "
+                                "to see it.",
+                                colored(sender)));
             } else if (sender != dealer_ || dealing_ || phase_ != 'b') {
                 return;
             }
@@ -334,10 +336,10 @@ namespace {
                 results += std::format("{}{} {}", results.empty() ? "" : " · ", who(id, results.empty()),
                                        net_text(theirs - staked, staked, id == chat_.id()));
             }
-            chat_.notice(std::format("🎡 {}! {}", number_text(number_), results));
+            chat_.game_notice(std::format("🎡 {}! {}", number_text(number_), results));
             if (staked_ > 0) {
                 games_.cash(back);
-                chat_.notice(std::format("💰 You {} at roulette.", net_text(back - staked_, staked_)));
+                chat_.game_notice(std::format("💰 You {} at roulette.", net_text(back - staked_, staked_)));
             }
             staked_ = 0;
             publish();
@@ -346,7 +348,7 @@ namespace {
         void give_back() {
             if (staked_ > 0) {
                 games_.cash(staked_);
-                chat_.notice(std::format("🎡 Your {} at roulette are back.", plural(staked_, "coin")));
+                chat_.game_notice(std::format("🎡 Your {} at roulette are back.", plural(staked_, "coin")));
             }
             staked_ = 0;
         }

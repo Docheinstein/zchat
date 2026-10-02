@@ -77,6 +77,12 @@ public:
         return false;
     }
 
+    // Whether what the games say is kept apart from the chat, in a channel of its own (see channel::games_log), as a
+    // window does; or else shown in the chat, as a terminal does.
+    virtual bool games_apart() const {
+        return false;
+    }
+
     // Empties what is shown (another channel is joined), where it can: returns false where it cannot (a terminal).
     // Thread-safe.
     virtual bool clear() {

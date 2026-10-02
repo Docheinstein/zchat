@@ -273,22 +273,23 @@ namespace {
                 show(*b, true);
                 return;
             }
-            chat_.notice(
+            chat_.game_notice(
                 "⚔ Pokémon battles, as on Pokémon Showdown (Random Battles): /game pokemon challenge NAME "
                 "challenges someone in the chat, who answers with /game pokemon accept.");
-            chat_.notice("   Gen 9 unless you say another: /game pokemon challenge NAME gen3 (gen1 to gen9).");
-            chat_.notice("   One of you needs Node.js (nodejs.org): Pokémon Showdown is installed with it, the first "
-                         "time, which takes a minute.");
+            chat_.game_notice("   Gen 9 unless you say another: /game pokemon challenge NAME gen3 (gen1 to gen9).");
+            chat_.game_notice(
+                "   One of you needs Node.js (nodejs.org): Pokémon Showdown is installed with it, the first "
+                "time, which takes a minute.");
             bool any = false;
             for (const auto& [id, b] : battles_) {
                 if (!b.over) {
-                    chat_.notice(std::format("   Going on: {} vs {} ({}), /game pokemon watch {} to watch it",
-                                             b.names[0], b.names[1], format_name(b.gen), b.names[0]));
+                    chat_.game_notice(std::format("   Going on: {} vs {} ({}), /game pokemon watch {} to watch it",
+                                                  b.names[0], b.names[1], format_name(b.gen), b.names[0]));
                     any = true;
                 }
             }
             if (!any) {
-                chat_.notice("   No battle is going on now.");
+                chat_.game_notice("   No battle is going on now.");
             }
         }
 
@@ -340,8 +341,8 @@ namespace {
             } else if (event == "cancel") {
                 std::erase_if(challenges_, [&](const Challenge& c) {
                     if (c.battle == *id && !c.ours && c.from == sender) {
-                        chat_.notice(std::format("⚔ {} called off the battle: {}", chat_.colored_name(sender, name),
-                                                 text::sanitize(text, 200)));
+                        chat_.game_notice(std::format("⚔ {} called off the battle: {}",
+                                                      chat_.colored_name(sender, name), text::sanitize(text, 200)));
                         return true;
                     }
                     return false;
@@ -365,7 +366,7 @@ namespace {
                     return false;
                 }
                 if (c.ours && !c.accepted) {
-                    chat_.notice(std::format("⚔ {} did not answer your challenge.", c.colored_name));
+                    chat_.game_notice(std::format("⚔ {} did not answer your challenge.", c.colored_name));
                 }
                 return true;
             });
@@ -385,9 +386,9 @@ namespace {
             }
             if (updating_ && engine_.status() != pokemon::Engine::Status::Installing) {
                 updating_ = false;
-                chat_.notice(engine_.status() == pokemon::Engine::Status::Ready
-                                 ? std::string("📦 Pokémon Showdown is up to date.")
-                                 : std::format("Pokémon Showdown could not be updated: {}", engine_.failure()));
+                chat_.game_notice(engine_.status() == pokemon::Engine::Status::Ready
+                                      ? std::string("📦 Pokémon Showdown is up to date.")
+                                      : std::format("Pokémon Showdown could not be updated: {}", engine_.failure()));
             }
             std::erase_if(battles_, [&](const auto& entry) {
                 const Battle& b = entry.second;
@@ -505,16 +506,16 @@ namespace {
                 gen = typed_gen(who.substr(0, first));
                 who = trim(who.substr(first + 1));
             } else if (typed_gen(who)) {
-                chat_.notice("Who? /game pokemon challenge NAME gen3 (/who lists the people in the chat).");
+                chat_.game_notice("Who? /game pokemon challenge NAME gen3 (/who lists the people in the chat).");
                 return;
             }
             who = person(who);
             if (who.empty()) {
-                chat_.notice("Who? /game pokemon challenge NAME (/who lists the people in the chat).");
+                chat_.game_notice("Who? /game pokemon challenge NAME (/who lists the people in the chat).");
                 return;
             }
             if (own_battle()) {
-                chat_.notice("Finish your battle first (or /game pokemon forfeit).");
+                chat_.game_notice("Finish your battle first (or /game pokemon forfeit).");
                 return;
             }
             std::string target;
@@ -525,7 +526,7 @@ namespace {
                 }
             }
             if (target.empty()) {
-                chat_.notice(
+                chat_.game_notice(
                     std::format("Nobody called {} is in the chat (/who lists them).", text::sanitize(who, 48)));
                 return;
             }
@@ -536,10 +537,10 @@ namespace {
             } while (battle == 0);
             challenges_.push_back({battle, 0, target, target, true, node, false, clock::now(), gen});
             send(std::format("challenge {:x} {} {} {}", battle, node ? 1 : 0, format_id(gen), target));
-            chat_.notice(std::format("⚔ You challenge {} to a Pokémon battle ({}): waiting for an answer…", target,
-                                     format_name(gen)));
+            chat_.game_notice(std::format("⚔ You challenge {} to a Pokémon battle ({}): waiting for an answer…", target,
+                                          format_name(gen)));
             if (!node) {
-                chat_.notice(
+                chat_.game_notice(
                     "   You do not have Node.js: the battle can only happen if they have it (or install it from "
                     "nodejs.org).");
             }
@@ -563,9 +564,9 @@ namespace {
             const std::string colored = chat_.colored_name(sender, name);
             challenges_.push_back(
                 {battle, sender, std::string(name), colored, false, node == "1", false, clock::now(), gen});
-            chat_.notice(std::format("⚔ {} challenges you to a Pokémon battle ({})! /game pokemon accept, or "
-                                     "/game pokemon decline",
-                                     colored, format_name(gen)));
+            chat_.game_notice(std::format("⚔ {} challenges you to a Pokémon battle ({})! /game pokemon accept, or "
+                                          "/game pokemon decline",
+                                          colored, format_name(gen)));
             terminal_.bell();
         }
 
@@ -610,18 +611,20 @@ namespace {
         void accept(const std::string& who) {
             Challenge* c = incoming(who);
             if (!c) {
-                chat_.notice(who.empty() ? "Nobody challenged you (lately)."
-                                         : std::format("{} did not challenge you (lately).", text::sanitize(who, 48)));
+                chat_.game_notice(who.empty()
+                                      ? "Nobody challenged you (lately)."
+                                      : std::format("{} did not challenge you (lately).", text::sanitize(who, 48)));
                 return;
             }
             if (own_battle()) {
-                chat_.notice("Finish your battle first (or /game pokemon forfeit).");
+                chat_.game_notice("Finish your battle first (or /game pokemon forfeit).");
                 return;
             }
             const bool node = engine_.has_node();
             if (!node && !c->node) {
-                chat_.notice("Neither of you has Node.js, which Pokémon Showdown needs: one of you can install it from "
-                             "nodejs.org, then challenge again.");
+                chat_.game_notice(
+                    "Neither of you has Node.js, which Pokémon Showdown needs: one of you can install it from "
+                    "nodejs.org, then challenge again.");
                 send(std::format("decline {:x}", c->battle));
                 std::erase_if(challenges_, [&](const Challenge& x) {
                     return &x == c;
@@ -631,17 +634,17 @@ namespace {
             c->accepted = true;
             c->at = clock::now();
             send(std::format("accept {:x} {}", c->battle, node ? 1 : 0));
-            chat_.notice(std::format("⚔ You accept {}'s challenge: the battle is starting…", c->colored_name));
+            chat_.game_notice(std::format("⚔ You accept {}'s challenge: the battle is starting…", c->colored_name));
         }
 
         void decline(const std::string& who) {
             Challenge* c = incoming(who);
             if (!c) {
-                chat_.notice("Nobody challenged you (lately).");
+                chat_.game_notice("Nobody challenged you (lately).");
                 return;
             }
             send(std::format("decline {:x}", c->battle));
-            chat_.notice(std::format("You decline {}'s challenge.", c->colored_name));
+            chat_.game_notice(std::format("You decline {}'s challenge.", c->colored_name));
             std::erase_if(challenges_, [&](const Challenge& x) {
                 return &x == c;
             });
@@ -664,8 +667,9 @@ namespace {
             const bool node = engine_.has_node();
             if (!node && !their_node) {
                 send(std::format("cancel {:x} neither of you has Node.js", battle));
-                chat_.notice("Neither of you has Node.js, which Pokémon Showdown needs: one of you can install it from "
-                             "nodejs.org, then challenge again.");
+                chat_.game_notice(
+                    "Neither of you has Node.js, which Pokémon Showdown needs: one of you can install it from "
+                    "nodejs.org, then challenge again.");
                 return;
             }
             // We run the battle when we can.
@@ -680,7 +684,7 @@ namespace {
         void receive_decline(std::uint64_t sender, std::string_view name, std::uint64_t battle) {
             std::erase_if(challenges_, [&](const Challenge& c) {
                 if (c.battle == battle && c.ours && lowercase(c.name) == lowercase(name)) {
-                    chat_.notice(std::format("⚔ {} declined your challenge.", chat_.colored_name(sender, name)));
+                    chat_.game_notice(std::format("⚔ {} declined your challenge.", chat_.colored_name(sender, name)));
                     return true;
                 }
                 return false;
@@ -718,13 +722,13 @@ namespace {
                 std::format("{} vs {}", chat_.colored_name(ids[0], names[0]), chat_.colored_name(ids[1], names[1]));
             const int us = ids[0] == chat_.id() ? 0 : ids[1] == chat_.id() ? 1 : -1;
             if (us < 0) {
-                chat_.notice(std::format("⚔ A Pokémon battle starts ({}): {}! /game pokemon watch {} to watch it.",
-                                         format_name(gen), vs, names[0]));
+                chat_.game_notice(std::format("⚔ A Pokémon battle starts ({}): {}! /game pokemon watch {} to watch it.",
+                                              format_name(gen), vs, names[0]));
                 return;
             }
             b.side = side_name(us);
             b.view.emplace(b.side);
-            chat_.notice(std::format("⚔ Your Pokémon battle starts ({}): {}! Good luck.", format_name(gen), vs));
+            chat_.game_notice(std::format("⚔ Your Pokémon battle starts ({}): {}! Good luck.", format_name(gen), vs));
             terminal_.bell();
             if (referee == chat_.id()) {
                 b.referee = std::make_unique<Referee>();
@@ -753,14 +757,14 @@ namespace {
         void choose(const std::string& typed) {
             Battle* b = own_battle();
             if (!b) {
-                chat_.notice("You are not in a Pokémon battle: /game pokemon challenge NAME starts one.");
+                chat_.game_notice("You are not in a Pokémon battle: /game pokemon challenge NAME starts one.");
                 return;
             }
             std::string error;
             const int rqid = b->view->rqid();
             const auto choice = b->view->parse_choice(typed, error);
             if (!choice) {
-                chat_.notice(error.empty() ? std::string("You cannot do that now.") : error);
+                chat_.game_notice(error.empty() ? std::string("You cannot do that now.") : error);
                 return;
             }
             b->chose_label = choice_label(*b->view, *choice);
@@ -770,9 +774,10 @@ namespace {
             do_action(*b, std::format("choose {} {}", rqid, *choice));
             show(*b);
             if (!b->window) {
-                chat_.notice(std::format("⚔ You chose {}: waiting for the other player (/game pokemon cancel to change "
-                                         "it).",
-                                         b->chose_label));
+                chat_.game_notice(
+                    std::format("⚔ You chose {}: waiting for the other player (/game pokemon cancel to change "
+                                "it).",
+                                b->chose_label));
             }
         }
 
@@ -804,7 +809,7 @@ namespace {
         void cancel() {
             Battle* b = own_battle();
             if (!b || !b->chose || b->view->rqid() != 0) {
-                chat_.notice("There is no choice to take back now.");
+                chat_.game_notice("There is no choice to take back now.");
                 return;
             }
             if (b->cancelling) {
@@ -827,18 +832,18 @@ namespace {
                 b.chose = false;
                 show(b);
                 if (!b.window) {
-                    chat_.notice("⚔ Choice taken back: choose again.");
+                    chat_.game_notice("⚔ Choice taken back: choose again.");
                 }
                 return;
             }
             show(b);
-            chat_.notice("⚔ Too late to take it back: the other player had chosen too.");
+            chat_.game_notice("⚔ Too late to take it back: the other player had chosen too.");
         }
 
         void act(std::string_view action) {
             Battle* b = own_battle();
             if (!b) {
-                chat_.notice("You are not in a Pokémon battle.");
+                chat_.game_notice("You are not in a Pokémon battle.");
                 return;
             }
             do_action(*b, std::string(action));
@@ -864,7 +869,7 @@ namespace {
                 }
             }
             if (!b) {
-                chat_.notice("You are not in a Pokémon battle, nor watching one.");
+                chat_.game_notice("You are not in a Pokémon battle, nor watching one.");
                 return;
             }
             const std::string clean = text::sanitize(text, max_said_bytes);
@@ -885,14 +890,14 @@ namespace {
                 }
             }
             if (found.empty()) {
-                chat_.notice(who.empty() ? "No Pokémon battle is going on."
-                                         : std::format("{} is not in a Pokémon battle.", text::sanitize(who, 48)));
+                chat_.game_notice(who.empty() ? "No Pokémon battle is going on."
+                                              : std::format("{} is not in a Pokémon battle.", text::sanitize(who, 48)));
                 return;
             }
             if (found.size() > 1) {
-                chat_.notice("Which one? /game pokemon watch NAME, with the name of one of its players:");
+                chat_.game_notice("Which one? /game pokemon watch NAME, with the name of one of its players:");
                 for (const Battle* b : found) {
-                    chat_.notice(std::format("   {} vs {}", b->names[0], b->names[1]));
+                    chat_.game_notice(std::format("   {} vs {}", b->names[0], b->names[1]));
                 }
                 return;
             }
@@ -909,9 +914,9 @@ namespace {
             b.window_open = true;
             b.last_want = clock::now();
             send(std::format("want {:x} log 1", b.id));
-            chat_.notice(std::format("👀 Watching {} vs {}: /game pokemon unwatch to stop.",
-                                     chat_.colored_name(b.ids[0], b.names[0]),
-                                     chat_.colored_name(b.ids[1], b.names[1])));
+            chat_.game_notice(std::format("👀 Watching {} vs {}: /game pokemon unwatch to stop.",
+                                          chat_.colored_name(b.ids[0], b.names[0]),
+                                          chat_.colored_name(b.ids[1], b.names[1])));
             show(b, true);
         }
 
@@ -920,18 +925,18 @@ namespace {
                 if (b.view && b.side.empty()) {
                     b.view.reset();
                     b.window_open = false;
-                    chat_.notice(std::format("You stop watching {} vs {}.", b.names[0], b.names[1]));
+                    chat_.game_notice(std::format("You stop watching {} vs {}.", b.names[0], b.names[1]));
                 }
             }
         }
 
         void update() {
             if (!engine_.has_node()) {
-                chat_.notice("Pokémon Showdown needs Node.js, which is not here: nodejs.org has it.");
+                chat_.game_notice("Pokémon Showdown needs Node.js, which is not here: nodejs.org has it.");
                 return;
             }
             engine_.install(true);
-            chat_.notice("📦 Updating Pokémon Showdown with npm (for the newest random battle sets)…");
+            chat_.game_notice("📦 Updating Pokémon Showdown with npm (for the newest random battle sets)…");
             updating_ = true;
         }
 
@@ -1180,24 +1185,24 @@ namespace {
                 using Kind = pokemon::LogLine::Kind;
                 switch (line.kind) {
                 case Kind::Turn:
-                    chat_.notice(std::format("⚔ ── {} ──", line.text));
+                    chat_.game_notice(std::format("⚔ ── {} ──", line.text));
                     break;
                 case Kind::Chat:
-                    chat_.notice(std::format("⚔ {}: {}", line.name, line.text));
+                    chat_.game_notice(std::format("⚔ {}: {}", line.name, line.text));
                     break;
                 case Kind::Minor:
-                    chat_.notice(std::format("⚔   {}", line.text));
+                    chat_.game_notice(std::format("⚔   {}", line.text));
                     break;
                 default:
-                    chat_.notice(std::format("⚔ {}", line.text));
+                    chat_.game_notice(std::format("⚔ {}", line.text));
                     break;
                 }
             }
             if (v.rqid() != 0 && v.rqid() != b.menu_rqid) {
                 b.menu_rqid = v.rqid();
-                chat_.notice("⚔ Your move: /game pokemon then one of");
+                chat_.game_notice("⚔ Your move: /game pokemon then one of");
                 for (const auto& choice : v.menu()) {
-                    chat_.notice(std::format("⚔   {}", choice));
+                    chat_.game_notice(std::format("⚔   {}", choice));
                 }
             }
         }
@@ -1215,13 +1220,13 @@ namespace {
                 case pokemon::Engine::Status::Installing:
                     if (!r.announced_install) {
                         r.announced_install = true;
-                        chat_.notice("📦 Installing Pokémon Showdown with npm, the first time (about a minute)…");
+                        chat_.game_notice("📦 Installing Pokémon Showdown with npm, the first time (about a minute)…");
                         show(b);
                     }
                     break;
                 case pokemon::Engine::Status::Failed:
                 case pokemon::Engine::Status::Missing:
-                    chat_.notice(std::format("Pokémon Showdown could not be installed: {}", engine_.failure()));
+                    chat_.game_notice(std::format("Pokémon Showdown could not be installed: {}", engine_.failure()));
                     end(b, "none", "Pokémon Showdown could not be installed");
                     return;
                 }
@@ -1284,7 +1289,7 @@ namespace {
                 },
                 error);
             if (!r.child) {
-                chat_.notice(std::format("Pokémon Showdown could not be started: {}", error));
+                chat_.game_notice(std::format("Pokémon Showdown could not be started: {}", error));
                 end(b, "none", "Pokémon Showdown could not be started");
                 return;
             }
@@ -1331,7 +1336,7 @@ namespace {
                     note_request(b, side, unescape(text));
                     add_message(b, 1 + side, std::string(text));
                 } else if (tag == "error") {
-                    chat_.notice(std::format("Pokémon Showdown: {}", text::sanitize(unescape(text), 400)));
+                    chat_.game_notice(std::format("Pokémon Showdown: {}", text::sanitize(unescape(text), 400)));
                 }
                 if (!b.referee) {
                     return;
@@ -1339,7 +1344,7 @@ namespace {
             }
             if (exit && !b.over) {
                 if (!exit->second.empty()) {
-                    chat_.notice(std::format("Pokémon Showdown stopped: {}", text::sanitize(exit->second, 400)));
+                    chat_.game_notice(std::format("Pokémon Showdown stopped: {}", text::sanitize(exit->second, 400)));
                 }
                 end(b, "none", "the battle engine stopped");
             }
@@ -1613,17 +1618,17 @@ namespace {
             const int winner = side_index(outcome);
             if (winner >= 0) {
                 const int wins = games_.add_win(game_name, b.ids[winner], b.names[winner]);
-                chat_.notice(std::format("🏆 {} won the Pokémon battle against {}!{}", winner == 0 ? p1 : p2,
-                                         winner == 0 ? p2 : p1,
-                                         wins > 1 ? std::format(" ({} wins)", wins) : std::string()));
+                chat_.game_notice(std::format("🏆 {} won the Pokémon battle against {}!{}", winner == 0 ? p1 : p2,
+                                              winner == 0 ? p2 : p1,
+                                              wins > 1 ? std::format(" ({} wins)", wins) : std::string()));
                 games_.rate(game_name,
                             {{b.ids[winner], b.names[winner], 0}, {b.ids[1 - winner], b.names[1 - winner], 1}});
             } else if (outcome == "tie") {
-                chat_.notice(std::format("⚔ The Pokémon battle between {} and {} is a tie!", p1, p2));
+                chat_.game_notice(std::format("⚔ The Pokémon battle between {} and {} is a tie!", p1, p2));
                 games_.rate(game_name, {{b.ids[0], b.names[0], 0}, {b.ids[1], b.names[1], 0}});
             } else {
-                chat_.notice(std::format("⚔ The Pokémon battle between {} and {} ended{}.", p1, p2,
-                                         reason.empty() ? std::string() : std::format(": {}", reason)));
+                chat_.game_notice(std::format("⚔ The Pokémon battle between {} and {} ended{}.", p1, p2,
+                                              reason.empty() ? std::string() : std::format(": {}", reason)));
             }
             if (b.view) {
                 if (winner < 0 && outcome != "tie" && !reason.empty()) {

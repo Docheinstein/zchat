@@ -236,10 +236,10 @@ namespace {
                 return;
             }
             if (phase_ == Phase::Match) {
-                chat_.notice(me_ ? "💣 You are in a round of bomber: /game help bomber for the keys."
-                             : terminal_mode_
-                                 ? "💣 A round of bomber is on: wait for it to end (/game bomber map shows it)."
-                                 : "💣 A round of bomber is on: wait for it to end (the window shows it).");
+                chat_.game_notice(me_ ? "💣 You are in a round of bomber: /game help bomber for the keys."
+                                  : terminal_mode_
+                                      ? "💣 A round of bomber is on: wait for it to end (/game bomber map shows it)."
+                                      : "💣 A round of bomber is on: wait for it to end (the window shows it).");
                 return;
             }
             std::uint64_t round = 0;
@@ -265,8 +265,8 @@ namespace {
                 on_open(sender, name, *round, text);
             } else if (event == "off") {
                 if (phase_ == Phase::Lobby && *round == round_ && sender == referee_) {
-                    chat_.notice(std::format("💣 Not enough players joined {}'s round of bomber: it is off.",
-                                             chat_.colored_name(sender, name)));
+                    chat_.game_notice(std::format("💣 Not enough players joined {}'s round of bomber: it is off.",
+                                                  chat_.colored_name(sender, name)));
                     phase_ = Phase::None;
                     publish();
                 }
@@ -312,7 +312,7 @@ namespace {
                         if (lobby_.size() >= min_players) {
                             begin_match();
                         } else {
-                            chat_.notice("💣 Nobody else joined your round of bomber: it is off.");
+                            chat_.game_notice("💣 Nobody else joined your round of bomber: it is off.");
                             send(std::format("off {:x}", round_));
                             phase_ = Phase::None;
                             publish();
@@ -325,7 +325,7 @@ namespace {
                     }
                 } else {
                     if (now - last_heard_ > referee_timeout) {
-                        chat_.notice("💣 The round of bomber is off: its referee is gone.");
+                        chat_.game_notice("💣 The round of bomber is off: its referee is gone.");
                         phase_ = Phase::None;
                         publish();
                         return;
@@ -342,7 +342,7 @@ namespace {
                     return;
                 }
                 if (now - last_heard_ > referee_timeout) {
-                    chat_.notice("💣 The round of bomber is off: its referee is gone. Nobody wins it.");
+                    chat_.game_notice("💣 The round of bomber is off: its referee is gone. Nobody wins it.");
                     over(std::string("The referee left: nobody wins."));
                     return;
                 }
@@ -385,7 +385,7 @@ namespace {
                 if (phase_ == Phase::Match || phase_ == Phase::Over) {
                     draw();
                 } else {
-                    chat_.notice("💣 No round of bomber is being played: /game bomber starts one.");
+                    chat_.game_notice("💣 No round of bomber is being played: /game bomber starts one.");
                 }
                 return true;
             }
@@ -399,7 +399,7 @@ namespace {
                 if (!args.empty()) {
                     const auto n = parse_int(args);
                     if (!n || *n < 1 || *n > 30) {
-                        chat_.notice("💣 Walk 1 to 30 tiles, like /game bomber up 3.");
+                        chat_.game_notice("💣 Walk 1 to 30 tiles, like /game bomber up 3.");
                         return true;
                     }
                     tiles = *n;
@@ -529,18 +529,19 @@ namespace {
             frame_ = -1;
             last_heard_ = clock::now();
             next_join_ = {};
-            chat_.notice(std::format("💣 Bomber, started by {}! /game bomber join within {} seconds to play: bombs "
-                                     "blow up crates and players, the last one standing wins (/game help bomber).",
-                                     colored(referee), join_time.count()));
+            chat_.game_notice(
+                std::format("💣 Bomber, started by {}! /game bomber join within {} seconds to play: bombs "
+                            "blow up crates and players, the last one standing wins (/game help bomber).",
+                            colored(referee), join_time.count()));
         }
 
         void join() {
             if (phase_ != Phase::Lobby) {
-                chat_.notice("💣 No round of bomber is open: /game bomber starts one.");
+                chat_.game_notice("💣 No round of bomber is open: /game bomber starts one.");
                 return;
             }
             if (joined_) {
-                chat_.notice("💣 You are in: the round starts when the time to join is up.");
+                chat_.game_notice("💣 You are in: the round starts when the time to join is up.");
                 return;
             }
             joined_ = true;
@@ -549,7 +550,7 @@ namespace {
             }
             send(std::format("join {:x}", round_));
             next_join_ = clock::now() + join_interval;
-            chat_.notice("💣 Joining the round of bomber…");
+            chat_.game_notice("💣 Joining the round of bomber…");
             publish();
         }
 
@@ -593,14 +594,14 @@ namespace {
             last_heard_ = clock::now();
             for (const std::uint64_t id : ids) {
                 if (std::ranges::find(lobby_, id) == lobby_.end() && id != referee_) {
-                    chat_.notice(std::format("💣 {} joins the round of bomber.", colored(id)));
+                    chat_.game_notice(std::format("💣 {} joins the round of bomber.", colored(id)));
                 }
             }
             lobby_ = std::move(ids);
             lobby_left_ = static_cast<int>(*seconds);
             if (joined_ && std::ranges::find(lobby_, chat_.id()) != lobby_.end() && !said_in_) {
                 said_in_ = true;
-                chat_.notice(std::format("💣 You are in! The round starts in {}.", plural(*seconds, "second")));
+                chat_.game_notice(std::format("💣 You are in! The round starts in {}.", plural(*seconds, "second")));
             }
             publish();
         }
@@ -617,7 +618,7 @@ namespace {
                 return;
             }
             lobby_.push_back(sender);
-            chat_.notice(std::format("💣 {} joins the round of bomber.", chat_.colored_name(sender, name)));
+            chat_.game_notice(std::format("💣 {} joins the round of bomber.", chat_.colored_name(sender, name)));
             send_open();
             publish();
         }
@@ -635,12 +636,12 @@ namespace {
 
         void go_now() {
             if (phase_ != Phase::Lobby || referee_ != chat_.id()) {
-                chat_.notice(phase_ == Phase::Lobby ? "💣 Only who opened the round can start it early."
-                                                    : "💣 No round of bomber is open: /game bomber opens one.");
+                chat_.game_notice(phase_ == Phase::Lobby ? "💣 Only who opened the round can start it early."
+                                                         : "💣 No round of bomber is open: /game bomber opens one.");
                 return;
             }
             if (lobby_.size() < min_players) {
-                chat_.notice("💣 It takes 2 players at least: wait for somebody to join.");
+                chat_.game_notice("💣 It takes 2 players at least: wait for somebody to join.");
                 return;
             }
             begin_match();
@@ -702,7 +703,7 @@ namespace {
             sim_ = std::move(sim);
             chat_.set_fast_ticks(true);
             send_roster();
-            chat_.notice(std::format("💣 The round of bomber starts, with {}!", roster_names()));
+            chat_.game_notice(std::format("💣 The round of bomber starts, with {}!", roster_names()));
         }
 
         void send_roster() {
@@ -1047,14 +1048,15 @@ namespace {
             chat_.set_fast_ticks(true);
             last_heard_ = clock::now();
             if (me_) {
-                chat_.notice(std::format("💣 The round of bomber starts, with {}! {}", roster_names(),
-                                         terminal_mode_ ? "/game bomber up, down, left, right [N] walks, "
-                                                          "/game bomber bomb drops a bomb, /game bomber map shows it."
-                                                        : "Arrows or WASD move, Space drops a bomb."));
+                chat_.game_notice(std::format("💣 The round of bomber starts, with {}! {}", roster_names(),
+                                              terminal_mode_
+                                                  ? "/game bomber up, down, left, right [N] walks, "
+                                                    "/game bomber bomb drops a bomb, /game bomber map shows it."
+                                                  : "Arrows or WASD move, Space drops a bomb."));
                 terminal_.bell();
             } else if (was_lobby) {
-                chat_.notice(std::format("💣 The round of bomber starts, with {}: {} shows it.", roster_names(),
-                                         terminal_mode_ ? "/game bomber map" : "the window"));
+                chat_.game_notice(std::format("💣 The round of bomber starts, with {}: {} shows it.", roster_names(),
+                                              terminal_mode_ ? "/game bomber map" : "the window"));
             }
         }
 
@@ -1137,13 +1139,13 @@ namespace {
             }
             seen_ = std::move(seen);
             if (was == 'c' && sub_ == 'p') {
-                chat_.notice("💣 Go!");
+                chat_.game_notice("💣 Go!");
                 if (terminal_mode_ && me_) {
                     draw();
                 }
             }
             if (was == 'p' && sub_ == 'h') {
-                chat_.notice("⚠ Hurry up! The walls are closing in.");
+                chat_.game_notice("⚠ Hurry up! The walls are closing in.");
             }
             follow_walk();
             publish();
@@ -1152,20 +1154,20 @@ namespace {
         void obituary(std::size_t victim, int killer) {
             const std::string who = colored(roster_[victim]);
             if (killer == killer_walls) {
-                chat_.notice(std::format("🧱 {} was crushed by the walls.", who));
+                chat_.game_notice(std::format("🧱 {} was crushed by the walls.", who));
             } else if (killer == static_cast<int>(victim)) {
-                chat_.notice(std::format("💥 {} blew themselves up.", who));
+                chat_.game_notice(std::format("💥 {} blew themselves up.", who));
             } else if (killer >= 0 && static_cast<std::size_t>(killer) < roster_.size()) {
-                chat_.notice(
+                chat_.game_notice(
                     std::format("💥 {} was blown up by {}.", who, colored(roster_[static_cast<std::size_t>(killer)])));
             } else {
-                chat_.notice(std::format("💥 {} was blown up.", who));
+                chat_.game_notice(std::format("💥 {} was blown up.", who));
             }
             if (me_ && *me_ == victim) {
                 walk_.reset();
                 terminal_.bell();
                 if (terminal_mode_) {
-                    chat_.notice("   You are out: the window, or /game bomber map, shows how the others do.");
+                    chat_.game_notice("   You are out: the window, or /game bomber map, shows how the others do.");
                 }
             }
         }
@@ -1189,7 +1191,7 @@ namespace {
             std::string result;
             if (first == roster_.size()) {
                 result = "Nobody is left standing: a draw!";
-                chat_.notice("💣 Bomber is over: everybody went up at once, a draw!");
+                chat_.game_notice("💣 Bomber is over: everybody went up at once, a draw!");
             } else {
                 for (std::size_t i = 0; i < roster_.size(); ++i) {
                     if (places[i] == 0) {
@@ -1197,8 +1199,8 @@ namespace {
                     }
                 }
                 result = std::format("{} win{}!", plain_winners, first == 1 ? "s" : "");
-                chat_.notice(std::format("🏆 {} win{} bomber{}!", winners, first == 1 ? "s" : "",
-                                         first == 1 ? ", the last one standing" : ""));
+                chat_.game_notice(std::format("🏆 {} win{} bomber{}!", winners, first == 1 ? "s" : "",
+                                              first == 1 ? ", the last one standing" : ""));
             }
             games_.rate(game_name, placings);
             over(std::move(result));
@@ -1233,7 +1235,7 @@ namespace {
 
         void bomb() {
             if (!me_ || phase_ != Phase::Match) {
-                chat_.notice("💣 You are not playing a round of bomber: /game bomber starts one.");
+                chat_.game_notice("💣 You are not playing a round of bomber: /game bomber starts one.");
                 return;
             }
             if (!seen_[*me_].alive) {
@@ -1246,12 +1248,12 @@ namespace {
         // A terminal's walk: holds the key until we stand in the middle of the tile so many away, or get stuck.
         void walk(char dir, int tiles) {
             if (!me_ || phase_ != Phase::Match) {
-                chat_.notice("💣 You are not playing a round of bomber: /game bomber starts one.");
+                chat_.game_notice("💣 You are not playing a round of bomber: /game bomber starts one.");
                 return;
             }
             const Seen& me = seen_[*me_];
             if (!me.alive) {
-                chat_.notice("💣 You are out of this round.");
+                chat_.game_notice("💣 You are out of this round.");
                 return;
             }
             const int dx = (dir == 'r') - (dir == 'l');
@@ -1286,7 +1288,7 @@ namespace {
             target_ = -1;
             send_input();
             if (stuck && !there) {
-                chat_.notice("💣 Something is in the way.");
+                chat_.game_notice("💣 Something is in the way.");
             }
             if (terminal_mode_) {
                 draw();
@@ -1374,21 +1376,22 @@ namespace {
                     out += "\x1b[0m";
                 }
             }
-            chat_.notice(sub_ == 'c'   ? std::format("💣 Bomber starts in {}:", plural(seconds_, "second"))
-                         : sub_ == 'h' ? std::string("💣 Bomber, hurry up! The walls are closing in:")
-                                       : std::format("💣 Bomber, {} to the hurry:", plural(seconds_, "second")));
-            terminal_.print(out);
+            chat_.game_notice(sub_ == 'c'   ? std::format("💣 Bomber starts in {}:", plural(seconds_, "second"))
+                              : sub_ == 'h' ? std::string("💣 Bomber, hurry up! The walls are closing in:")
+                                            : std::format("💣 Bomber, {} to the hurry:", plural(seconds_, "second")));
+            chat_.game_print(out);
             for (std::size_t i = 0; i < seen_.size(); ++i) {
                 const Seen& p = seen_[i];
-                chat_.notice(std::format("   {} {}{}: {}", static_cast<char>('A' + i), colored(roster_[i]),
-                                         me_ && *me_ == i ? " (you, @)" : "",
-                                         p.alive ? std::format("{} bomb{}, fire {}, speed {}", p.bombs,
-                                                               p.bombs == 1 ? "" : "s", p.fire, p.speed + 1)
-                                                 : std::string("out")));
+                chat_.game_notice(std::format("   {} {}{}: {}", static_cast<char>('A' + i), colored(roster_[i]),
+                                              me_ && *me_ == i ? " (you, @)" : "",
+                                              p.alive ? std::format("{} bomb{}, fire {}, speed {}", p.bombs,
+                                                                    p.bombs == 1 ? "" : "s", p.fire, p.speed + 1)
+                                                      : std::string("out")));
             }
-            chat_.notice(std::format("   {} wall, {} crate, () bomb, ** flames, B+ F+ S+ power-ups: more bombs, fire, "
-                                     "speed; @ is you",
-                                     vt ? "grey" : "##", vt ? "▒▒" : "[]"));
+            chat_.game_notice(
+                std::format("   {} wall, {} crate, () bomb, ** flames, B+ F+ S+ power-ups: more bombs, fire, "
+                            "speed; @ is you",
+                            vt ? "grey" : "##", vt ? "▒▒" : "[]"));
         }
 
         // The round, for a window of its own (see Screen::show_game()).

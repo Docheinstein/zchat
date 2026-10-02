@@ -39,6 +39,13 @@ public:
     virtual void message(std::uint64_t sender, std::string_view name, std::string_view text) = 0;
     // Called a few times per second, for the timers.
     virtual void tick() = 0;
+    // Whether a chat line of another peer is a move of this game (a race's words), which a window shows in the games
+    // log rather than in #general (see Chat::GameHooks::claims).
+    virtual bool claims(std::uint64_t sender, std::string_view text) const {
+        (void)sender;
+        (void)text;
+        return false;
+    }
     // /game NAME ARGS, like /game dice roll: returns whether the game has such a command.
     virtual bool command(std::string_view args) {
         (void)args;

@@ -49,6 +49,13 @@ any other kind of file. Files sent in the chat get a Download button. The text s
 (WebView2 on Windows, WebKit on macOS and Linux) showing `src/ui/index.html`, built into zchat, so it is ready for
 more to come: real images and emoji, more channels, avatars, fonts.
 
+In the window the chat stays a chat: what the games say (rounds starting, rolls, boards, winners, Elo and coins, the
+answers to `/game`, `/casino`, `/coins` and `/shop`) goes to `#games-log`, right under `#general`, a channel of the
+window's own (🎮) that gets a dot when something new is in it. Typing one of those commands in the box shows it (the
+games' own buttons do not move the chat). What is typed there is said in `#general`, but for a race's words, which
+stay in the log, as the others' do: they are not shown in `#general` either. In the terminal everything is in the chat,
+as before.
+
 While chatting:
 
 | Input              | Action                                                 |
