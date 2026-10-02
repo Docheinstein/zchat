@@ -157,6 +157,18 @@
   }
   #am-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
   #am-float:focus-within { border-color: var(--accent); }
+  /* And for frag. */
+  #fr-float {
+    position: fixed; top: 54px; right: 20px; width: min(1080px, calc(100vw - 40px)); z-index: 18; display: none;
+    background: #111317; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px #000b; overflow: hidden;
+  }
+  #fr-float.open { display: block; }
+  #fr-float-title {
+    display: flex; align-items: center; padding: 6px 10px; background: var(--panel); cursor: move; color: var(--muted);
+    font-size: 12px; user-select: none;
+  }
+  #fr-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  #fr-float:focus-within { border-color: var(--accent); }
   #new-channel { display: none; margin: 4px 14px 8px; }
   #new-channel.open { display: block; }
   #new-channel input, #new-channel select {
@@ -330,6 +342,7 @@
 <style id="casino-style"></style>
 <style id="bm-style"></style>
 <style id="am-style"></style>
+<style id="fr-style"></style>
 </head>
 <body>
 <header>
@@ -347,6 +360,7 @@
   <button id="pk-open" title="Your Pokémon battle: show it again" hidden><svg class="pokeball" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8a7 7 0 0 1 14 0z" fill="#e5534b"/><path d="M1 8a7 7 0 0 0 14 0z" fill="#f4f4f4"/><circle cx="8" cy="8" r="7" fill="none" stroke="#15161a" stroke-width="1.2"/><path d="M1 8h14" stroke="#15161a" stroke-width="1.4"/><circle cx="8" cy="8" r="2.3" fill="#f4f4f4" stroke="#15161a" stroke-width="1.2"/></svg></button>
   <button id="bm-open" title="Bomber: start a round, or show the one on">💣 Bomber</button>
   <button id="am-open" title="Arena: start a round of the shooter, or show the one on">🎯 Arena</button>
+  <button id="fr-open" title="Frag: start a round of the first-person shooter, or show the one on">🔫 Frag</button>
   <select id="font" title="Font"></select>
   <button id="smaller" title="Smaller text">A−</button>
   <button id="bigger" title="Bigger text">A+</button>
@@ -417,6 +431,8 @@
   <div class="bm" id="bm-body"></div></div>
 <div id="am-float" tabindex="-1"><div id="am-float-title">zchat · arena<button id="am-float-close" title="Close">×</button></div>
   <div class="am" id="am-body"></div></div>
+<div id="fr-float" tabindex="-1"><div id="fr-float-title">zchat · frag<button id="fr-float-close" title="Close">×</button></div>
+  <div class="fr" id="fr-body"></div></div>
 <div id="drop">Drop a picture or a file to send it</div>
 <div id="viewer"><img alt="picture"></div>
 <script>
@@ -3235,12 +3251,954 @@ document.getElementById("am-float-close").onclick = closeArena;
   document.addEventListener("mouseup", () => { dragging = false; });
 })();
 
+// --- Frag, in a window of its own (zchat.game("frag", state)): the first-person shooter, drawn by ray casting like the
+// shooters of the nineties, in cartoon colors: a sky, a checkered lawn, brick walls with ink outlines, the others as
+// blobs with paint-ball blasters. Like arena: a real window when the web view allows one, or else one floating over the
+// chat; the state comes after every step of the referee (20 a second), and the players are drawn between where the
+// last two put them. The picture is drawn pixel by pixel in a small buffer (frView), then stretched to the canvas,
+// chunky; the names, the blaster and the rest on top at full size. W and S walk, A and D step aside, the mouse turns
+// once the view is clicked (it locks the pointer; Esc frees it), or the arrows (and Q, E) do; the mouse's button (or
+// Space) shoots. They go as /game frag in MOVE FACING FIRE when they change, the facing at most 20 times a second.
+const frStyle = bmStyle.replace(".bm {", ".fr {").replaceAll("bm-blink", "fr-blink") + `
+  .field { background: #000; }
+  .field canvas { cursor: crosshair; }
+  .field.locked canvas { cursor: none; }
+  .field .overlay { font-size: 60px; }
+  .field .overlay.small { font-size: 24px; }
+  .field .tip { position: absolute; left: 0; right: 0; bottom: 18%; text-align: center; pointer-events: none;
+    font-size: 15px; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000, 0 0 2px #000; }
+  .side { min-width: 190px; max-width: 230px; }
+  .player .kd { font-variant-numeric: tabular-nums; }
+  .feed { display: flex; flex-direction: column; gap: 3px; min-height: 20px; }
+  .feed .kill { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .feed .kill b { font-weight: 700; }
+  .feed .kill .gun { color: #7d8491; margin: 0 4px; }
+  .top .clock.last { color: #e5534b; animation: fr-blink .6s steps(2) infinite; }
+  .top .earned { color: #f2c94c; font-weight: 700; font-size: 14px; }
+`;
+let frState = null, frPopup = null, frClosedRound = null;
+// The players' places in the state before the last one and in the last one, and when that came.
+let frPrev = null, frCur = null, frAt = 0, frFrame = -1, frLooping = false, frLast = 0;
+// What we hold: the keys (f, b forward and back, l, r aside, tl, tr turning), the trigger (the mouse's button,
+// Space), where we face (degrees, ours to change; null until the first state says), and what was last sent.
+let frHeld = [], frMouse = false, frSpace = false, frYaw = null, frSent = "", frSentAt = 0, frTimer = 0;
+// Who took out whom lately, for the feed; the comic words over whoever was hit; when we were hit, fired, earned.
+let frFeed = [], frPops = [], frHurtAt = -1e9, frFiredAt = -1e9, frCoins = [], frBob = 0;
+// Whom we watch, when not playing (a place in the roster).
+let frWatch = 0;
+document.getElementById("fr-style").textContent = frStyle.replace(/:root \{[^}]*\}/, "").replace(/@keyframes[^{]*\{[^{}]*\{[^}]*\}\s*\}/g, "")
+  .replace(/(^|\})\s*([^{}@]+)\{/g,
+  (m, end, sel) => end + " " + sel.split(",").map(x => x.trim() === "body" ? "#fr-float" : "#fr-float " + x.trim()).join(", ") + " {")
+  + "@keyframes fr-blink { 50% { opacity: .35; } }";
+const frFloat = document.getElementById("fr-float");
+function frDoc() {
+  if (frPopup && !frPopup.closed) return frPopup.document;
+  return null;
+}
+function frRoot() {
+  return frDoc() ? frDoc().getElementById("fr") : frFloat.classList.contains("open") ? document.getElementById("fr-body") : null;
+}
+function openFrag(focus) {
+  if (!frDoc()) {
+    let w = null;
+    try { w = window.open("", "zchat-frag", "popup,width=1180,height=720"); } catch {}
+    if (w && w.document) {
+      w.document.open();
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · frag</title><style>${frStyle}</style></head><body><div class="fr" id="fr" tabindex="-1"></div></body></html>`);
+      w.document.close();
+      frPopup = w;
+      frListen(w.document, () => true);
+      w.addEventListener("blur", frRelease);
+      w.addEventListener("resize", () => { frBuilt = null; renderFrag(); });
+      if (!focus) setTimeout(() => { try { window.focus(); } catch {} }, 50);
+    } else {
+      frPopup = null;
+      frFloat.classList.add("open");
+    }
+  }
+  frBuilt = null;
+  renderFrag();
+  if (focus) frFocus();
+}
+function closeFrag() {
+  if (frState) frClosedRound = frState.round;
+  frRelease();
+  const doc = frDoc() || document;
+  try { if (doc.pointerLockElement) doc.exitPointerLock(); } catch {}
+  if (frPopup && !frPopup.closed) frPopup.close();
+  frPopup = null;
+  frFloat.classList.remove("open");
+  input.focus();
+}
+function frFocus() {
+  if (frDoc()) { try { frPopup.focus(); frDoc().getElementById("fr").focus(); } catch {} }
+  else if (frFloat.classList.contains("open")) frFloat.focus();
+}
+
+// --- The controls.
+const frKeys = { w: "f", W: "f", ArrowUp: "f", s: "b", S: "b", ArrowDown: "b", a: "l", A: "l", d: "r", D: "r",
+  ArrowLeft: "tl", ArrowRight: "tr", q: "tl", Q: "tl", e: "tr", E: "tr" };
+function frMe() {
+  return frState ? frState.players.findIndex(p => p.you) : -1;
+}
+// Where a player is drawn now, in units: between their last two places.
+function frPlace(i, now) {
+  const cur = frCur && frCur[i];
+  if (!cur) return null;
+  const prev = frPrev && frPrev[i] ? frPrev[i] : cur;
+  // Back in somewhere else: no gliding across the map.
+  if (Math.abs(cur[0] - prev[0]) + Math.abs(cur[1] - prev[1]) > 2 * frState.unit) return cur;
+  const a = Math.min(1, (now - frAt) / 50);
+  return [prev[0] + (cur[0] - prev[0]) * a, prev[1] + (cur[1] - prev[1]) * a];
+}
+function frSend() {
+  if (!frState || !frState.playing || frYaw === null) return;
+  const back = (frHeld.includes("b") ? 1 : 0) - (frHeld.includes("f") ? 1 : 0);
+  const side = (frHeld.includes("r") ? 1 : 0) - (frHeld.includes("l") ? 1 : 0);
+  const move = (back + 1) * 3 + (side + 1), fire = frMouse || frSpace ? 1 : 0;
+  const aim = ((Math.round(frYaw) % 360) + 360) % 360;
+  const line = `${move} ${aim} ${fire}`;
+  if (line === frSent) return;
+  // Walking and the trigger go right away; only turning waits, not to send more than a state a step.
+  const [m, , f] = frSent.split(" ");
+  const now = performance.now();
+  if (m === String(move) && f === String(fire) && now - frSentAt < 50) {
+    if (!frTimer) frTimer = setTimeout(() => { frTimer = 0; frSend(); }, 50 - (now - frSentAt));
+    return;
+  }
+  frSent = line;
+  frSentAt = now;
+  window.zchatSend("/game frag in " + line);
+}
+function frRelease() {
+  frHeld = [];
+  frMouse = frSpace = false;
+  if (frState && frState.playing) frSend();
+}
+function frPlaying() {
+  return frState && frState.playing && (frState.phase === "play" || frState.phase === "countdown");
+}
+// Watching: the next one in.
+function frWatchNext() {
+  if (!frState || !frState.players.length) return;
+  frWatch = (frWatch + 1) % frState.players.length;
+}
+function frListen(doc, active) {
+  doc.addEventListener("keydown", e => {
+    if (!active() || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (frState && !frState.playing && frState.phase !== "lobby" && frState.phase !== "none" && (e.key === " " || e.key === "Tab")) {
+      frWatchNext();
+      e.preventDefault();
+      return;
+    }
+    if (!frPlaying()) return;
+    const k = frKeys[e.key];
+    if (k) {
+      if (!frHeld.includes(k)) frHeld.push(k);
+      frSend();
+      e.preventDefault();
+    } else if (e.key === " ") {
+      frSpace = true;
+      frSend();
+      e.preventDefault();
+    }
+  });
+  doc.addEventListener("keyup", e => {
+    const k = frKeys[e.key];
+    if (k) frHeld = frHeld.filter(h => h !== k);
+    else if (e.key === " ") frSpace = false;
+    else return;
+    frSend();
+  });
+  doc.addEventListener("mouseup", e => {
+    if (e.button === 0 && frMouse) { frMouse = false; frSend(); }
+  });
+  // The pointer locked on the view: the mouse turns.
+  doc.addEventListener("mousemove", e => {
+    const canvas = frRoot() && frRoot().querySelector(".field canvas");
+    if (!canvas || frYaw === null || !frPlaying()) return;
+    if (doc.pointerLockElement === canvas || (frMouse && !doc.pointerLockElement)) {
+      frYaw = (frYaw + e.movementX * 0.16 + 360) % 360;
+      frSend();
+    }
+  });
+  doc.addEventListener("pointerlockchange", () => {
+    const root = frRoot();
+    const field = root && root.querySelector(".field");
+    if (field) field.classList.toggle("locked", !!doc.pointerLockElement);
+    if (!doc.pointerLockElement) frRelease();
+    renderFrag();
+  });
+}
+// A click on the view locks the pointer (the mouse turns) and shoots; watching, it watches the next one.
+function frCanvasMouse(canvas) {
+  canvas.addEventListener("mousedown", e => {
+    if (!frState || e.button !== 0) return;
+    e.preventDefault();
+    if (!frDoc()) setTimeout(() => frFloat.focus(), 0);
+    if (!frState.playing) { frWatchNext(); return; }
+    const doc = canvas.ownerDocument;
+    if (doc.pointerLockElement !== canvas) {
+      try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch {}
+    }
+    if (frPlaying()) { frMouse = true; frSend(); }
+  });
+  canvas.addEventListener("contextmenu", e => e.preventDefault());
+}
+frListen(document, () => frFloat.classList.contains("open") && frFloat.contains(document.activeElement));
+frFloat.addEventListener("focusout", e => { if (!frFloat.contains(e.relatedTarget)) frRelease(); });
+frFloat.addEventListener("mousedown", e => { if (e.target.tagName !== "BUTTON") setTimeout(() => frFloat.focus(), 0); });
+
+// --- The pictures: made once, as pixels (0xAABBGGRR, as Uint32Array sees ImageData on every machine zchat runs on).
+const frRGB = (r, g, b) => (0xff000000 | (b << 16) | (g << 8) | r) >>> 0;
+const frShades = 8;
+// A color darkened to shade k of frShades.
+function frShade(c, k) {
+  const f = 1 - k * 0.075;
+  return frRGB((c & 255) * f | 0, (c >> 8 & 255) * f | 0, (c >> 16 & 255) * f | 0);
+}
+const frInk = frRGB(29, 23, 38);
+let frArt = null;
+function frMakeArt() {
+  const T = 64;
+  // The walls: bricks of a few cartoon colors, and big stones around the map; every texture in frShades shades.
+  const bricks = (base, light, dark, mortar, wide, high) => {
+    const px = new Uint32Array(T * T);
+    for (let y = 0; y < T; y++) {
+      const row = Math.floor(y / high), offset = row % 2 ? wide / 2 : 0;
+      for (let x = 0; x < T; x++) {
+        const bx = (x + offset) % wide, by = y % high;
+        let c = base;
+        if (bx < 2 || by < 2) c = mortar;
+        else if (bx < 4 || by < 4) c = light;
+        else if (bx >= wide - 2 || by >= high - 2) c = dark;
+        // A speck here and there.
+        else if (((x * 7 + y * 13 + row * 5) % 23) === 0) c = dark;
+        if (x === 0 || x === T - 1) c = frInk;
+        px[y * T + x] = c;
+      }
+    }
+    return px;
+  };
+  const textures = [
+    bricks(frRGB(236, 120, 92), frRGB(250, 160, 128), frRGB(190, 84, 66), frRGB(120, 60, 60), 32, 16),
+    bricks(frRGB(122, 170, 236), frRGB(170, 204, 250), frRGB(84, 124, 196), frRGB(56, 70, 120), 32, 16),
+    bricks(frRGB(246, 200, 92), frRGB(255, 226, 140), frRGB(204, 156, 60), frRGB(130, 96, 50), 32, 16),
+    bricks(frRGB(178, 132, 226), frRGB(206, 172, 246), frRGB(136, 94, 186), frRGB(80, 56, 120), 32, 16),
+    bricks(frRGB(120, 116, 132), frRGB(152, 148, 166), frRGB(90, 86, 100), frRGB(52, 50, 62), 64, 32),
+  ].map(px => {
+    const shades = [];
+    for (let k = 0; k < frShades; k++) shades.push(px.map(c => c === frInk ? c : frShade(c, k)));
+    return shades;
+  });
+  // The floor: a lawn, checkered, with ink where the tiles meet; in shades too.
+  const floor = [frRGB(124, 206, 104), frRGB(108, 190, 92), frRGB(70, 140, 64)].map(c => {
+    const out = [];
+    for (let k = 0; k < frShades; k++) out.push(frShade(c, k));
+    return out;
+  });
+  // The sky: a panorama all around, with clouds and far hills, drawn on a canvas.
+  const SW = 1024, SH = 160;
+  const sky = document.createElement("canvas");
+  sky.width = SW; sky.height = SH;
+  const g = sky.getContext("2d");
+  const grad = g.createLinearGradient(0, 0, 0, SH);
+  grad.addColorStop(0, "#3d9cf0"); grad.addColorStop(1, "#bfe8ff");
+  g.fillStyle = grad; g.fillRect(0, 0, SW, SH);
+  // The clouds wrap around: each is drawn twice, a panorama apart.
+  const cloud = (x, y, r) => {
+    for (const dx of [0, -SW, SW]) {
+      g.fillStyle = "#ffffff";
+      g.strokeStyle = "#8ab8dc"; g.lineWidth = 2;
+      const puffs = [[0, 0, r], [r * .9, r * .2, r * .75], [-r * .9, r * .25, r * .7], [r * .3, -r * .45, r * .7]];
+      g.beginPath();
+      for (const [px, py, pr] of puffs) { g.moveTo(x + dx + px + pr, y + py); g.arc(x + dx + px, y + py, pr, 0, 7); }
+      g.stroke(); g.fill();
+    }
+  };
+  for (let i = 0; i < 9; i++) cloud((i * 397) % SW, 28 + (i * 53) % 60, 12 + (i * 7) % 12);
+  // Hills at the bottom, all the way around.
+  g.fillStyle = "#7a6fc4"; g.strokeStyle = "#3b2f6e"; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, SH);
+  for (let x = 0; x <= SW; x += 4) g.lineTo(x, SH - 18 - 14 * Math.sin(x / SW * Math.PI * 6) - 8 * Math.sin(x / SW * Math.PI * 14));
+  g.lineTo(SW, SH); g.closePath(); g.fill(); g.stroke();
+  const skyPx = new Uint32Array(g.getImageData(0, 0, SW, SH).data.buffer);
+  frArt = { T, textures, floor, sky: skyPx, SW, SH, sprites: new Map() };
+}
+// A picture drawn on a canvas, kept as pixels by its key.
+function frPicture(key, w, h, draw) {
+  let p = frArt.sprites.get(key);
+  if (p) return p;
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const g = c.getContext("2d");
+  g.lineJoin = "round"; g.lineCap = "round";
+  draw(g, w, h);
+  p = { w, h, px: new Uint32Array(g.getImageData(0, 0, w, h).data.buffer) };
+  frArt.sprites.set(key, p);
+  return p;
+}
+function frLighter(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = v => Math.round(v + (255 - v) * f);
+  return `rgb(${mix(n >> 16 & 255)},${mix(n >> 8 & 255)},${mix(n & 255)})`;
+}
+// A player: a blob of their color, seen from the front, a side or the back, with their blaster; white when just hit.
+function frBlob(color, view, flash) {
+  return frPicture(`blob${color}${view}${flash ? "!" : ""}`, 64, 80, g => {
+    const ink = "#1d1726";
+    g.lineWidth = 3; g.strokeStyle = ink;
+    // Feet.
+    for (const fx of view === "front" || view === "back" ? [22, 42] : [26, 38]) {
+      g.beginPath(); g.ellipse(fx, 74, 9, 5, 0, 0, 7); g.fillStyle = "#3a3346"; g.fill(); g.stroke();
+    }
+    // The blaster behind them, seen from the back or the side.
+    const blaster = dir => {
+      g.save();
+      g.translate(32, 54);
+      g.scale(dir, 1);
+      g.fillStyle = "#ff9f1c"; g.beginPath(); g.roundRect(4, -6, 26, 12, 4); g.fill(); g.stroke();
+      g.fillStyle = "#2ec4b6"; g.beginPath(); g.arc(10, -9, 6, 0, 7); g.fill(); g.stroke();
+      g.fillStyle = "#ffe066"; g.beginPath(); g.ellipse(30, 0, 3, 6, 0, 0, 7); g.fill(); g.stroke();
+      g.restore();
+    };
+    if (view === "back") blaster(1);
+    // The body.
+    g.fillStyle = color;
+    g.beginPath(); g.ellipse(32, 44, 24, 29, 0, 0, 7); g.fill(); g.stroke();
+    g.fillStyle = frLighter(color, 0.35);
+    g.beginPath(); g.ellipse(view === "left" ? 26 : view === "right" ? 38 : 26, 32, 8, 10, -0.4, 0, 7); g.fill();
+    if (view === "back") {
+      // A paint tank on the back.
+      g.fillStyle = "#d9dde6"; g.beginPath(); g.roundRect(22, 34, 20, 26, 7); g.fill(); g.stroke();
+      g.fillStyle = color; g.beginPath(); g.roundRect(26, 44, 12, 12, 4); g.fill();
+    } else {
+      // Eyes, looking where they face, and a grin.
+      const eyes = view === "front" ? [[24, 36], [40, 36]] : view === "left" ? [[14, 36], [27, 36]] : [[37, 36], [50, 36]];
+      const look = view === "left" ? -2 : view === "right" ? 2 : 0;
+      for (const [ex, ey] of eyes) {
+        g.fillStyle = "#fff"; g.beginPath(); g.ellipse(ex, ey, 6.5, 8.5, 0, 0, 7); g.fill(); g.lineWidth = 2.5; g.stroke();
+        g.fillStyle = ink; g.beginPath(); g.arc(ex + look, ey + 2, 3.2, 0, 7); g.fill();
+      }
+      g.lineWidth = 2.5;
+      g.beginPath();
+      if (view === "front") g.arc(32, 50, 7, 0.2, Math.PI - 0.2);
+      else g.arc(view === "left" ? 18 : 46, 50, 5, view === "left" ? 0.5 : 0.2, view === "left" ? Math.PI - 0.2 : Math.PI - 0.5);
+      g.stroke();
+      g.lineWidth = 3;
+      if (view === "front") {
+        // The blaster, pointed at us: its mouth.
+        g.fillStyle = "#ff9f1c"; g.beginPath(); g.roundRect(22, 54, 20, 14, 5); g.fill(); g.stroke();
+        g.fillStyle = "#ffe066"; g.beginPath(); g.arc(32, 61, 5, 0, 7); g.fill(); g.stroke();
+        g.fillStyle = ink; g.beginPath(); g.arc(32, 61, 2.4, 0, 7); g.fill();
+      } else {
+        blaster(view === "left" ? -1 : 1);
+      }
+    }
+    if (flash) {
+      g.globalCompositeOperation = "source-atop";
+      g.fillStyle = "#ffffffd0"; g.fillRect(0, 0, 64, 80);
+    }
+  });
+}
+// A paint ball of a player's color; the puddle they leave where they were taken out; a med kit.
+function frBall(color) {
+  return frPicture("ball" + color, 16, 16, g => {
+    g.fillStyle = color; g.strokeStyle = "#1d1726"; g.lineWidth = 2;
+    g.beginPath(); g.arc(8, 8, 6, 0, 7); g.fill(); g.stroke();
+    g.fillStyle = "#ffffffc0"; g.beginPath(); g.arc(6, 6, 2, 0, 7); g.fill();
+  });
+}
+function frPuddle(color) {
+  return frPicture("puddle" + color, 64, 16, g => {
+    g.fillStyle = color; g.strokeStyle = "#1d1726"; g.lineWidth = 2;
+    g.beginPath();
+    for (let i = 0; i <= 16; i++) {
+      const a = i / 16 * Math.PI * 2, r = 1 + 0.18 * Math.sin(i * 2.7);
+      const x = 32 + Math.cos(a) * 28 * r, y = 9 + Math.sin(a) * 5.5 * r;
+      i ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = "#ffffff70"; g.beginPath(); g.ellipse(24, 7, 7, 2, 0, 0, 7); g.fill();
+  });
+}
+function frKit() {
+  return frPicture("kit", 32, 28, g => {
+    g.fillStyle = "#f4f6f9"; g.strokeStyle = "#1d1726"; g.lineWidth = 2.5;
+    g.beginPath(); g.roundRect(3, 6, 26, 20, 4); g.fill(); g.stroke();
+    g.beginPath(); g.roundRect(11, 2, 10, 5, 2); g.stroke();
+    g.fillStyle = "#3fb950"; g.fillRect(14, 9, 4, 14); g.fillRect(9, 14, 14, 4);
+  });
+}
+
+// --- Drawing the view: the sky and the lawn, the walls by ray casting, then the pictures nearest last, all into the
+// small buffer; then the buffer stretched onto the canvas, and the names, the blaster and the rest on top.
+const frView = { w: 480, h: 270 };
+function frSetupView() {
+  if (frView.buf) return;
+  const buf = document.createElement("canvas");
+  buf.width = frView.w; buf.height = frView.h;
+  frView.buf = buf;
+  frView.ctx = buf.getContext("2d");
+  frView.img = frView.ctx.createImageData(frView.w, frView.h);
+  frView.px = new Uint32Array(frView.img.data.buffer);
+  frView.zbuf = new Float32Array(frView.w);
+}
+function frSize(s) {
+  const view = frDoc() ? frPopup : window;
+  const wide = frDoc() ? view.innerWidth - 270 : Math.min(1080, window.innerWidth - 40) - 260;
+  const high = (frDoc() ? view.innerHeight : window.innerHeight - 70) - 80;
+  const w = Math.max(320, Math.min(wide, high * 16 / 9));
+  return [Math.floor(w), Math.floor(w * 9 / 16)];
+}
+// Who the view is from: us, or whom we watch.
+function frViewer() {
+  const me = frMe();
+  if (me >= 0) return me;
+  if (!frState || !frState.players.length) return -1;
+  frWatch = Math.min(frWatch, frState.players.length - 1);
+  return frWatch;
+}
+function frDraw(dt) {
+  const s = frState, root = frRoot();
+  const canvas = root && root.querySelector(".field canvas");
+  if (!s || !canvas || !s.grid) return;
+  if (!frArt) frMakeArt();
+  frSetupView();
+  const now = performance.now();
+  const vi = frViewer();
+  const viewer = s.players[vi];
+  const at = vi >= 0 && frPlace(vi, now);
+  if (!viewer || !at) return;
+  const W = frView.w, H = frView.h, px = frView.px, zb = frView.zbuf, art = frArt, T = art.T;
+  const unit = s.unit, gw = s.w, gh = s.h, grid = s.grid;
+  const camX = at[0] / unit, camY = at[1] / unit;
+  const dead = viewer.state >= 2;
+  const yawDeg = viewer.you && frYaw !== null ? frYaw : viewer.aim;
+  const yaw = yawDeg * Math.PI / 180;
+  const dirX = Math.cos(yaw), dirY = Math.sin(yaw), fov = 0.72;
+  const plX = -dirY * fov, plY = dirX * fov;
+  // Walking bobs the view; out, it lies on the floor.
+  const prev = frPrev && frPrev[vi], walking = prev && !dead && Math.hypot(frCur[vi][0] - prev[0], frCur[vi][1] - prev[1]) > 0.5;
+  if (walking) frBob += dt * 11;
+  const bob = walking ? Math.sin(frBob) * 2.2 : 0;
+  const camZ = dead ? 0.12 : 0.5;
+  const horizon = Math.round(H / 2 + bob + (dead ? -18 : 0));
+
+  // The sky, from the panorama, by the direction of each column.
+  const SW = art.SW, SH = art.SH, sky = art.sky;
+  for (let x = 0; x < W; x++) {
+    const a = yaw + Math.atan((2 * x / W - 1) * fov);
+    // The panorama goes twice around.
+    let u = Math.floor((a / (Math.PI * 2)) * SW * 2) % SW;
+    if (u < 0) u += SW;
+    for (let y = 0, top = Math.min(horizon, H); y < top; y++) {
+      const v = SH - (horizon - y);
+      px[y * W + x] = sky[(v < 0 ? 0 : v) * SW + u];
+    }
+  }
+  // The lawn, row by row from the horizon down.
+  const f0x = dirX - plX, f0y = dirY - plY, f1x = dirX + plX, f1y = dirY + plY;
+  const floor = art.floor;
+  for (let y = Math.max(0, horizon + 1); y < H; y++) {
+    const dist = camZ * H / (y - horizon);
+    const stepX = dist * (f1x - f0x) / W, stepY = dist * (f1y - f0y) / W;
+    let fx = camX + dist * f0x, fy = camY + dist * f0y;
+    const shade = Math.min(frShades - 1, (dist * 0.55) | 0);
+    const a = floor[0][shade], b = floor[1][shade], line = floor[2][shade];
+    // The ink between tiles, thinner far away.
+    const ink = Math.min(0.08, 0.02 + dist * 0.004);
+    const row = y * W;
+    for (let x = 0; x < W; x++) {
+      const cx = Math.floor(fx), cy = Math.floor(fy);
+      const ex = fx - cx, ey = fy - cy;
+      px[row + x] = ex < ink || ey < ink ? line : ((cx + cy) & 1) ? a : b;
+      fx += stepX; fy += stepY;
+    }
+  }
+  // The walls: a ray for each column, through the grid until it meets one.
+  for (let x = 0; x < W; x++) {
+    const cam = 2 * x / W - 1;
+    const rx = dirX + plX * cam, ry = dirY + plY * cam;
+    let mx = Math.floor(camX), my = Math.floor(camY);
+    const ddx = Math.abs(1 / rx), ddy = Math.abs(1 / ry);
+    const sx = rx < 0 ? -1 : 1, sy = ry < 0 ? -1 : 1;
+    let sdx = rx < 0 ? (camX - mx) * ddx : (mx + 1 - camX) * ddx;
+    let sdy = ry < 0 ? (camY - my) * ddy : (my + 1 - camY) * ddy;
+    let side = 0, hit = false;
+    for (let i = 0; i < 64 && !hit; i++) {
+      if (sdx < sdy) { sdx += ddx; mx += sx; side = 0; } else { sdy += ddy; my += sy; side = 1; }
+      if (mx < 0 || my < 0 || mx >= gw || my >= gh || grid[my * gw + mx] === "#") hit = true;
+    }
+    const dist = Math.max(0.05, side === 0 ? sdx - ddx : sdy - ddy);
+    zb[x] = dist;
+    let wx = side === 0 ? camY + dist * ry : camX + dist * rx;
+    wx -= Math.floor(wx);
+    let tx = (wx * T) | 0;
+    if ((side === 0 && rx > 0) || (side === 1 && ry < 0)) tx = T - 1 - tx;
+    const border = mx <= 0 || my <= 0 || mx >= gw - 1 || my >= gh - 1;
+    const kind = border ? 4 : ((mx * 7 + my * 13) % 4 + 4) % 4;
+    const shade = Math.min(frShades - 1, ((dist * 0.42) | 0) + (side ? 2 : 0));
+    const tex = art.textures[kind][shade];
+    const lh = H / dist;
+    const top = horizon - (1 - camZ) * lh, bottom = horizon + camZ * lh;
+    const ink = Math.max(1, lh / 45);
+    const y0 = Math.max(0, Math.ceil(top)), y1 = Math.min(H, Math.ceil(bottom));
+    for (let y = y0; y < y1; y++) {
+      const ty = (((y - top) / lh) * T) | 0;
+      px[y * W + x] = y - top < ink || bottom - y <= ink ? frInk : tex[(ty < T ? ty : T - 1) * T + tx];
+    }
+  }
+
+  // The pictures: whoever is in, the puddles of whoever is out, the med kits and the paint balls, farthest first.
+  const sprites = [];
+  s.players.forEach((p, i) => {
+    if (i === vi) return;
+    const pa = frPlace(i, now);
+    if (!pa) return;
+    if (p.state >= 2) { sprites.push({ x: pa[0] / unit, y: pa[1] / unit, pic: frPuddle(p.color), h: 0.11, lift: -0.02 }); return; }
+    // From the front, a side or the back, by where they face from where we are.
+    let rel = (Math.atan2(camY - pa[1] / unit, camX - pa[0] / unit) * 180 / Math.PI - p.aim) % 360;
+    if (rel > 180) rel -= 360;
+    if (rel < -180) rel += 360;
+    const view = Math.abs(rel) < 50 ? "front" : Math.abs(rel) > 130 ? "back" : rel > 0 ? "right" : "left";
+    const flash = frPops.some(k => k.i === i && now - k.at < 120);
+    sprites.push({ x: pa[0] / unit, y: pa[1] / unit, pic: frBlob(p.color, view, flash), h: 0.74, lift: 0,
+      blink: p.state === 1, player: i });
+  });
+  let kit = 0;
+  for (let c = 0; c < grid.length; c++) {
+    if (grid[c] !== "h") continue;
+    if (s.kits[kit++]) sprites.push({ x: c % gw + 0.5, y: Math.floor(c / gw) + 0.5, pic: frKit(), h: 0.24, lift: 0.04 + 0.03 * Math.sin(now / 250) });
+  }
+  const ahead = Math.min(1, (now - frAt) / 50) * s.shotSpeed;
+  for (const [x, y, dir, owner] of s.shots) {
+    const a = dir * Math.PI / 180, o = s.players[owner];
+    sprites.push({ x: (x + Math.cos(a) * ahead) / unit, y: (y + Math.sin(a) * ahead) / unit, pic: frBall(o ? o.color : "#ffffff"), h: 0.1, lift: 0.3 });
+  }
+  const inv = 1 / (plX * dirY - dirX * plY);
+  for (const sp of sprites) {
+    const rx = sp.x - camX, ry = sp.y - camY;
+    sp.tx = inv * (dirY * rx - dirX * ry);
+    sp.ty = inv * (-plY * rx + plX * ry);
+  }
+  sprites.sort((a, b) => b.ty - a.ty);
+  const labels = [];
+  for (const sp of sprites) {
+    if (sp.ty <= 0.12) continue;
+    const pic = sp.pic, scale = H / sp.ty;
+    const sx = W / 2 * (1 + sp.tx / sp.ty);
+    const hgt = sp.h * scale, wid = hgt * pic.w / pic.h;
+    const bottom = horizon + camZ * scale - sp.lift * scale, top = bottom - hgt, left = sx - wid / 2;
+    const x0 = Math.max(0, Math.ceil(left)), x1 = Math.min(W, Math.ceil(left + wid));
+    const y0 = Math.max(0, Math.ceil(top)), y1 = Math.min(H, Math.ceil(bottom));
+    const blink = sp.blink && Math.floor(now / 90) % 2;
+    for (let x = x0; x < x1; x++) {
+      if (sp.ty >= zb[x]) continue;
+      const tx = Math.min(pic.w - 1, ((x - left) / wid * pic.w) | 0);
+      for (let y = y0; y < y1; y++) {
+        if (blink && (x + y) & 1) continue;
+        const c = pic.px[Math.min(pic.h - 1, ((y - top) / hgt * pic.h) | 0) * pic.w + tx];
+        if (c >>> 24 > 140) px[y * W + x] = c | 0xff000000;
+      }
+    }
+    const cx = Math.round(sx);
+    if (sp.player !== undefined && cx >= 0 && cx < W && sp.ty < zb[cx] && sp.ty < 9) labels.push({ i: sp.player, x: sx, y: top, ty: sp.ty });
+  }
+  frView.ctx.putImageData(frView.img, 0, 0);
+
+  // Onto the canvas, stretched; then the rest on top at full size.
+  const ctx = canvas.getContext("2d"), ratio = canvas._ratio;
+  const cw = canvas.width / ratio, ch = canvas.height / ratio, k = cw / W;
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  // Hit, the view shakes a little.
+  const hurt = Math.max(0, 1 - (now - frHurtAt) / 350);
+  const shake = viewer.you && hurt > 0 ? (Math.random() - .5) * 8 * hurt : 0;
+  ctx.drawImage(frView.buf, shake, shake * .6, cw, ch);
+  ctx.textAlign = "center";
+  // Names over whoever is near enough, with their paint left.
+  for (const l of labels) {
+    const p = s.players[l.i];
+    const size = Math.max(12, Math.min(20, 30 / l.ty));
+    const x = l.x * k, y = l.y * k - 6;
+    ctx.font = `800 ${size}px system-ui, sans-serif`; ctx.textBaseline = "bottom";
+    ctx.lineWidth = 3.5; ctx.strokeStyle = "#1d1726"; ctx.strokeText(p.name.split(" ")[0].slice(0, 12), x, y - 7);
+    ctx.fillStyle = p.color; ctx.fillText(p.name.split(" ")[0].slice(0, 12), x, y - 7);
+    const pip = Math.max(4, size * .4);
+    for (let h = 0; h < s.maxHits; h++) {
+      ctx.fillStyle = h < p.hits ? "#ff5d73" : "#1d172680";
+      ctx.beginPath(); ctx.arc(x + (h - (s.maxHits - 1) / 2) * pip * 1.4, y - 2, pip / 2, 0, 7); ctx.fill();
+    }
+  }
+  // POW! over whoever was just hit, KO! over whoever was taken out.
+  frPops = frPops.filter(p => now - p.at < 700);
+  for (const pop of frPops) {
+    const l = labels.find(l => l.i === pop.i);
+    if (!l) continue;
+    const t = (now - pop.at) / 700;
+    ctx.save();
+    ctx.translate(l.x * k, l.y * k + 20 - t * 30);
+    ctx.rotate(-0.15 + pop.spin);
+    ctx.scale(1 + .3 * Math.sin(Math.min(1, t * 4) * Math.PI), 1 + .3 * Math.sin(Math.min(1, t * 4) * Math.PI));
+    ctx.globalAlpha = 1 - t * t;
+    ctx.font = `900 ${pop.ko ? 34 : 24}px system-ui, sans-serif`; ctx.textBaseline = "middle";
+    ctx.lineWidth = 6; ctx.strokeStyle = "#1d1726"; ctx.strokeText(pop.text, 0, 0);
+    ctx.fillStyle = pop.ko ? "#ff5d73" : "#ffe066"; ctx.fillText(pop.text, 0, 0);
+    ctx.restore();
+  }
+  if (!dead) frGun(ctx, cw, ch, viewer.color, now, walking ? Math.sin(frBob) : 0);
+  // The crosshair.
+  if (!dead) {
+    ctx.strokeStyle = "#1d1726"; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(cw / 2, ch / 2, 7, 0, 7); ctx.stroke();
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cw / 2, ch / 2, 7, 0, 7); ctx.stroke();
+    ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(cw / 2, ch / 2, 1.6, 0, 7); ctx.fill();
+  }
+  // Hit: red at the edges. Out: all red.
+  if (dead) { ctx.fillStyle = "#b0102860"; ctx.fillRect(0, 0, cw, ch); }
+  else if (viewer.you && hurt > 0) {
+    const g = ctx.createRadialGradient(cw / 2, ch / 2, ch * .3, cw / 2, ch / 2, ch * .8);
+    g.addColorStop(0, "#ff000000"); g.addColorStop(1, `rgba(255,30,60,${.55 * hurt})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
+  }
+  // Our paint left, as hearts; who took out how many; the coins they made.
+  const heart = (x, y, r, full) => {
+    ctx.beginPath();
+    ctx.moveTo(x, y + r * .9);
+    ctx.bezierCurveTo(x - r * 1.6, y - r * .1, x - r * .7, y - r * 1.3, x, y - r * .4);
+    ctx.bezierCurveTo(x + r * .7, y - r * 1.3, x + r * 1.6, y - r * .1, x, y + r * .9);
+    ctx.fillStyle = full ? "#ff5d73" : "#3a3346"; ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = "#1d1726"; ctx.stroke();
+  };
+  for (let h = 0; h < s.maxHits; h++) heart(24 + h * 28, ch - 24, 10, h < viewer.hits);
+  ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.font = "800 16px system-ui, sans-serif";
+  const stat = `🎯 ${viewer.kills}   💀 ${viewer.deaths}` + (viewer.you ? `   💰 +${s.earned}` : "");
+  ctx.lineWidth = 4; ctx.strokeStyle = "#1d1726"; ctx.strokeText(stat, 12, 10);
+  ctx.fillStyle = "#ffffff"; ctx.fillText(stat, 12, 10);
+  frCoins = frCoins.filter(c => now - c.at < 1200);
+  for (const c of frCoins) {
+    const t = (now - c.at) / 1200;
+    ctx.globalAlpha = 1 - t;
+    ctx.textAlign = "center"; ctx.font = "900 26px system-ui, sans-serif";
+    ctx.lineWidth = 5; ctx.strokeText(`+${c.n} 💰`, cw / 2, ch / 2 - 40 - t * 50);
+    ctx.fillStyle = "#ffe066"; ctx.fillText(`+${c.n} 💰`, cw / 2, ch / 2 - 40 - t * 50);
+    ctx.globalAlpha = 1;
+  }
+  frMap(ctx, cw, camX, camY, yaw);
+  if (!viewer.you) {
+    ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.font = "700 14px system-ui, sans-serif";
+    const t = `Watching ${viewer.name} · click (or Space) for the next`;
+    ctx.lineWidth = 4; ctx.strokeStyle = "#1d1726"; ctx.strokeText(t, cw / 2, ch - 12);
+    ctx.fillStyle = "#ffffff"; ctx.fillText(t, cw / 2, ch - 12);
+  }
+}
+// The blaster in our hands, bottom right: our color, bobbing as we walk, kicking back when it fires.
+function frGun(ctx, cw, ch, color, now, sway) {
+  const fired = Math.max(0, 1 - (now - frFiredAt) / 140);
+  const k = ch / 760;
+  ctx.save();
+  ctx.translate(cw * .7 + sway * 14 * k, ch + 30 * k + Math.abs(sway) * 10 * k + fired * 30 * k);
+  ctx.scale(k, k);
+  ctx.rotate(-0.32 - fired * 0.08);
+  ctx.lineJoin = "round"; ctx.lineWidth = 6; ctx.strokeStyle = "#1d1726";
+  // The flash at the mouth, when it fires.
+  if (fired > 0.3) {
+    ctx.fillStyle = "#fff3a0";
+    ctx.beginPath();
+    for (let i = 0; i < 16; i++) {
+      const a = i / 16 * Math.PI * 2, r = i % 2 ? 22 : 46;
+      ctx.lineTo(Math.cos(a) * r, -250 + Math.sin(a) * r);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // Barrel, body, tank, the hand holding it.
+  ctx.fillStyle = "#ff9f1c"; ctx.beginPath(); ctx.roundRect(-26, -250, 52, 150, 16); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#ffe066"; ctx.beginPath(); ctx.ellipse(0, -250, 26, 12, 0, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#1d1726"; ctx.beginPath(); ctx.ellipse(0, -250, 12, 5, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(-70, -130, 140, 150, 34); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#ffffff50"; ctx.beginPath(); ctx.roundRect(-52, -116, 30, 80, 14); ctx.fill();
+  ctx.fillStyle = "#2ec4b6"; ctx.beginPath(); ctx.arc(70, -110, 34, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#ffffff70"; ctx.beginPath(); ctx.arc(60, -122, 10, 0, 7); ctx.fill();
+  ctx.fillStyle = "#fbfbfd"; ctx.beginPath(); ctx.ellipse(-20, -10, 52, 40, -0.3, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.lineWidth = 4;
+  for (const y of [-26, -6, 14]) { ctx.beginPath(); ctx.moveTo(-58, y); ctx.lineTo(-30, y + 6); ctx.stroke(); }
+  ctx.restore();
+}
+// The map in a corner, from above, with us on it (not the others).
+function frMap(ctx, cw, camX, camY, yaw) {
+  const s = frState, t = Math.max(3, Math.min(6, Math.floor(150 / Math.max(s.w, s.h))));
+  const ox = cw - s.w * t - 10, oy = 10;
+  ctx.globalAlpha = .82;
+  ctx.fillStyle = "#1d1726"; ctx.fillRect(ox - 3, oy - 3, s.w * t + 6, s.h * t + 6);
+  ctx.fillStyle = "#4c8f45"; ctx.fillRect(ox, oy, s.w * t, s.h * t);
+  ctx.fillStyle = "#f0a37f";
+  let kit = 0;
+  for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
+    const c = s.grid[y * s.w + x];
+    if (c === "#") ctx.fillRect(ox + x * t, oy + y * t, t, t);
+    else if (c === "h" && s.kits[kit++]) {
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(ox + x * t + t * .2, oy + y * t + t * .2, t * .6, t * .6); ctx.fillStyle = "#f0a37f";
+    }
+  }
+  ctx.globalAlpha = 1;
+  const x = ox + camX * t, y = oy + camY * t;
+  ctx.fillStyle = "#ffe066"; ctx.strokeStyle = "#1d1726"; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x + Math.cos(yaw) * t * 1.6, y + Math.sin(yaw) * t * 1.6);
+  ctx.lineTo(x + Math.cos(yaw + 2.5) * t, y + Math.sin(yaw + 2.5) * t);
+  ctx.lineTo(x + Math.cos(yaw - 2.5) * t, y + Math.sin(yaw - 2.5) * t);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+}
+function frLoop(now) {
+  if (!frLooping) return;
+  const view = frDoc() ? frPopup : window;
+  if (!frRoot() || !frState || frState.phase === "lobby" || frState.phase === "none") { frLooping = false; return; }
+  const dt = Math.min(0.1, (now - (frLast || now)) / 1000);
+  frLast = now;
+  // The arrows turn.
+  const turn = (frHeld.includes("tr") ? 1 : 0) - (frHeld.includes("tl") ? 1 : 0);
+  if (turn && frYaw !== null && frPlaying()) {
+    frYaw = (frYaw + turn * 150 * dt + 360) % 360;
+    frSend();
+  }
+  frDraw(dt);
+  view.requestAnimationFrame(frLoop);
+}
+function frStartLoop() {
+  if (frLooping) return;
+  frLooping = true;
+  frLast = 0;
+  (frDoc() ? frPopup : window).requestAnimationFrame(frLoop);
+}
+
+let frBuilt = null;
+function renderFrag() {
+  const s = frState, root = frRoot();
+  if (!s || !root) return;
+  const doc = root.ownerDocument;
+  const el = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const field = s.phase !== "lobby" && s.phase !== "none";
+  const [vw, vh] = frSize(s);
+  const kind = s.round + (field ? "field" : "lobby") + vw;
+  if (frBuilt !== kind) {
+    frBuilt = kind;
+    root.textContent = "";
+    const top = el("div", "top");
+    top.append(el("span", "title", "🔫 Frag"), el("span", "by"), el("span", "earned"), el("span", "clock"));
+    if (frDoc()) {
+      const close = el("button", "", "×");
+      close.style.cssText = "margin-left:8px;background:none;border:0;color:#7d8491;font-size:18px;cursor:pointer";
+      close.onclick = closeFrag;
+      top.append(close);
+    }
+    root.append(top);
+    const main = el("div", "main");
+    if (field) {
+      const box = el("div", "field");
+      const canvas = el("canvas");
+      const ratio = doc.defaultView.devicePixelRatio || 1;
+      canvas._ratio = ratio;
+      canvas.width = vw * ratio; canvas.height = vh * ratio;
+      canvas.style.width = vw + "px"; canvas.style.height = vh + "px";
+      frCanvasMouse(canvas);
+      box.append(canvas, el("div", "overlay"), el("div", "tip"));
+      box.classList.toggle("locked", doc.pointerLockElement === canvas);
+      main.append(box);
+    } else {
+      main.append(el("div", "lobby"));
+    }
+    const side = el("div", "side");
+    side.append(el("div", "result"), el("h3", "", "Players"), el("div", "list"), el("div", "buttons"),
+      el("h3", "feed-title", "Taken out"), el("div", "feed"), el("div", "hint"));
+    main.append(side);
+    root.append(main);
+  }
+  const q = sel => root.querySelector(sel);
+  q(".top .by").textContent = s.referee ? "by " + s.referee : "";
+  q(".top .earned").textContent = field && s.playing && s.earned ? `💰 +${s.earned}` : "";
+  const clock = q(".top .clock");
+  clock.className = "clock" + (s.phase === "play" && s.left <= 10 ? " last" : "");
+  clock.textContent = s.phase === "play" ? Math.floor(s.left / 60) + ":" + String(s.left % 60).padStart(2, "0") : "";
+
+  const result = q(".result");
+  result.hidden = !s.result;
+  result.textContent = s.result ? "🏆 " + s.result : "";
+
+  if (field) {
+    const overlay = q(".overlay");
+    overlay.className = "overlay" + (s.phase === "over" || s.phase === "play" ? " small" : "");
+    const me = s.players.find(p => p.you);
+    const killer = me && me.killer >= 0 ? s.players[me.killer] : null;
+    overlay.textContent = s.phase === "countdown" ? (s.left > 0 ? String(s.left) : "GO!")
+      : s.phase === "over" ? (s.result || "Over")
+      : me && me.state >= 2 ? `💀 KO${killer ? " by " + killer.name : ""}! Back in ${me.state - 2}…` : "";
+    const canvas = q(".field canvas");
+    const locked = canvas && canvas.ownerDocument.pointerLockElement === canvas;
+    q(".field .tip").textContent = s.playing && s.phase !== "over" && !locked && !(me && me.state >= 2)
+      ? "Click to play: the mouse turns and shoots, WASD walks (Esc frees the mouse)" : "";
+    frStartLoop();
+  } else {
+    const lobby = q(".lobby");
+    lobby.textContent = "";
+    lobby.append(el("div", "big", s.joinLeft + "s"),
+      el("div", "hint", s.joined ? (s.players.some(p => p.you) ? "You are in! The round starts when the time is up." : "Joining…")
+        : `Join to play: three minutes of first-person paint-ball, ${s.perKill} coin for each player you take out, and whoever takes out the most wins.`));
+  }
+
+  // The players, the best first: taken out and times out; at the end, where they finished.
+  const list = q(".list");
+  list.textContent = "";
+  if (!s.players.length) list.append(el("div", "none", "Nobody yet."));
+  const order = s.players.map((p, i) => i);
+  if (field) order.sort((a, b) => s.players[b].kills - s.players[a].kills || s.players[a].deaths - s.players[b].deaths);
+  for (const i of order) {
+    const p = s.players[i];
+    const out = field && p.state >= 2 && s.phase !== "over";
+    const row = el("div", "player" + (out ? " out" : "") + (p.place === 0 ? " win" : ""));
+    const dot = el("span", "dot");
+    dot.style.background = p.color;
+    const name = el("span", "name", p.name + (p.you ? " (you)" : ""));
+    name.style.color = p.color;
+    const stats = el("span", "stats kd", !field ? "ready" : (p.place === 0 ? "🏆 " : p.place > 0 ? "#" + (p.place + 1) + " " : "")
+      + `🎯${p.kills} 💀${p.deaths}`);
+    stats.title = `${p.kills} taken out, out ${p.deaths} times`;
+    row.append(dot, name, stats);
+    list.append(row);
+  }
+
+  const buttons = q(".buttons");
+  buttons.textContent = "";
+  if (s.phase === "lobby") {
+    const inIt = s.players.some(p => p.you);
+    const join = el("button", "primary", inIt ? "Joined" : s.joined ? "Joining…" : "Join");
+    join.disabled = s.joined;
+    join.onclick = () => window.zchatSend("/game frag join");
+    buttons.append(join);
+    if (s.isReferee) {
+      const go = el("button", "", "Start now");
+      go.disabled = s.players.length < 2;
+      go.onclick = () => window.zchatSend("/game frag go");
+      buttons.append(go);
+    }
+  } else if (s.phase === "over") {
+    const again = el("button", "primary", "New round");
+    again.onclick = () => window.zchatSend("/game frag");
+    buttons.append(again);
+  }
+  buttons.hidden = !buttons.childElementCount;
+
+  // Who took out whom, the last few.
+  const feed = q(".feed"), now = performance.now();
+  frFeed = frFeed.filter(k => now - k.at < 8000).slice(-6);
+  feed.textContent = "";
+  q(".feed-title").hidden = feed.hidden = !field || !frFeed.length;
+  for (const k of frFeed) {
+    const row = el("div", "kill");
+    const who = (p, fallback) => { const b = el("b", "", p ? (p.you ? "You" : p.name) : fallback); if (p) b.style.color = p.color; return b; };
+    row.append(who(k.killer, "Somebody"), el("span", "gun", "🔫"), who(k.victim, "somebody"));
+    feed.append(row);
+  }
+
+  const hint = q(".side .hint");
+  hint.textContent = "";
+  if (s.playing || s.phase === "lobby") {
+    hint.innerHTML = "Click the view, then the mouse turns and its button shoots; <kbd>W</kbd><kbd>S</kbd> walk, " +
+      "<kbd>A</kbd><kbd>D</kbd> step aside, the arrows walk and turn too, <kbd>Space</kbd> shoots. Four splats take you out, " +
+      `for 3 seconds; ✚ heals. Each player you take out: 💰 +${s.perKill}.`;
+  } else if (field && s.phase !== "over") {
+    hint.textContent = "You are watching this round: click the view (or Space) to watch the next player.";
+  }
+}
+function fragGame(state) {
+  const fresh = !frState || frState.round !== state.round;
+  const was = frState ? frState.phase : "none";
+  const before = frState;
+  frState = state;
+  if (state.phase === "none") {
+    renderFrag();
+    return;
+  }
+  const now = performance.now();
+  if (state.frame !== frFrame && state.players.length) {
+    if (!fresh && before && before.players.length === state.players.length && state.frame > frFrame && frFrame >= 0) {
+      const words = ["POW!", "SPLAT!", "BAM!", "ZAP!", "BONK!"];
+      state.players.forEach((p, i) => {
+        const old = before.players[i];
+        if (old.state < 2 && p.state >= 2) {
+          // Taken out, for the feed and a KO!
+          frFeed.push({ killer: state.players[p.killer], victim: p, at: now });
+          frPops.push({ i, text: "KO!", ko: true, at: now, spin: (Math.random() - .5) * .3 });
+        } else if (p.state < 2 && p.hits < old.hits) {
+          frPops.push({ i, text: words[Math.floor(Math.random() * words.length)], at: now, spin: (Math.random() - .5) * .4 });
+        }
+        if (p.you && p.state < 2 && (p.hits < old.hits || (old.state < 2 && p.state >= 2))) frHurtAt = now;
+      });
+      if (state.earned > before.earned) frCoins.push({ n: state.earned - before.earned, at: now });
+    }
+    // We fired: a paint ball of ours just left the blaster.
+    const me = state.players.findIndex(p => p.you);
+    if (me >= 0 && state.shots.some(([x, y, , owner]) => owner === me && Math.hypot(x - state.players[me].x, y - state.players[me].y) < 1.5 * state.unit)) frFiredAt = now;
+    frPrev = fresh || !frCur || state.frame < frFrame ? null : frCur;
+    frCur = state.players.map(p => [p.x, p.y]);
+    frAt = now;
+    frFrame = state.frame;
+  }
+  if (fresh) { frFrame = state.frame; frHeld = []; frMouse = frSpace = false; frSent = ""; frYaw = null; frFeed = []; frPops = []; frCoins = []; frWatch = 0; }
+  // Where we face is ours, once the referee has told where we start.
+  const me = state.players.find(p => p.you);
+  if (me && frYaw === null && state.frame >= 0) frYaw = me.aim;
+  const starting = state.playing && was === "lobby" && state.phase !== "lobby";
+  if ((fresh && state.phase !== "over" && frClosedRound !== state.round) || (starting && !frRoot())) {
+    if (starting) frClosedRound = null;
+    openFrag(state.isReferee || state.playing || starting);
+  } else {
+    renderFrag();
+    if (starting) frFocus();
+  }
+  if (state.phase === "over") {
+    frRelease();
+    const doc = frDoc() || document;
+    try { if (doc.pointerLockElement) doc.exitPointerLock(); } catch {}
+  }
+}
+document.getElementById("fr-open").onclick = () => {
+  if (!frState || frState.phase === "none" || frState.phase === "over" && !frRoot()) {
+    window.zchatSend("/game frag");
+    return;
+  }
+  frClosedRound = null;
+  openFrag(true);
+};
+document.getElementById("fr-float-close").onclick = closeFrag;
+(() => {
+  const handle = document.getElementById("fr-float-title");
+  let dx = 0, dy = 0, dragging = false;
+  handle.addEventListener("mousedown", e => {
+    if (e.target.tagName === "BUTTON") return;
+    dragging = true;
+    const r = frFloat.getBoundingClientRect();
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    frFloat.style.left = Math.max(0, e.clientX - dx) + "px";
+    frFloat.style.top = Math.max(0, e.clientY - dy) + "px";
+    frFloat.style.right = "auto";
+  });
+  document.addEventListener("mouseup", () => { dragging = false; });
+})();
+
 // --- The games' windows: the C++ side calls zchat.game(game, state) with each game's state.
 zchat.game = (game, state) => {
   if (game === "dice") diceGame(state);
   else if (game === "pokemon") pokemonGame(state);
   else if (game === "bomber") bomberGame(state);
   else if (game === "arena") arenaGame(state);
+  else if (game === "frag") fragGame(state);
   else if (game === "pokemon-challenge") pokemonChallenges(state);
   else if (game === "kick") kickVotes(state);
   else if (game === "coins") showCoins(state);
@@ -3564,10 +4522,10 @@ input.addEventListener("input", async e => {
 });
 input.addEventListener("blur", () => setTimeout(closeMentions, 150));
 // Typing anywhere types in the input box, except in another field (like the name in the profile panel) and in the
-// floating bomber and arena windows, whose keys play.
+// floating bomber, arena and frag windows, whose keys play.
 document.addEventListener("keydown", e => {
   const el = document.activeElement;
-  if (bmFloat.contains(el) || amFloat.contains(el)) return;
+  if (bmFloat.contains(el) || amFloat.contains(el) || frFloat.contains(el)) return;
   const field = el && el !== input && (el.matches("input, textarea, select") || el.isContentEditable);
   if (el !== input && !field && !e.ctrlKey && !e.metaKey && e.key.length === 1) input.focus();
 });
