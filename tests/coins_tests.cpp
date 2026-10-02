@@ -38,6 +38,15 @@ TEST(coins_prices) {
     CHECK_EQ(price("kick").value_or(0), 20LL);
     CHECK(price("spy").has_value());
     CHECK(!price("nothing").has_value());
+    // A spy is real now (not "coming soon"): the asker pays 20 when accepted, the one agreeing gets half.
+    CHECK_EQ(price("spy").value_or(0), 20LL);
+    for (const Item& item : items) {
+        if (item.name == "spy") {
+            CHECK(!item.soon);
+        }
+    }
+    // New people can afford to ask for a peek right away.
+    CHECK(initial >= price("spy").value_or(0));
     // A duel won pays a trill.
     CHECK(payouts({0, 1})[0] >= price("trill").value_or(0));
     // New people can trill and kick right away.

@@ -303,8 +303,11 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /kick NAME   ask the others to vote NAME out of the chat: /kick yes kicks, /kick no graces;");
     chat.notice("               they are out (their zchat closes) if at least as many vote to kick as to grace;");
     chat.notice("               asking costs coins (/shop), voting is free");
+    chat.notice("  /spy @NAME   ask NAME to let you see their screen(s): if they /spy allow, their zchat shares");
+    chat.notice("               them; /spy deny (or no answer) refuses and nothing is captured. Asking is free:");
+    chat.notice("               only if they accept do you pay 20 coins, and they get 10 for letting you in");
     chat.notice("  /game        list the games everyone in the chat can play (/game help NAME: how to play one)");
-    chat.notice("  /coins [NAME]  your coins, or somebody's: won in the games, spent on /trill and /kick");
+    chat.notice("  /coins [NAME]  your coins, or somebody's: won in the games, spent on /trill, /kick and /spy");
     chat.notice("               (/coins top: who has the most; /shop: the prices)");
     chat.notice("  /casino      bet your coins at blackjack, roulette and the horse race, with the whole chat");
     chat.notice("               (in its own window; /casino help: how to play in the chat)");
@@ -1186,6 +1189,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
                                      : std::format("Stopped {} trill{}.", stopped, stopped == 1 ? "" : "s"));
         } else if (input == "/kick" || input.starts_with("/kick ")) {
             games.kick(input.substr(std::min(input.size(), std::string_view("/kick ").size())));
+        } else if (input == "/spy" || input.starts_with("/spy ")) {
+            games.spy(input.substr(std::min(input.size(), std::string_view("/spy ").size())));
         } else if (input == "/coins" || input.starts_with("/coins ")) {
             games.coins(input.substr(std::min(input.size(), std::string_view("/coins ").size())));
         } else if (input == "/shop") {
