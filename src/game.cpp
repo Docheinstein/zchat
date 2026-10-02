@@ -1,8 +1,10 @@
 #include "game.hpp"
 
+#include "casino.hpp"
 #include "text.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <format>
 
@@ -18,15 +20,22 @@ namespace {
         return out;
     }
 
+    // The games that are the casino's tables, by name.
+    constexpr std::array<std::string_view, 3> casino_tables {"blackjack", "roulette", "horses"};
+
 } // namespace
 
 Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
-    chat_(chat) {
+    chat_(chat),
+    screen_(terminal) {
     games_.push_back(make_race(chat, terminal, *this));
     games_.push_back(make_dice(chat, terminal, *this));
     games_.push_back(make_paint(chat, terminal, *this));
     games_.push_back(make_wordle(chat, terminal, *this));
     games_.push_back(make_pokemon(chat, terminal, *this));
+    games_.push_back(make_blackjack(chat, terminal, *this));
+    games_.push_back(make_roulette(chat, terminal, *this));
+    games_.push_back(make_horses(chat, terminal, *this));
     // Kicks cost coins, which the ratings keep (made next).
     games_.push_back(make_kick(chat, terminal, std::move(kicked), [this](std::string_view item) {
         return ratings_->spend(item);
@@ -159,6 +168,73 @@ void Games::coins(std::string_view args) {
 bool Games::spend(std::string_view item) {
     std::scoped_lock lock(mutex_);
     return ratings_->spend(item);
+}
+
+void Games::casino(std::string_view args) {
+    std::scoped_lock lock(mutex_);
+    while (!args.empty() && args.front() == ' ') {
+        args.remove_prefix(1);
+    }
+    const auto space = args.find(' ');
+    const std::string name = lowercase(args.substr(0, space));
+    std::string_view rest = space == std::string_view::npos ? std::string_view() : args.substr(space + 1);
+    while (!rest.empty() && rest.front() == ' ') {
+        rest.remove_prefix(1);
+    }
+    if (name.empty() || name == "help") {
+        if (name.empty() && screen_.show_game("casino", "{\"open\":true}")) {
+            chat_.notice("🎰 The casino is open, in its own window: blackjack, roulette and the horse race, for "
+                         "coins. /casino help: how to play in the chat.");
+            return;
+        }
+        chat_.notice("🎰 The casino: bet your coins at tables the whole chat shares. Whoever bets first at a table "
+                     "deals, and everybody sees everybody's bets.");
+        for (const std::string_view t : casino_tables) {
+            const Game* game = table(t);
+            chat_.notice(std::format("  {}: {}", game->name(), game->summary()));
+            for (const Help& h : game->help()) {
+                chat_.notice(std::format("    /casino {}{}{}  {}", game->name(), h.args.empty() ? "" : " ", h.args,
+                                         h.what));
+            }
+        }
+        chat_.notice(std::format("  Bets are from {} to {} coins. /coins: yours.", casino::min_bet, casino::max_bet));
+        return;
+    }
+    Game* game = table(name);
+    if (!game) {
+        chat_.notice(std::format("No table {} at the casino: there are blackjack, roulette and horses (try /casino "
+                                 "help).",
+                                 text::sanitize(args.substr(0, space), 32)));
+        return;
+    }
+    if (rest.empty()) {
+        game->start();
+    } else if (!game->command(lowercase(rest))) {
+        chat_.notice(std::format("Unknown command {} at {} (try /casino help)", text::sanitize(rest, 32),
+                                 game->name()));
+    }
+}
+
+bool Games::stake(long long amount, std::string_view what) {
+    std::scoped_lock lock(mutex_);
+    return ratings_->stake(amount, what);
+}
+
+void Games::cash(long long amount) {
+    std::scoped_lock lock(mutex_);
+    ratings_->cash(amount);
+}
+
+Game* Games::table(std::string_view name) const {
+    const std::string_view full = name == "bj" || name == "21" ? "blackjack"
+                                  : name == "wheel"            ? "roulette"
+                                  : name == "horse" || name == "race" || name == "horserace" ? "horses"
+                                                                                             : name;
+    if (std::ranges::find(casino_tables, full) == casino_tables.end()) {
+        return nullptr;
+    }
+    const auto it = std::ranges::find(games_, full, &Game::name);
+    return it == games_.end() ? nullptr : it->get();
 }
 
 Game* Games::find(std::string_view name) const {

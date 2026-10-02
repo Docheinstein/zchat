@@ -92,6 +92,7 @@ While chatting:
 | `/coins [NAME]`    | your coins, or somebody's: won in the games, spent on `/trill` and `/kick`. In the window they are by your name (💰), and a click on them shows `/shop` |
 | `/coins top`       | who has the most coins (`/game top coins` works too). Who left is on it too |
 | `/shop`            | what coins buy, and how to win them (`/coins shop` works too) |
+| `/casino`          | the casino: blackjack, roulette and a horse race, for coins, at tables the whole chat shares (see below). In the window it opens the casino's own window (🎰 Casino at the top); `/casino help` lists the commands to play in the chat |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
 | `/game`            | list the games everyone in the chat can play           |
@@ -195,6 +196,22 @@ chat shows what each player of a round won, with their new balance.
 
 Without enough coins, the command is not sent, and zchat says what it costs and how many you have. The prices are in
 `src/coins.hpp`, with what a round pays.
+
+### Casino
+
+Coins can also be bet at the casino, at three tables the whole chat shares: whoever bets first at a free table deals
+that round (shuffles, spins the wheel, starts the race), the others can bet too for a while, and everybody sees
+everybody's bets. Each table can be played alone too: the button to deal, spin or start (or its command) goes right
+away once everybody who bet pressed it. Bets are from 1 to 500 coins. In the window, 🎰 Casino at the top opens the
+casino's window: a lobby, and each table, with chips to pick the bet and buttons for everything.
+
+| Table | Commands | What pays |
+|-------|----------|-----------|
+| 🃏 Blackjack | `/casino blackjack bet N` sits down (up to seven players), `deal`, then `hit`, `stand`, `double` or `split` (`bj` for short) | everybody plays their hand against the dealer at the same time; the dealer draws to 16 and stands on all 17s. A win pays 1 to 1, a blackjack 3 to 2, a push gives the bet back |
+| 🎡 Roulette | `/casino roulette bet N WHAT`, as many as you like, then `spin` | a European wheel, 0 to 36. WHAT is a number (pays 35 to 1), `red`, `black`, `odd`, `even`, `low`, `high` (1 to 1), `1st`, `2nd`, `3rd` dozen or `col1`, `col2`, `col3` (2 to 1) |
+| 🏇 Horse race | `/casino horses open` shows the six horses and their odds, `/casino horses bet N HORSE` (its number or name), then `go` | the winner's odds times the bet: about 9 in 10 of what is bet comes back, on average |
+
+The house wins in the long run, as in any casino: the casino is where coins go.
 
 `/ascii` sends a picture as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
 with more ink, in the color of the picture. They are shown as solid blocks of color, as dark or bright as the
@@ -391,6 +408,17 @@ The window is built too (`-DZCHAT_GUI=OFF` leaves it out, for the terminal versi
   they work out what a round pays everybody too, to show it at once. With no server, nothing stops someone from
   editing their own config to be rich, as with the ratings: it is a game among colleagues. Older versions ignore the
   coins, and trill and kick for free.
+* **The casino's tables** (`/casino`) are `GAME` packets too, `blackjack ...`, `roulette ...` and `horses ...`:
+  whoever bets first at a free table is that round's referee. At blackjack it shuffles six decks, deals, and sends
+  the whole table (`blackjack state <round> <table>`, everybody's cards, the dealer's second one hidden until it
+  plays) on every change and every two seconds; the players send their bets and moves (`blackjack act <round>
+  <hand> <cards> hit`), again until the table shows them, and a move sent twice is made once. At roulette and the
+  races everybody sends their bets to everybody, and the referee sends where the ball stops (`roulette spin <round>
+  <number>`) or the whole race (`horses race <round> <order> <track>`: the order of finish, and where each horse is at
+  twenty checkpoints, which every window plays out). Each zchat takes its user's bets from their coins and pays
+  their winnings itself from what the referee says, so coins are kept as always (see above); a bet the referee never
+  took, or a round whose referee left, is given back. Two tables opened at the same time become the lowest numbered
+  one. The arithmetic (cards, payouts, odds, how the horses run) is in `src/casino.cpp`, with its tests.
 * **Pokémon battles** are run by one of the two players' zchat, the referee: the challenger's if it has Node.js, or else the
   other's. It runs Pokémon Showdown's simulator with node and `src/pokemon/bridge.js` (built into zchat, written next to
   the simulator), which prints what the battle says in three streams: what everyone sees, and what each player sees
