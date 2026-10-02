@@ -191,14 +191,18 @@ namespace {
             for (auto it = requests_.begin(); it != requests_.end();) {
                 Request& r = *it;
                 if (r.us && !r.answered && now >= r.deadline) {
-                    // No answer in time: a refusal, and no picture is ever taken.
+                    // No answer in time: as good as a yes, so the picture is taken (only /spy deny refuses).
                     r.answered = true;
-                    send_done(r.round, "denied", 0);
-                    chat_.notice(std::format("🕶 You did not answer {}'s peek in time, so it is off: no screenshot was "
-                                             "taken.",
-                                             r.other_name));
-                    done_.push_back(r.round);
+                    const std::uint64_t round = r.round;
+                    const std::string other_name = r.other_name;
+                    const long long bounty = half_of(r.price);
+                    chat_.notice(std::format("📸 You did not answer {}'s peek in time, so it is on: taking the "
+                                             "picture now...",
+                                             other_name));
+                    done_.push_back(round);
                     it = requests_.erase(it);
+                    // Capturing runs outside tools and can take a moment: on a thread of its own, like /spy allow.
+                    start_capture(round, other_name, bounty);
                     continue;
                 }
                 if (r.ours && now >= r.deadline) {
