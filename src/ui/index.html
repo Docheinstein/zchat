@@ -131,6 +131,18 @@
     font-size: 12px; user-select: none;
   }
   #pk-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  /* The same for bomber. */
+  #bm-float {
+    position: fixed; top: 54px; right: 20px; width: min(860px, calc(100vw - 40px)); z-index: 18; display: none;
+    background: #111317; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px #000b; overflow: hidden;
+  }
+  #bm-float.open { display: block; }
+  #bm-float-title {
+    display: flex; align-items: center; padding: 6px 10px; background: var(--panel); cursor: move; color: var(--muted);
+    font-size: 12px; user-select: none;
+  }
+  #bm-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  #bm-float:focus-within { border-color: var(--accent); }
   #new-channel { display: none; margin: 4px 14px 8px; }
   #new-channel.open { display: block; }
   #new-channel input, #new-channel select {
@@ -302,6 +314,7 @@
 <style id="dice-style"></style>
 <style id="pk-style"></style>
 <style id="casino-style"></style>
+<style id="bm-style"></style>
 </head>
 <body>
 <header>
@@ -317,6 +330,7 @@
   <button id="pk-challenge-open" title="Challenge someone to a Pokémon battle">⚔ Battle</button>
   <button id="dice-open" title="Dice" hidden>🎲</button>
   <button id="pk-open" title="Pokémon battle" hidden>⚔</button>
+  <button id="bm-open" title="Bomber: start a round, or show the one on">💣 Bomber</button>
   <select id="font" title="Font"></select>
   <button id="smaller" title="Smaller text">A−</button>
   <button id="bigger" title="Bigger text">A+</button>
@@ -383,6 +397,8 @@
   <div class="casino" id="casino-body"></div></div>
 <div id="pk-float"><div id="pk-float-title">zchat · Pokémon<button id="pk-float-close" title="Close">×</button></div>
   <div class="pk" id="pk-body"></div></div>
+<div id="bm-float" tabindex="-1"><div id="bm-float-title">zchat · bomber<button id="bm-float-close" title="Close">×</button></div>
+  <div class="bm" id="bm-body"></div></div>
 <div id="drop">Drop a picture or a file to send it</div>
 <div id="viewer"><img alt="picture"></div>
 <script>
@@ -1769,6 +1785,418 @@ pkChallenge.addEventListener("keydown", e => {
   if (e.key === "Enter" && e.target.tagName !== "BUTTON" && !pkChallengeSend.disabled) { sendChallenge(); e.preventDefault(); }
 });
 
+// --- Bomber, in a window of its own (zchat.game("bomber", state)): the map seen from above, as in Bomberman, drawn on a
+// canvas. Like the dice: a real window when the web view allows one, or else one floating over the chat. The state
+// comes after every step of the referee (20 a second); the players are drawn between where the last two put them, so
+// they glide. The arrows (or WASD) send /game bomber key DIR when the key held changes, Space /game bomber bomb.
+const bmStyle = `
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #111317; color: #d6d9df; font: 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .bm { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; outline: none; }
+  .top { display: flex; align-items: baseline; gap: 8px; }
+  .top .title { font-size: 18px; font-weight: 700; }
+  .top .by { color: #7d8491; font-size: 12px; }
+  .top .clock { margin-left: auto; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .top .clock.hurry { color: #e5534b; animation: bm-blink .6s steps(2) infinite; }
+  @keyframes bm-blink { 50% { opacity: .35; } }
+  .main { display: flex; gap: 12px; align-items: flex-start; }
+  .field { position: relative; flex: none; border-radius: 6px; overflow: hidden; box-shadow: 0 4px 18px #000a; }
+  .field canvas { display: block; }
+  .field .overlay { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+    font-size: 64px; font-weight: 800; color: #fff; text-shadow: 0 3px 12px #000, 0 0 2px #000; text-align: center; }
+  .field .overlay.small { font-size: 26px; padding: 20px; }
+  .side { flex: 1; min-width: 170px; display: flex; flex-direction: column; gap: 6px; }
+  h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: #7d8491; margin: 0 0 2px; }
+  .player { display: flex; align-items: center; gap: 7px; padding: 4px 0; border-bottom: 1px solid #1c1f26; }
+  .player .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .player .name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .player.out .name { text-decoration: line-through; opacity: .55; }
+  .player .stats { font-size: 11px; color: #7d8491; white-space: nowrap; }
+  .player.win .stats { color: #f2c94c; font-weight: 700; }
+  .lobby { background: #181b21; border: 1px solid #262a33; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .lobby .big { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .hint { color: #7d8491; font-size: 12px; line-height: 1.5; }
+  .hint kbd { background: #262a33; border-radius: 4px; padding: 1px 5px; font: inherit; color: #d6d9df; }
+  .buttons { display: flex; gap: 8px; }
+  .buttons button { flex: 1; height: 38px; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    border: 1px solid #262a33; background: #1e222a; color: #d6d9df; white-space: nowrap; padding: 0 10px; }
+  .buttons button.primary { background: #6ea8ff; border-color: #6ea8ff; color: #0b0d10; }
+  .buttons button:disabled { opacity: .35; cursor: default; }
+  .result { font-size: 15px; font-weight: 700; text-align: center; padding: 6px; border-radius: 8px; background: #2a2410; color: #f2c94c; }
+  .none { color: #7d8491; font-size: 12px; }
+`;
+let bmState = null, bmPopup = null, bmClosedRound = null;
+// Where the players were in the state before the last one, and when the last one came: they are drawn in between.
+let bmPrev = null, bmCur = null, bmAt = 0, bmFrame = -1, bmLooping = false;
+let bmHeld = [], bmSent = "n";
+document.getElementById("bm-style").textContent = bmStyle.replace(/:root \{[^}]*\}/, "").replace(/@keyframes[^{]*\{[^{}]*\{[^}]*\}\s*\}/g, "")
+  .replace(/(^|\})\s*([^{}@]+)\{/g,
+  (m, end, sel) => end + " " + sel.split(",").map(x => x.trim() === "body" ? "#bm-float" : "#bm-float " + x.trim()).join(", ") + " {")
+  + "@keyframes bm-blink { 50% { opacity: .35; } }";
+const bmFloat = document.getElementById("bm-float");
+function bmDoc() {
+  if (bmPopup && !bmPopup.closed) return bmPopup.document;
+  return null;
+}
+function bmRoot() {
+  return bmDoc() ? bmDoc().getElementById("bm") : bmFloat.classList.contains("open") ? document.getElementById("bm-body") : null;
+}
+function openBomber(focus) {
+  if (!bmDoc()) {
+    let w = null;
+    try { w = window.open("", "zchat-bomber", "popup,width=900,height=720"); } catch {}
+    if (w && w.document) {
+      w.document.open();
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · bomber</title><style>${bmStyle}</style></head><body><div class="bm" id="bm" tabindex="-1"></div></body></html>`);
+      w.document.close();
+      bmPopup = w;
+      bmListen(w.document, () => true);
+      w.addEventListener("blur", bmRelease);
+      w.addEventListener("resize", () => { bmBuilt = null; renderBomber(); });
+      if (!focus) setTimeout(() => { try { window.focus(); } catch {} }, 50);
+    } else {
+      bmPopup = null;
+      bmFloat.classList.add("open");
+    }
+  }
+  bmBuilt = null;
+  renderBomber();
+  if (focus) bmFocus();
+}
+function closeBomber() {
+  if (bmState) bmClosedRound = bmState.round;
+  bmRelease();
+  if (bmPopup && !bmPopup.closed) bmPopup.close();
+  bmPopup = null;
+  bmFloat.classList.remove("open");
+  input.focus();
+}
+// Where the keys go: the window, or the floating one (taken from the chat's input).
+function bmFocus() {
+  if (bmDoc()) { try { bmPopup.focus(); bmDoc().getElementById("bm").focus(); } catch {} }
+  else if (bmFloat.classList.contains("open")) bmFloat.focus();
+}
+
+// --- The keys: the one held last wins, as in the arcade.
+const bmKeys = { ArrowUp: "u", ArrowDown: "d", ArrowLeft: "l", ArrowRight: "r", w: "u", s: "d", a: "l", d: "r", W: "u", S: "d", A: "l", D: "r" };
+function bmSendKey() {
+  const k = bmHeld.length ? bmHeld[bmHeld.length - 1] : "n";
+  if (k !== bmSent) { bmSent = k; window.zchatSend("/game bomber key " + k); }
+}
+function bmRelease() {
+  bmHeld = [];
+  if (bmState && bmState.playing) bmSendKey();
+}
+function bmPlaying() {
+  return bmState && bmState.playing && (bmState.phase === "play" || bmState.phase === "hurry" || bmState.phase === "countdown");
+}
+function bmListen(doc, active) {
+  doc.addEventListener("keydown", e => {
+    if (!active() || !bmPlaying() || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = bmKeys[e.key];
+    if (k) {
+      if (!bmHeld.includes(k)) bmHeld.push(k);
+      bmSendKey();
+      e.preventDefault();
+    } else if (e.key === " " || e.key === "x" || e.key === "X" || e.key === "Enter") {
+      if (!e.repeat) window.zchatSend("/game bomber bomb");
+      e.preventDefault();
+    }
+  });
+  doc.addEventListener("keyup", e => {
+    const k = bmKeys[e.key];
+    if (!k) return;
+    bmHeld = bmHeld.filter(h => h !== k);
+    if (bmState && bmState.playing) bmSendKey();
+  });
+}
+bmListen(document, () => bmFloat.classList.contains("open") && bmFloat.contains(document.activeElement));
+bmFloat.addEventListener("focusout", e => { if (!bmFloat.contains(e.relatedTarget)) bmRelease(); });
+bmFloat.addEventListener("mousedown", e => { if (e.target.tagName !== "BUTTON") setTimeout(() => bmFloat.focus(), 0); });
+
+// --- Drawing: the floor, walls and crates, bombs, flames and power-ups, then the players.
+let bmBuilt = null; // what the window was built for: round and phase kind, so it is rebuilt only when they change
+function bmTileSize(s) {
+  const view = bmDoc() ? bmPopup : window;
+  const wide = bmDoc() ? view.innerWidth - 230 : Math.min(860, window.innerWidth - 40) - 220;
+  const high = (bmDoc() ? view.innerHeight : window.innerHeight - 70) - 110;
+  return Math.max(14, Math.min(44, Math.floor(Math.min(wide / s.w, high / s.h))));
+}
+function bmDraw() {
+  const s = bmState, root = bmRoot();
+  const canvas = root && root.querySelector("canvas");
+  if (!s || !canvas || !s.grid) return;
+  const ctx = canvas.getContext("2d");
+  const t = canvas._tile, ratio = canvas._ratio;
+  const now = performance.now();
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  const g = s.grid;
+  for (let y = 0; y < s.h; y++) {
+    for (let x = 0; x < s.w; x++) {
+      const c = g[y * s.w + x], px = x * t, py = y * t;
+      if (c === "#") {
+        const border = x === 0 || y === 0 || x === s.w - 1 || y === s.h - 1;
+        ctx.fillStyle = border ? "#5d6472" : "#8a92a0";
+        ctx.fillRect(px, py, t, t);
+        ctx.fillStyle = border ? "#737b8a" : "#b3bbc8";
+        ctx.fillRect(px, py, t, t * .14); ctx.fillRect(px, py, t * .14, t);
+        ctx.fillStyle = border ? "#41464f" : "#5c6371";
+        ctx.fillRect(px, py + t * .86, t, t * .14); ctx.fillRect(px + t * .86, py, t * .14, t);
+        continue;
+      }
+      ctx.fillStyle = (x + y) % 2 ? "#3b8f4b" : "#368646";
+      ctx.fillRect(px, py, t, t);
+      ctx.fillStyle = "#00000022";
+      if (g[(y - 1) * s.w + x] === "#" || g[(y - 1) * s.w + x] === "+") ctx.fillRect(px, py, t, t * .22);
+      if (c === "+") {
+        ctx.fillStyle = "#b47a40"; ctx.fillRect(px + 1, py + 1, t - 2, t - 2);
+        ctx.fillStyle = "#8a5826";
+        for (let i = 1; i < 3; i++) ctx.fillRect(px + 1, py + i * t / 3 - 1, t - 2, 2);
+        ctx.fillRect(px + t * .3, py + 1, 2, t / 3 - 1); ctx.fillRect(px + t * .65, py + t / 3, 2, t / 3);
+        ctx.fillRect(px + t * .4, py + 2 * t / 3, 2, t / 3 - 1);
+        ctx.strokeStyle = "#6b4119"; ctx.lineWidth = 2; ctx.strokeRect(px + 2, py + 2, t - 4, t - 4);
+      } else if (c === "*") {
+        const flick = .85 + .15 * Math.sin(now / 40 + x * 3 + y * 7);
+        // An orange tile, so the flames of a blast join up, and a hot middle.
+        ctx.fillStyle = "#f2621c"; ctx.fillRect(px, py, t, t);
+        const grad = ctx.createRadialGradient(px + t / 2, py + t / 2, t * .05, px + t / 2, py + t / 2, t * .62);
+        grad.addColorStop(0, "#fffbd0"); grad.addColorStop(.4, "#ffd84a"); grad.addColorStop(1, "#ff8a1f00");
+        ctx.globalAlpha = flick; ctx.fillStyle = grad; ctx.fillRect(px, py, t, t); ctx.globalAlpha = 1;
+      } else if (c === "o") {
+        const pulse = 1 + .08 * Math.sin(now / 90);
+        const r = t * .36 * pulse, cx = px + t / 2, cy = py + t / 2 + t * .04;
+        ctx.fillStyle = "#00000044"; ctx.beginPath(); ctx.ellipse(cx, py + t * .86, r * .9, r * .3, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = "#1b1c22"; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+        ctx.fillStyle = "#ffffff55"; ctx.beginPath(); ctx.arc(cx - r * .35, cy - r * .35, r * .25, 0, 7); ctx.fill();
+        ctx.strokeStyle = "#c9b38a"; ctx.lineWidth = Math.max(1.5, t * .06);
+        ctx.beginPath(); ctx.moveTo(cx + r * .5, cy - r * .7); ctx.quadraticCurveTo(cx + r * .9, cy - r * 1.3, cx + r * 1.1, cy - r * 1.1); ctx.stroke();
+        ctx.fillStyle = Math.floor(now / 80) % 2 ? "#ffde59" : "#ff6a1f";
+        ctx.beginPath(); ctx.arc(cx + r * 1.1, cy - r * 1.1, t * .08, 0, 7); ctx.fill();
+      } else if (c === "b" || c === "f" || c === "s") {
+        const m = t * .12;
+        ctx.fillStyle = c === "b" ? "#2a3a66" : c === "f" ? "#6b2a1a" : "#22513a";
+        ctx.strokeStyle = c === "b" ? "#8fb0ff" : c === "f" ? "#ffa25a" : "#7fe0a5";
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(px + m, py + m, t - 2 * m, t - 2 * m, t * .18) : ctx.rect(px + m, py + m, t - 2 * m, t - 2 * m);
+        ctx.fill(); ctx.stroke();
+        ctx.font = `${Math.floor(t * .5)}px system-ui, "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(c === "b" ? "💣" : c === "f" ? "🔥" : "👟", px + t / 2, py + t / 2 + 1);
+      }
+    }
+  }
+  // The players, between their last two places.
+  const a = Math.min(1, (now - bmAt) / 50);
+  s.players.forEach((p, i) => {
+    if (!p.alive || !bmCur) return;
+    const cur = bmCur[i], prev = bmPrev && bmPrev[i] ? bmPrev[i] : cur;
+    if (!cur) return;
+    const ux = prev[0] + (cur[0] - prev[0]) * a, uy = prev[1] + (cur[1] - prev[1]) * a;
+    const cx = ux / s.unit * t, cy = uy / s.unit * t;
+    const dx = Math.sign(cur[0] - prev[0]), dy = Math.sign(cur[1] - prev[1]);
+    const moving = dx || dy, bob = moving ? Math.sin(now / 60) * t * .03 : 0;
+    const r = t * .36;
+    ctx.fillStyle = "#00000040"; ctx.beginPath(); ctx.ellipse(cx, cy + r * .95, r * .8, r * .25, 0, 0, 7); ctx.fill();
+    // Body, head with a visor, the eyes looking where they go.
+    ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(cx, cy + bob, r, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#00000080"; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = "#f6f1e7"; ctx.beginPath(); ctx.ellipse(cx, cy - r * .05 + bob, r * .66, r * .5, 0, 0, 7); ctx.fill();
+    const ex = dx * r * .18, ey = dy * r * .14;
+    ctx.fillStyle = "#15161a";
+    ctx.beginPath(); ctx.ellipse(cx - r * .24 + ex, cy - r * .05 + ey + bob, r * .09, r * .2, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + r * .24 + ex, cy - r * .05 + ey + bob, r * .09, r * .2, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = "#ff5aa0"; ctx.beginPath(); ctx.arc(cx, cy - r * 1.05 + bob, r * .18, 0, 7); ctx.fill();
+    ctx.strokeStyle = p.color; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx, cy - r * .9 + bob); ctx.lineTo(cx, cy - r * .7 + bob); ctx.stroke();
+    // Who it is: a little label, and an arrow over us.
+    const label = p.you ? "YOU" : p.name.split(" ")[0].slice(0, 10);
+    ctx.font = `700 ${Math.max(9, Math.floor(t * .32))}px system-ui, sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    ctx.lineWidth = 3; ctx.strokeStyle = "#000000b0"; ctx.strokeText(label, cx, cy - r * 1.25 + bob);
+    ctx.fillStyle = p.you ? "#ffffff" : p.color; ctx.fillText(label, cx, cy - r * 1.25 + bob);
+  });
+}
+function bmLoop() {
+  if (!bmLooping) return;
+  const view = bmDoc() ? bmPopup : window;
+  if (!bmRoot() || !bmState || bmState.phase === "lobby" || bmState.phase === "none") { bmLooping = false; return; }
+  bmDraw();
+  view.requestAnimationFrame(bmLoop);
+}
+function bmStartLoop() {
+  if (bmLooping) return;
+  bmLooping = true;
+  (bmDoc() ? bmPopup : window).requestAnimationFrame(bmLoop);
+}
+
+function renderBomber() {
+  const s = bmState, root = bmRoot();
+  if (!s || !root) return;
+  const doc = root.ownerDocument;
+  const el = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const field = s.phase !== "lobby" && s.phase !== "none";
+  const kind = s.round + (field ? "field" : "lobby") + s.w + "x" + s.h;
+  if (bmBuilt !== kind) {
+    bmBuilt = kind;
+    root.textContent = "";
+    const top = el("div", "top");
+    top.append(el("span", "title", "💣 Bomber"), el("span", "by"), el("span", "clock"));
+    if (bmDoc()) {
+      const close = el("button", "", "×");
+      close.style.cssText = "margin-left:8px;background:none;border:0;color:#7d8491;font-size:18px;cursor:pointer";
+      close.onclick = closeBomber;
+      top.append(close);
+    }
+    root.append(top);
+    const main = el("div", "main");
+    if (field) {
+      const box = el("div", "field");
+      const canvas = el("canvas");
+      const t = bmTileSize(s), ratio = (doc.defaultView.devicePixelRatio || 1);
+      canvas._tile = t; canvas._ratio = ratio;
+      canvas.width = s.w * t * ratio; canvas.height = s.h * t * ratio;
+      canvas.style.width = s.w * t + "px"; canvas.style.height = s.h * t + "px";
+      box.append(canvas, el("div", "overlay"));
+      main.append(box);
+    } else {
+      main.append(el("div", "lobby"));
+    }
+    const side = el("div", "side");
+    side.append(el("div", "result"), el("h3", "", "Players"), el("div", "list"), el("div", "buttons"), el("div", "hint"));
+    main.append(side);
+    root.append(main);
+  }
+  const q = sel => root.querySelector(sel);
+  q(".top .by").textContent = s.referee ? "by " + s.referee : "";
+  const clock = q(".top .clock");
+  clock.className = "clock" + (s.phase === "hurry" ? " hurry" : "");
+  clock.textContent = s.phase === "lobby" ? "" : s.phase === "countdown" ? "" : s.phase === "hurry" ? "HURRY UP!"
+    : s.phase === "play" ? Math.floor(s.left / 60) + ":" + String(s.left % 60).padStart(2, "0") : "";
+  clock.title = s.phase === "play" ? "Until the walls close in" : "";
+
+  const result = q(".result");
+  result.hidden = !s.result;
+  result.textContent = s.result ? "🏆 " + s.result : "";
+
+  if (field) {
+    const overlay = q(".overlay");
+    overlay.className = "overlay" + (s.phase === "over" ? " small" : "");
+    const me = s.players.find(p => p.you);
+    overlay.textContent = s.phase === "countdown" ? (s.left > 0 ? String(s.left) : "GO!")
+      : s.phase === "over" ? (s.result || "Over")
+      : me && !me.alive ? "💀" : "";
+    bmStartLoop();
+  } else {
+    const lobby = q(".lobby");
+    lobby.textContent = "";
+    lobby.append(el("div", "big", s.joinLeft + "s"),
+      el("div", "hint", s.joined ? (s.playing || s.players.some(p => p.you) ? "You are in! The round starts when the time is up." : "Joining…")
+        : "Join to play: everybody gets a corner of the map."));
+  }
+
+  // The players: alive or out, their power-ups; at the end, where they finished.
+  const list = q(".list");
+  list.textContent = "";
+  if (!s.players.length) list.append(el("div", "none", "Nobody yet."));
+  for (const p of s.players) {
+    const out = field && !p.alive;
+    const row = el("div", "player" + (out ? " out" : "") + (p.place === 0 ? " win" : ""));
+    const dot = el("span", "dot");
+    dot.style.background = p.color;
+    const name = el("span", "name", p.name + (p.you ? " (you)" : ""));
+    name.style.color = p.color;
+    const stats = el("span", "stats", !field ? "ready" : p.place === 0 ? "🏆 winner" : p.place > 0 ? "#" + (p.place + 1)
+      : p.alive ? `💣${p.bombs} 🔥${p.fire} 👟${p.speed}` : "💀 out");
+    row.append(dot, name, stats);
+    list.append(row);
+  }
+
+  const buttons = q(".buttons");
+  buttons.textContent = "";
+  if (s.phase === "lobby") {
+    const inIt = s.players.some(p => p.you);
+    const join = el("button", "primary", inIt ? "Joined" : s.joined ? "Joining…" : "Join");
+    join.disabled = s.joined;
+    join.onclick = () => window.zchatSend("/game bomber join");
+    buttons.append(join);
+    if (s.isReferee) {
+      const go = el("button", "", "Start now");
+      go.disabled = s.players.length < 2;
+      go.onclick = () => window.zchatSend("/game bomber go");
+      buttons.append(go);
+    }
+  } else if (s.phase === "over") {
+    const again = el("button", "primary", "New round");
+    again.onclick = () => window.zchatSend("/game bomber");
+    buttons.append(again);
+  }
+  buttons.hidden = !buttons.childElementCount;
+
+  const hint = q(".side .hint");
+  hint.textContent = "";
+  if (s.playing || s.phase === "lobby") {
+    hint.innerHTML = "<kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move, " +
+      "<kbd>Space</kbd> drops a bomb. Crates hide 💣 more bombs, 🔥 longer flames, 👟 speed. After 2 minutes the walls close in." +
+      (bmDoc() ? "" : " Click here first, for the keys to come here.");
+  } else if (field && s.phase !== "over") {
+    hint.textContent = "You are watching this round.";
+  }
+}
+function bomberGame(state) {
+  const fresh = !bmState || bmState.round !== state.round;
+  const was = bmState ? bmState.phase : "none";
+  bmState = state;
+  if (state.phase === "none") {
+    renderBomber();
+    return;
+  }
+  if (state.frame !== bmFrame && state.players.length) {
+    // The players' places, for drawing them in between.
+    bmPrev = fresh || !bmCur || state.frame < bmFrame ? null : bmCur;
+    bmCur = state.players.map(p => [p.x, p.y]);
+    bmAt = performance.now();
+    bmFrame = state.frame;
+  }
+  if (fresh) { bmFrame = state.frame; bmHeld = []; bmSent = "n"; }
+  // A new round opens it, unless it was closed during this one; the start of a match we play in too.
+  const starting = state.playing && was === "lobby" && state.phase !== "lobby";
+  if ((fresh && state.phase !== "over" && bmClosedRound !== state.round) || (starting && !bmRoot())) {
+    if (starting) bmClosedRound = null;
+    openBomber(state.isReferee || state.playing || starting);
+  } else {
+    renderBomber();
+    if (starting) bmFocus();
+  }
+  if (state.phase === "over") bmRelease();
+}
+document.getElementById("bm-open").onclick = () => {
+  if (!bmState || bmState.phase === "none" || bmState.phase === "over" && !bmRoot()) {
+    window.zchatSend("/game bomber");
+    return;
+  }
+  bmClosedRound = null;
+  openBomber(true);
+};
+document.getElementById("bm-float-close").onclick = closeBomber;
+(() => {
+  const handle = document.getElementById("bm-float-title");
+  let dx = 0, dy = 0, dragging = false;
+  handle.addEventListener("mousedown", e => {
+    if (e.target.tagName === "BUTTON") return;
+    dragging = true;
+    const r = bmFloat.getBoundingClientRect();
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    bmFloat.style.left = Math.max(0, e.clientX - dx) + "px";
+    bmFloat.style.top = Math.max(0, e.clientY - dy) + "px";
+    bmFloat.style.right = "auto";
+  });
+  document.addEventListener("mouseup", () => { dragging = false; });
+})();
+
 // --- The casino, in a window of its own: zchat.game("casino", {open: true|TABLE}) opens it, and each table's state
 // comes as zchat.game("blackjack"|"roulette"|"horses", state), whether the window is open or not. A lobby with the
 // three tables, and each table, shared by the whole chat: everybody's bets are on it. Its buttons send the /casino
@@ -2311,6 +2739,7 @@ document.getElementById("casino-float-close").onclick = closeCasino;
 zchat.game = (game, state) => {
   if (game === "dice") diceGame(state);
   else if (game === "pokemon") pokemonGame(state);
+  else if (game === "bomber") bomberGame(state);
   else if (game === "pokemon-challenge") pokemonChallenges(state);
   else if (game === "kick") kickVotes(state);
   else if (game === "coins") showCoins(state);
@@ -2627,9 +3056,11 @@ input.addEventListener("input", async e => {
   }
 });
 input.addEventListener("blur", () => setTimeout(closeMentions, 150));
-// Typing anywhere types in the input box, except in another field (like the name in the profile panel).
+// Typing anywhere types in the input box, except in another field (like the name in the profile panel) and in the
+// floating bomber window, whose keys play.
 document.addEventListener("keydown", e => {
   const el = document.activeElement;
+  if (bmFloat.contains(el)) return;
   const field = el && el !== input && (el.matches("input, textarea, select") || el.isContentEditable);
   if (el !== input && !field && !e.ctrlKey && !e.metaKey && e.key.length === 1) input.focus();
 });
