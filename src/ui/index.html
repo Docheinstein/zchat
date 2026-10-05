@@ -140,6 +140,17 @@
     background: #0f1a14; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px #000b; overflow: hidden;
   }
   #casino-float.open { display: block; }
+  /* Radical Candor, when the web view cannot open a real window: floating, dragged by its title. */
+  #candor-float {
+    position: fixed; top: 56px; right: 20px; width: 860px; max-width: calc(100vw - 40px); z-index: 18; display: none;
+    background: #101216; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px #000b; overflow: hidden;
+  }
+  #candor-float.open { display: block; }
+  #candor-float-title {
+    display: flex; align-items: center; padding: 6px 10px; background: var(--panel); cursor: move; color: var(--muted);
+    font-size: 12px; user-select: none;
+  }
+  #candor-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
   #casino-float-title {
     display: flex; align-items: center; padding: 6px 10px; background: var(--panel); cursor: move; color: var(--muted);
     font-size: 12px; user-select: none;
@@ -373,6 +384,7 @@
 <style id="dice-style"></style>
 <style id="pk-style"></style>
 <style id="casino-style"></style>
+<style id="candor-style"></style>
 <style id="bm-style"></style>
 <style id="am-style"></style>
 <style id="fr-style"></style>
@@ -387,6 +399,7 @@
     <button id="channel-delete" class="danger" title="Delete this channel, for everybody" hidden>Delete</button>
   </span>
   <span class="spacer"></span>
+  <button id="candor-open" title="Radical Candor: an idle game, ZURU style">🗣️ Candor</button>
   <button id="casino-open" title="The casino: blackjack, roulette and the horse race, for coins">🎰 Casino</button>
   <button id="pk-challenge-open" title="Challenge someone to a Pokémon battle"><svg class="pokeball" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8a7 7 0 0 1 14 0z" fill="#e5534b"/><path d="M1 8a7 7 0 0 0 14 0z" fill="#f4f4f4"/><circle cx="8" cy="8" r="7" fill="none" stroke="#15161a" stroke-width="1.2"/><path d="M1 8h14" stroke="#15161a" stroke-width="1.4"/><circle cx="8" cy="8" r="2.3" fill="#f4f4f4" stroke="#15161a" stroke-width="1.2"/></svg> Pokémon</button>
   <button id="dice-open" title="Dice" hidden>🎲</button>
@@ -457,6 +470,8 @@
 <div id="spy-requests"></div>
 <div id="dice-float"><div id="dice-float-title">zchat · dice<button id="dice-float-close" title="Close">×</button></div>
   <div class="dice" id="dice-body"></div></div>
+<div id="candor-float"><div id="candor-float-title">zchat · Radical Candor<button id="candor-float-close" title="Close">×</button></div>
+  <div class="candor" id="candor-body"></div></div>
 <div id="casino-float"><div id="casino-float-title">zchat · casino<button id="casino-float-close" title="Close">×</button></div>
   <div class="casino" id="casino-body"></div></div>
 <div id="pk-float"><div id="pk-float-title">zchat · Pokémon<button id="pk-float-close" title="Close">×</button></div>
@@ -472,6 +487,28 @@
 <div id="viewer"><img alt="picture"></div>
 <script>
 "use strict";
+// --- The games' own windows (window.open) close themselves once this one is gone: the web view's processes outlive
+// zchat, and a window of theirs would stay open, with nothing behind it. Each window checks every second, in a script
+// of its own (added once the game has written its page), so it keeps working when this page is not there any more.
+{
+  const open = window.open.bind(window);
+  const watch = w => {
+    try {
+      const doc = w.document;
+      if (!doc || !doc.head || doc.getElementById("zchat-watch")) return;
+      const script = doc.createElement("script");
+      script.id = "zchat-watch";
+      script.textContent = "setInterval(function () { try { if (!window.opener || window.opener.closed) window.close(); } catch (e) { window.close(); } }, 1000);";
+      doc.head.append(script);
+    } catch {}
+  };
+  window.open = (...args) => {
+    const w = open(...args);
+    // After the game has written the window's page, and again in case it writes it later.
+    if (w) for (const ms of [0, 500, 2000]) setTimeout(() => watch(w), ms);
+    return w;
+  };
+}
 // The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
 // zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatChannels(), zchatChannelPeople(channel), zchatRewrite(line), zchatDrop(name, base64), zchatDroppedFile(), zchatSettings()
 // and zchatSaveSettings(size, font).
@@ -4334,6 +4371,740 @@ document.getElementById("fr-float-close").onclick = closeFrag;
   document.addEventListener("mouseup", () => { dragging = false; });
 })();
 
+// --- Radical Candor, an idle game, ZURU style (zchat.game("candor", {open, save, leaderboard})). The goal: so much
+// candor that JavaScript runs out of numbers, Infinity (past 1.8e308), and NaN soon after. Give feedback by hand for
+// candor; Developers make candor every second, HR Partners hire Developers, Team Leads hire HR Partners, and so on
+// up to the Board, so it all grows on its own. Upgrades multiply it, a feedback moment now and then boosts it, and an
+// offsite starts over with Culture, which multiplies everything for good. The game is played here, in the page, also
+// while its window is closed; it saves itself in zchat's config (/game candor save) and catches up on the time zchat
+// was not running, and tells the chat how it is doing (/game candor share) for the leaderboard.
+const candorTiers = [
+  { id: "dev", name: "Developer", plural: "Developers", icon: "👩‍💻", cost: 10, rate: 1,
+    flavor: "Ships code, and tells you what they really think of yours." },
+  { id: "hr", name: "HR Partner", plural: "HR Partners", icon: "🤝", cost: 150, rate: 0.2,
+    flavor: "Hires Developers who are not afraid to speak up." },
+  { id: "lead", name: "Team Lead", plural: "Team Leads", icon: "🧭", cost: 2500, rate: 0.2,
+    flavor: "Grows the HR team: every team needs its people people." },
+  { id: "head", name: "Department Head", plural: "Department Heads", icon: "🏢", cost: 45000, rate: 0.2,
+    flavor: "Promotes Team Leads who give feedback as well as they take it." },
+  { id: "vp", name: "VP", plural: "VPs", icon: "📈", cost: 900000, rate: 0.2,
+    flavor: "Opens new departments, and new ways to disagree, kindly." },
+  { id: "cx", name: "C-Suite", plural: "C-Suite", icon: "👔", cost: 22000000, rate: 0.2,
+    flavor: "Appoints VPs who challenge directly and care personally." },
+  { id: "board", name: "Board Member", plural: "Board Members", icon: "🏛️", cost: 600000000, rate: 0.2,
+    flavor: "Sets the vision: anything is possible, with honest feedback." },
+];
+// What makes each tier: candor for Developers, the tier below for the others.
+const candorUpgrades = [
+  { id: "challenge", icon: "🎯", name: "Challenge Directly", cost: 50, desc: "Feedback by hand ×2.",
+    show: s => s.total >= 15, click: 2 },
+  { id: "care", icon: "💛", name: "Care Personally", cost: 250, desc: "Developers ×2.",
+    show: s => s.bought.dev >= 1, tier: ["dev", 2] },
+  { id: "friday", icon: "🗓️", name: "Feedback Friday", cost: 1500, desc: "Each click also gives 5% of your candor per second.",
+    show: s => s.total >= 500, friday: 0.05 },
+  { id: "oneone", icon: "☕", name: "Weekly 1:1s", cost: 9000, desc: "Developers ×3.",
+    show: s => s.bought.dev >= 25, tier: ["dev", 3] },
+  { id: "minibrands", icon: "🛒", name: "Mini Brands Stand-ups", cost: 30000, desc: "Tiny meetings, huge feedback. HR Partners ×2.",
+    show: s => s.bought.hr >= 5, tier: ["hr", 2] },
+  { id: "empathy", icon: "🚫", name: "No More Ruinous Empathy", cost: 150000, desc: "Saying the hard thing, kindly. Everything ×1.5.",
+    show: s => s.total >= 50000, all: 1.5 },
+  { id: "xshot", icon: "🔫", name: "X-Shot Retros", cost: 600000, desc: "Foam darts at the backlog. Team Leads ×2.",
+    show: s => s.bought.lead >= 5, tier: ["lead", 2] },
+  { id: "balloons", icon: "🎈", name: "Bunch O Balloons Brainstorm", cost: 2000000, desc: "A hundred ideas in sixty seconds. Feedback by hand ×5.",
+    show: s => s.total >= 500000, click: 5 },
+  { id: "rainbocorns", icon: "🦄", name: "Rainbocorns Recognition Wall", cost: 15000000, desc: "Praise in public, criticise in private. Everything ×2.",
+    show: s => s.total >= 5000000, all: 2 },
+  { id: "pets", icon: "🐶", name: "Pets Alive Office Days", cost: 80000000, desc: "Everybody is nicer with a puppy around. Department Heads ×2.",
+    show: s => s.bought.head >= 5, tier: ["head", 2] },
+  { id: "failfast", icon: "⚡", name: "Fail Fast, Learn Faster", cost: 1e9, desc: "VPs ×2.",
+    show: s => s.bought.vp >= 5, tier: ["vp", 2] },
+  { id: "robo", icon: "🤖", name: "Robo Alive Automation", cost: 5e9, desc: "The robots do the busywork. Developers ×10.",
+    show: s => s.bought.dev >= 100, tier: ["dev", 10] },
+  { id: "disrupt", icon: "💥", name: "Disrupt Everything", cost: 5e10, desc: "Everything ×3.",
+    show: s => s.total >= 1e10, all: 3 },
+  { id: "smashers", icon: "🥚", name: "Smashers Silo-Smashing", cost: 1e12, desc: "No more silos. C-Suite ×2, and everything ×2.",
+    show: s => s.bought.cx >= 5, tier: ["cx", 2], all: 2 },
+  { id: "fivesurprise", icon: "🎁", name: "5 Surprise Town Hall", cost: 5e13, desc: "Five surprises, all of them honest. Board Members ×3.",
+    show: s => s.bought.board >= 3, tier: ["board", 3] },
+  { id: "moonshot", icon: "🚀", name: "Moonshot Prototypes", cost: 1e25, desc: "Ten prototypes a week, every one honestly reviewed. Everything ×3.",
+    show: s => s.total >= 1e22, all: 3 },
+  { id: "global", icon: "🌏", name: "Global Launch", cost: 1e50, desc: "Every market, every language, every opinion. Everything ×5.",
+    show: s => s.total >= 1e45, all: 5 },
+  { id: "numberline", icon: "📏", name: "Disrupt the Number Line", cost: 1e100, desc: "The numbers were holding us back. Everything ×10.",
+    show: s => s.total >= 1e90, all: 10 },
+  { id: "overflow", icon: "⚠️", name: "Overflow Imminent", cost: 1e200, desc: "JavaScript is starting to sweat. Everything ×20.",
+    show: s => s.total >= 1e190, all: 20 },
+];
+const candorSaveEvery = 10000, candorShareEvery = 30000, candorAwayCap = 12 * 3600;
+const candorOffsiteFrom = 1e9;
+
+function candorFresh() {
+  const zero = () => Object.fromEntries(candorTiers.map(t => [t.id, 0]));
+  return { v: 1, candor: 0, total: 0, run: 0, clicks: 0, culture: 0, amounts: zero(), bought: zero(), upgrades: [],
+           storm: 0, saved: Date.now(), started: Date.now(), offsites: 0, infinities: 0, broken: false, brokeIn: 0 };
+}
+const candor = { s: null, running: false, popup: null, floatOpen: false, mode: 1, board: [], lastSave: 0, lastShare: 0,
+                 dirty: false, moment: null, nextMoment: 0, toast: "", toastUntil: 0, offsiteArmed: 0, built: null };
+
+// Numbers as idle games write them: 1.23K, 4.56M... and 1.23e45 past the names.
+function candorFmt(n, decimals) {
+  if (!isFinite(n)) return "∞";
+  if (n < 1000) return decimals && n < 100 && n % 1 ? n.toFixed(1) : Math.floor(n).toLocaleString();
+  const names = ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"];
+  const tier = Math.floor(Math.log10(n) / 3);
+  if (tier >= names.length) return n.toExponential(2);
+  return (n / Math.pow(1000, tier)).toFixed(2) + names[tier];
+}
+function candorHas(id) { return candor.s.upgrades.includes(id); }
+// Culture: each point +5% to everything, and the milestones stronger (see candorTierMult()). Each Infinity: ×2, for good.
+function candorCultureMult() {
+  return (1 + 0.05 * candor.s.culture) * Math.pow(2, candor.s.infinities);
+}
+function candorMilestone() {
+  return 2 + 0.005 * candor.s.culture;
+}
+function candorGlobal() {
+  let m = candorCultureMult();
+  for (const u of candorUpgrades) if (u.all && candorHas(u.id)) m *= u.all;
+  if (Date.now() < candor.s.storm) m *= 7;
+  return m;
+}
+// What one of a tier makes per second: the base, ×2 for every 50 hired (more with Culture), its upgrades, and
+// everything's. (×2 for every 25 made it run away to Infinity in five minutes.)
+function candorTierMult(t) {
+  let m = Math.pow(candorMilestone(), Math.floor(candor.s.bought[t.id] / 50));
+  for (const u of candorUpgrades) if (u.tier && u.tier[0] === t.id && candorHas(u.id)) m *= u.tier[1];
+  return m * candorGlobal();
+}
+function candorPerSecond() {
+  return candor.s.amounts.dev * candorTiers[0].rate * candorTierMult(candorTiers[0]);
+}
+function candorClickPower() {
+  let p = 1;
+  for (const u of candorUpgrades) if (u.click && candorHas(u.id)) p *= u.click;
+  p *= candorCultureMult();
+  if (candorHas("friday")) p += candorPerSecond() * 0.05;
+  return p;
+}
+function candorGain(n) {
+  if (candor.s.broken) return;
+  candor.s.candor += n;
+  candor.s.total += n;
+  candor.s.run += n;
+}
+// dt seconds: each tier makes the one below it, Developers make candor.
+function candorAdvance(dt) {
+  const s = candor.s;
+  if (s.broken) return;
+  for (let i = candorTiers.length - 1; i >= 1; i--) {
+    const t = candorTiers[i];
+    s.amounts[candorTiers[i - 1].id] += s.amounts[t.id] * t.rate * candorTierMult(t) * dt;
+  }
+  candorGain(candorPerSecond() * dt);
+}
+// The price of the next n of a tier: 15% more each.
+function candorCost(t, n) {
+  const first = t.cost * Math.pow(1.15, candor.s.bought[t.id]);
+  return first * (Math.pow(1.15, n) - 1) / 0.15;
+}
+function candorMaxAffordable(t) {
+  const first = t.cost * Math.pow(1.15, candor.s.bought[t.id]);
+  return Math.max(0, Math.floor(Math.log(1 + candor.s.candor * 0.15 / first) / Math.log(1.15)));
+}
+function candorBuyCount(t) {
+  return candor.mode === "max" ? Math.max(1, candorMaxAffordable(t)) : candor.mode;
+}
+function candorBuy(t) {
+  const n = candorBuyCount(t), price = candorCost(t, n);
+  if (candor.s.broken || price > candor.s.candor) return;
+  const before = Math.floor(candor.s.bought[t.id] / 25);
+  candor.s.candor -= price;
+  candor.s.bought[t.id] += n;
+  candor.s.amounts[t.id] += n;
+  candor.dirty = true;
+  if (Math.floor(candor.s.bought[t.id] / 25) > before) candorToast(`🎉 ${candor.s.bought[t.id]} ${t.plural}: they make twice as much!`);
+}
+function candorBuyUpgrade(u) {
+  if (candor.s.broken || candorHas(u.id) || u.cost > candor.s.candor) return;
+  candor.s.candor -= u.cost;
+  candor.s.upgrades.push(u.id);
+  candor.dirty = true;
+  candorToast(`${u.icon} ${u.name}: ${u.desc}`);
+}
+function candorClick(e) {
+  const p = candorClickPower();
+  candorGain(p);
+  candor.s.clicks++;
+  candor.dirty = true;
+  candorFloat(e, "+" + candorFmt(p, true));
+  candorCheckInfinity();
+}
+// The goal: once anything is past what a number can be (Infinity, or NaN from it), the game is won, and stops there.
+function candorCheckInfinity() {
+  const s = candor.s;
+  if (s.broken) return;
+  const bad = x => !isFinite(x);
+  if (!bad(s.candor) && !bad(s.total) && !candorTiers.some(t => bad(s.amounts[t.id]))) return;
+  s.broken = true;
+  s.candor = Infinity;
+  s.total = Infinity;
+  s.brokeIn = (Date.now() - s.started) / 1000;
+  s.infinities++;
+  candor.dirty = true;
+  candorSave();
+  candorShare();
+  // Everybody should see this.
+  if (!candorDoc()) openCandor(); else candorRebuild();
+}
+// After Infinity: everything starts over, Culture too, but each Infinity makes everything ×2 for good.
+function candorTranscend() {
+  const keep = { clicks: candor.s.clicks, infinities: candor.s.infinities };
+  candor.s = Object.assign(candorFresh(), keep);
+  candor.dirty = true;
+  candorToast(`✨ Transcended. ${candor.s.infinities} Infinit${candor.s.infinities === 1 ? "y" : "ies"}: everything makes ×${Math.pow(2, candor.s.infinities)} for good. Do it again.`);
+  candorSave();
+  candorRebuild();
+}
+// The offsite: everything starts over, for Culture (see candorCultureMult()), for good. It grows slowly with how far the
+// run got: faster made Culture snowball to Infinity in half an hour.
+function candorCultureGain() {
+  const run = candor.s.run;
+  return run < candorOffsiteFrom ? 0 : Math.floor(2 * Math.sqrt(Math.log10(run / candorOffsiteFrom) + 1));
+}
+function candorOffsite() {
+  const gain = candorCultureGain();
+  if (gain < 1) return;
+  if (Date.now() > candor.offsiteArmed) { candor.offsiteArmed = Date.now() + 4000; candorUpdate(); return; }
+  const keep = { total: candor.s.total, clicks: candor.s.clicks, culture: candor.s.culture + gain, started: candor.s.started,
+                 offsites: candor.s.offsites + 1, infinities: candor.s.infinities };
+  candor.s = Object.assign(candorFresh(), keep);
+  candor.offsiteArmed = 0;
+  candor.dirty = true;
+  candorToast(`🏕️ Offsite done: +${gain} Culture. Everything ×${candorCultureMult().toFixed(2)}, and every 50 hired ×${candorMilestone().toFixed(3)}.`);
+  candorRebuild();
+}
+function candorToast(text) {
+  candor.toast = text;
+  candor.toastUntil = Date.now() + 5000;
+}
+
+// --- Saving, in zchat's config, and catching up on the time away.
+function candorLoad(save) {
+  let s = null;
+  try { s = JSON.parse(atob(save)); } catch {}
+  const base = candorFresh();
+  if (!s || typeof s !== "object") { candor.s = base; return; }
+  const num = (x, d = 0) => (x === "Infinity" ? Infinity : typeof x === "number" && isFinite(x) && x >= 0 ? x : d);
+  candor.s = {
+    ...base, candor: num(s.candor), total: num(s.total), run: num(s.run), clicks: num(s.clicks), culture: num(s.culture),
+    storm: num(s.storm), saved: num(s.saved, Date.now()), started: num(s.started, Date.now()),
+    offsites: Math.floor(num(s.offsites)), infinities: Math.floor(num(s.infinities)), broken: s.broken === true,
+    brokeIn: num(s.brokeIn),
+    upgrades: Array.isArray(s.upgrades) ? s.upgrades.filter(id => candorUpgrades.some(u => u.id === id)) : [],
+  };
+  for (const t of candorTiers) {
+    candor.s.amounts[t.id] = num(s.amounts && s.amounts[t.id]);
+    candor.s.bought[t.id] = Math.floor(num(s.bought && s.bought[t.id]));
+  }
+  // While zchat was not running: up to 12 hours, a step at a time.
+  const away = Math.min(candorAwayCap, Math.max(0, (Date.now() - candor.s.saved) / 1000));
+  if (away > 5) {
+    const before = candor.s.candor, steps = Math.min(2000, Math.ceil(away));
+    for (let i = 0; i < steps; i++) candorAdvance(away / steps);
+    const made = candor.s.candor - before;
+    if (made >= 1) candorToast(`👋 Welcome back! While you were away, your team made ${candorFmt(made)} candor.`);
+  }
+}
+function candorSave() {
+  candor.s.saved = Date.now();
+  // (JSON has no Infinity, nor NaN.)
+  const json = JSON.stringify(candor.s, (k, v) => typeof v === "number" && !isFinite(v) ? "Infinity" : v);
+  window.zchatSend("/game candor save " + btoa(json));
+  candor.lastSave = Date.now();
+  candor.dirty = false;
+}
+function candorStart(save) {
+  if (candor.running) return;
+  if (save) candorLoad(save); else candor.s = candorFresh();
+  candor.running = true;
+  candor.nextMoment = Date.now() + 60000 + Math.random() * 90000;
+  let last = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    candorAdvance(Math.min(10, (now - last) / 1000));
+    last = now;
+    // Now and then, a feedback moment to click, for a while.
+    if (!candor.moment && now >= candor.nextMoment) {
+      candor.moment = { until: now + 12000, x: 10 + Math.random() * 70, y: 15 + Math.random() * 60 };
+    } else if (candor.moment && now > candor.moment.until) {
+      candor.moment = null;
+      candor.nextMoment = now + 60000 + Math.random() * 120000;
+    }
+    if (now - candor.lastSave > candorSaveEvery && (candor.dirty || candorPerSecond() > 0)) candorSave();
+    candorCheckInfinity();
+    if (now - candor.lastShare > candorShareEvery) candorShare();
+    candorUpdate();
+  }, 100);
+}
+// How we are doing, for everybody's leaderboard: candor ever, a second, and our Infinities.
+function candorShare() {
+  candor.lastShare = Date.now();
+  const n = x => isFinite(x) ? x.toPrecision(6) : "inf";
+  window.zchatSend(`/game candor share ${n(candor.s.total)} ${n(candorPerSecond())} ${candor.s.infinities}`);
+}
+function candorMomentClick() {
+  if (!candor.moment) return;
+  candor.moment = null;
+  candor.nextMoment = Date.now() + 60000 + Math.random() * 120000;
+  if (Math.random() < 0.5) {
+    candor.s.storm = Date.now() + 30000;
+    candorToast("📣 Candor storm! Everybody speaks their mind: everything ×7 for 30 seconds.");
+  } else {
+    const gift = Math.max(candorClickPower() * 50, Math.min(candor.s.candor * 0.15, candorPerSecond() * 900));
+    candorGain(gift);
+    candorToast(`📣 A brilliant piece of feedback: +${candorFmt(gift)} candor!`);
+  }
+  candor.dirty = true;
+}
+
+// --- The window: a real one when the web view allows it, or one floating over the chat, like dice's.
+const candorStyle = `
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #101216; color: #d6d9df; font: 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .candor { display: grid; grid-template-columns: 300px 1fr; gap: 14px; padding: 14px; position: relative; }
+  .head { grid-column: 1 / 3; display: flex; align-items: center; gap: 10px; }
+  .head .logo { font-weight: 800; letter-spacing: 3px; font-size: 13px; padding: 3px 7px; border: 2px solid #fff; color: #fff; }
+  .head .title { font-size: 18px; font-weight: 700; }
+  .head .close { margin-left: auto; background: none; border: 0; color: #7d8491; font-size: 20px; cursor: pointer; }
+  .bank { text-align: center; }
+  .bank .amount { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .bank .label { color: #7d8491; }
+  .bank .rate { margin-top: 2px; color: #f7b267; font-weight: 600; }
+  .bank .storm { color: #ff5c8a; font-weight: 700; }
+  .clicker { position: relative; display: grid; place-items: center; margin: 12px 0; }
+  .clicker button {
+    width: 190px; height: 190px; border-radius: 50%; border: 0; cursor: pointer; color: #fff; font: inherit;
+    font-size: 17px; font-weight: 800; line-height: 1.2; text-shadow: 0 2px 6px #0007;
+    background: radial-gradient(circle at 35% 30%, #ffb36b, #ff5c8a 55%, #7b2ff7);
+    box-shadow: 0 10px 30px #ff5c8a44, inset 0 -8px 20px #0004; transition: transform .06s;
+  }
+  .clicker button:hover { transform: scale(1.03); }
+  .clicker button:active { transform: scale(.96); }
+  .clicker .power { color: #7d8491; margin-top: 8px; font-size: 12px; text-align: center; }
+  .pop { position: absolute; pointer-events: none; font-weight: 800; color: #ffd166; animation: rise .9s ease-out forwards; }
+  @keyframes rise { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-60px); } }
+  .moment {
+    position: absolute; z-index: 5; cursor: pointer; padding: 10px 14px; border-radius: 20px; font-weight: 800;
+    background: #ffd166; color: #2a1c00; box-shadow: 0 6px 22px #ffd16688; animation: wobble 1s ease-in-out infinite;
+  }
+  @keyframes wobble { 0%, 100% { transform: rotate(-4deg) scale(1); } 50% { transform: rotate(4deg) scale(1.08); } }
+  .card { background: #181b21; border: 1px solid #262a33; border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
+  h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: #7d8491; margin: 0 0 8px;
+       display: flex; align-items: center; }
+  .stat { display: flex; justify-content: space-between; padding: 2px 0; }
+  .stat span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .offsite { width: 100%; margin-top: 8px; height: 34px; border-radius: 8px; border: 1px solid #3fb950; background: #12301a;
+             color: #3fb950; font: inherit; font-weight: 700; cursor: pointer; }
+  .offsite:disabled { opacity: .4; cursor: default; }
+  .offsite.armed { background: #3fb950; color: #0b0d10; }
+  .board .row { display: flex; gap: 8px; padding: 3px 0; align-items: baseline; }
+  .board .row .n { color: #7d8491; width: 18px; }
+  .board .row .who { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .board .row .tot { font-variant-numeric: tabular-nums; }
+  .board .row.you .who::after { content: " (you)"; color: #7d8491; font-weight: 400; }
+  .modes { margin-left: auto; display: flex; gap: 4px; text-transform: none; letter-spacing: 0; }
+  .modes button { height: 22px; padding: 0 8px; border-radius: 11px; border: 1px solid #262a33; background: #1e222a;
+                  color: #d6d9df; font: inherit; font-size: 11px; cursor: pointer; }
+  .modes button.on { background: #6ea8ff; border-color: #6ea8ff; color: #0b0d10; font-weight: 700; }
+  .tier { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center; padding: 8px 6px;
+          border-bottom: 1px solid #1c1f26; }
+  .tier .icon { font-size: 26px; text-align: center; }
+  .tier .name { font-weight: 700; font-size: 14px; }
+  .tier .owned { color: #f7b267; font-weight: 700; font-variant-numeric: tabular-nums; margin-left: 6px; }
+  .tier .what { color: #7d8491; font-size: 12px; }
+  .tier .flavor { color: #5d6470; font-size: 11px; font-style: italic; }
+  .tier .next { color: #6ea8ff; font-size: 11px; }
+  .tier button, .upgrade button { min-width: 112px; height: 40px; border-radius: 8px; border: 1px solid #6ea8ff; background: #17243a;
+                 color: #d6d9df; font: inherit; cursor: pointer; line-height: 1.15; }
+  .tier button b, .upgrade button b { display: block; font-size: 13px; }
+  .tier button small, .upgrade button small { color: #9fb8e6; }
+  .tier button:disabled, .upgrade button:disabled { opacity: .4; cursor: default; }
+  .tier.locked { opacity: .45; }
+  .upgrades { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .upgrade { display: grid; grid-template-columns: 28px 1fr; gap: 6px 8px; align-items: center; background: #15181e;
+             border: 1px solid #262a33; border-radius: 8px; padding: 8px; }
+  .upgrade .icon { font-size: 22px; }
+  .upgrade .name { font-weight: 700; }
+  .upgrade .desc { color: #7d8491; font-size: 11px; grid-column: 1 / 3; }
+  .upgrade button { grid-column: 1 / 3; height: 30px; min-width: 0; }
+  .owned-upgrades { margin-top: 8px; font-size: 18px; letter-spacing: 2px; }
+  .none { color: #7d8491; font-size: 12px; }
+  .toast { grid-column: 1 / 3; background: #2a2410; color: #f2c94c; border-radius: 8px; padding: 8px 12px; font-weight: 600; }
+  .goal { grid-column: 1 / 3; }
+  .goal .label { display: flex; justify-content: space-between; color: #7d8491; font-size: 12px; margin-bottom: 4px; }
+  .goal .label b { color: #d6d9df; }
+  .goal .bar { height: 8px; border-radius: 4px; background: #1c1f26; overflow: hidden; }
+  .goal .bar div { height: 100%; border-radius: 4px; background: linear-gradient(90deg, #ffb36b, #ff5c8a, #7b2ff7, #39d0ff);
+                   background-size: 300% 100%; animation: flow 4s linear infinite; transition: width .3s; }
+  @keyframes flow { from { background-position: 0 0; } to { background-position: 300% 0; } }
+  .ending { grid-column: 1 / 3; text-align: center; padding: 30px 10px 10px; position: relative; overflow: hidden; }
+  .ending .big { font-size: 150px; font-weight: 900; line-height: 1; color: #fff; animation: glitch 1.2s steps(2) infinite;
+                 font-variant-numeric: tabular-nums; }
+  @keyframes glitch {
+    0% { text-shadow: 4px 0 #ff5c8a, -4px 0 #39d0ff; transform: translate(0); }
+    25% { text-shadow: -6px 2px #ff5c8a, 6px -2px #39d0ff; transform: translate(2px, -1px) skewX(-4deg); }
+    50% { text-shadow: 3px -3px #ffd166, -3px 3px #7b2ff7; transform: translate(-2px, 1px); }
+    75% { text-shadow: -2px 0 #39d0ff, 2px 0 #ff5c8a; transform: translate(1px, 2px) skewX(3deg); }
+    100% { text-shadow: 4px 0 #ff5c8a, -4px 0 #39d0ff; transform: translate(0); }
+  }
+  .ending .headline { font-size: 28px; font-weight: 800; margin-top: 12px; }
+  .ending .what { color: #9aa1ad; max-width: 560px; margin: 12px auto; line-height: 1.5; font-size: 14px; }
+  .ending .what code { color: #ffd166; }
+  .ending .facts { display: flex; justify-content: center; gap: 22px; flex-wrap: wrap; margin: 18px 0; }
+  .ending .facts div { background: #181b21; border: 1px solid #262a33; border-radius: 10px; padding: 10px 16px; }
+  .ending .facts b { display: block; font-size: 20px; }
+  .ending .facts span { color: #7d8491; font-size: 12px; }
+  .ending .transcend { height: 48px; padding: 0 26px; border-radius: 24px; border: 0; cursor: pointer; font: inherit; font-size: 16px;
+                       font-weight: 800; color: #fff; background: linear-gradient(90deg, #ff5c8a, #7b2ff7, #39d0ff); background-size: 200% 100%;
+                       animation: flow 3s linear infinite; box-shadow: 0 8px 26px #7b2ff766; }
+  .ending .rain { position: absolute; inset: 0; pointer-events: none; font-family: monospace; color: #ff5c8a22; font-size: 13px;
+                  white-space: pre; overflow: hidden; line-height: 1.2; text-align: left; }
+`;
+const candorFloatEl = document.getElementById("candor-float");
+document.getElementById("candor-style").textContent = candorStyle.replace(/:root \{[^}]*\}/, "").replace(/(^|\})\s*([^{}@]+)\{/g,
+  (m, end, sel) => end + " " + (/^(from|to|\d+%)/.test(sel.trim()) ? sel.trim() : sel.split(",").map(x => x.trim() === "body" ? "#candor-float" : "#candor-float " + x.trim()).join(", ")) + " {")
+  + " #candor-float .candor { max-height: calc(100vh - 100px); overflow-y: auto; }";
+function candorDoc() {
+  if (candor.popup && !candor.popup.closed) return candor.popup.document;
+  if (candor.floatOpen) return document;
+  return null;
+}
+function candorRoot() {
+  const doc = candorDoc();
+  if (!doc) return null;
+  return doc === document ? document.getElementById("candor-body") : doc.getElementById("candor");
+}
+function openCandor() {
+  if (!candorDoc()) {
+    let w = null;
+    try { w = window.open("", "zchat-candor", "popup,width=880,height=720"); } catch {}
+    if (w && w.document) {
+      w.document.open();
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · Radical Candor</title><style>${candorStyle}</style></head><body><div class="candor" id="candor"></div></body></html>`);
+      w.document.close();
+      candor.popup = w;
+    } else {
+      candor.popup = null;
+      candor.floatOpen = true;
+      candorFloatEl.classList.add("open");
+    }
+  }
+  candorRebuild();
+}
+function closeCandor() {
+  if (candor.popup && !candor.popup.closed) candor.popup.close();
+  candor.popup = null;
+  candor.floatOpen = false;
+  candorFloatEl.classList.remove("open");
+  if (candor.running) candorSave();
+}
+// Shows a "+N" rising from where the click was.
+function candorFloat(e, text) {
+  const root = candorRoot();
+  if (!root || !e) return;
+  const doc = root.ownerDocument, area = root.querySelector(".clicker");
+  const r = area.getBoundingClientRect();
+  const pop = doc.createElement("span");
+  pop.className = "pop";
+  pop.textContent = text;
+  pop.style.left = (e.clientX - r.left - 10) + "px";
+  pop.style.top = (e.clientY - r.top - 20) + "px";
+  area.append(pop);
+  setTimeout(() => pop.remove(), 900);
+}
+// The window is made once (candorRebuild) and then only its numbers change (candorUpdate), so a button being clicked
+// is never replaced under the mouse.
+function candorRebuild() {
+  const root = candorRoot();
+  if (!root || !candor.s) return;
+  const doc = root.ownerDocument;
+  const el = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  root.textContent = "";
+  const ui = { tiers: {}, upgradeKey: "" };
+
+  const head = el("div", "head");
+  head.append(el("span", "logo", "ZURU"), el("span", "title", "Radical Candor"));
+  if (doc !== document) { const close = el("button", "close", "×"); close.onclick = closeCandor; head.append(close); }
+  root.append(head);
+  ui.toast = el("div", "toast");
+  root.append(ui.toast);
+  if (candor.s.broken) {
+    candorEnding(root, el, ui);
+    candor.built = { root, ui, doc, ending: true };
+    candorUpdate();
+    return;
+  }
+  // The goal: how far to Infinity, on a log scale (it is 308 zeros away).
+  const goal = el("div", "goal");
+  const label = el("div", "label");
+  ui.goalText = el("span");
+  label.append(el("span", "", "Goal: ∞ Radical Candor, until JavaScript runs out of numbers"), ui.goalText);
+  const bar = el("div", "bar");
+  ui.goalBar = el("div");
+  bar.append(ui.goalBar);
+  goal.append(label, bar);
+  root.append(goal);
+
+  // Left: the bank, the button, the stats, the offsite and the leaderboard.
+  const left = el("div");
+  const bank = el("div", "bank");
+  ui.amount = el("div", "amount");
+  ui.rate = el("div", "rate");
+  ui.storm = el("div", "storm");
+  bank.append(ui.amount, el("div", "label", "Radical Candor"), ui.rate, ui.storm);
+  left.append(bank);
+  const clicker = el("div", "clicker");
+  const big = el("button", "", "");
+  big.innerHTML = "Give<br>Radical<br>Candor";
+  big.onclick = e => candorClick(e);
+  ui.power = el("div", "power");
+  clicker.append(big);
+  left.append(clicker, ui.power);
+  ui.moment = el("div", "moment", "📣 Feedback moment!");
+  ui.moment.onclick = candorMomentClick;
+  ui.moment.style.display = "none";
+  root.append(ui.moment);
+
+  const stats = el("div", "card");
+  stats.append(el("h3", "", "Stats"));
+  ui.stats = el("div");
+  stats.append(ui.stats);
+  ui.offsite = el("button", "offsite", "");
+  ui.offsite.onclick = candorOffsite;
+  stats.append(ui.offsite);
+  left.append(stats);
+  const board = el("div", "card board");
+  board.append(el("h3", "", "Leaderboard"));
+  ui.board = el("div");
+  board.append(ui.board);
+  left.append(board);
+  root.append(left);
+
+  // Right: who to hire, and the upgrades.
+  const right = el("div");
+  const team = el("div", "card");
+  const th = el("h3", "", "Your team");
+  const modes = el("span", "modes");
+  ui.modes = [1, 10, "max"].map(m => {
+    const b = el("button", "", m === "max" ? "Max" : "×" + m);
+    b.onclick = () => { candor.mode = m; candorUpdate(); };
+    modes.append(b);
+    return [m, b];
+  });
+  th.append(modes);
+  team.append(th);
+  for (const t of candorTiers) {
+    const row = el("div", "tier");
+    const icon = el("div", "icon", t.icon);
+    const mid = el("div");
+    const name = el("div", "name", t.name);
+    const owned = el("span", "owned");
+    name.append(owned);
+    const what = el("div", "what"), flavor = el("div", "flavor", t.flavor), next = el("div", "next");
+    mid.append(name, what, flavor, next);
+    const buy = el("button");
+    buy.onclick = () => { candorBuy(t); candorUpdate(); };
+    row.append(icon, mid, buy);
+    team.append(row);
+    ui.tiers[t.id] = { row, owned, what, next, buy };
+  }
+  right.append(team);
+  const ups = el("div", "card");
+  ups.append(el("h3", "", "Upgrades"));
+  ui.upgrades = el("div", "upgrades");
+  ui.ownedUpgrades = el("div", "owned-upgrades");
+  ups.append(ui.upgrades, ui.ownedUpgrades);
+  right.append(ups);
+  root.append(right);
+  candor.built = { root, ui, doc, ending: false };
+  candorUpdate();
+}
+// The end: candor is Infinity (and soon NaN). How long it took, and the way to start over, stronger.
+function candorEnding(root, el, ui) {
+  const s = candor.s;
+  const end = el("div", "ending");
+  const rain = el("div", "rain");
+  rain.textContent = Array.from({ length: 40 }, () => Array.from({ length: 14 }, () =>
+    ["Infinity", "NaN", "1.7976931348623157e+308", "∞", "undefined", "Number.MAX_VALUE"][Math.floor(Math.random() * 6)]).join("  ")).join("\n");
+  ui.big = el("div", "big", "∞");
+  const time = s.brokeIn >= 3600 ? `${Math.floor(s.brokeIn / 3600)}h ${Math.floor(s.brokeIn % 3600 / 60)}m` : `${Math.max(1, Math.floor(s.brokeIn / 60))}m`;
+  const what = el("div", "what");
+  what.innerHTML = "You gave so much Radical Candor that JavaScript ran out of numbers. Past <code>1.8 × 10³⁰⁸</code> " +
+    "there is only <code>Infinity</code>, and <code>Infinity − Infinity</code> is <code>NaN</code>. " +
+    "Every piece of feedback, ever, has been given. ZURU has reached peak honesty.";
+  const facts = el("div", "facts");
+  for (const [value, label] of [[time, "to get here"], [candorFmt(s.offsites), "offsites"], [candorFmt(s.clicks), "clicks"],
+                                ["#" + s.infinities, s.infinities === 1 ? "Infinity" : "Infinities"]]) {
+    const d = el("div");
+    d.append(el("b", "", value), el("span", "", label));
+    facts.append(d);
+  }
+  const again = el("button", "transcend", `✨ Transcend: start over, everything ×${Math.pow(2, s.infinities)} for good`);
+  again.onclick = candorTranscend;
+  end.append(rain, ui.big, el("div", "headline", "You broke it."), what, facts, again);
+  root.append(end);
+  const board = el("div", "card board");
+  board.style.gridColumn = "1 / 3";
+  board.append(el("h3", "", "Leaderboard"));
+  ui.board = el("div");
+  board.append(ui.board);
+  root.append(board);
+}
+function candorUpdate() {
+  const b = candor.built;
+  if (!b || !b.root.isConnected || !candor.s || !candorRoot()) return;
+  if (b.ending !== candor.s.broken) { candorRebuild(); return; }
+  const { ui, doc } = b, s = candor.s, now = Date.now();
+  const el = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  ui.toast.textContent = now < candor.toastUntil ? candor.toast : "";
+  ui.toast.style.display = now < candor.toastUntil ? "" : "none";
+  if (b.ending) {
+    // ∞, then NaN, then ∞...
+    ui.big.textContent = Math.floor(now / 1400) % 3 === 2 ? "NaN" : "∞";
+    candorBoard(ui, el);
+    return;
+  }
+  const progress = s.candor > 1 ? Math.min(100, Math.log10(s.candor) / Math.log10(Number.MAX_VALUE) * 100) : 0;
+  ui.goalBar.style.width = progress.toFixed(2) + "%";
+  ui.goalText.innerHTML = `<b>${progress.toFixed(1)}%</b> of the way (10<sup>${s.candor > 1 ? Math.floor(Math.log10(s.candor)) : 0}</sup> of 10<sup>308</sup>)`;
+  ui.amount.textContent = candorFmt(s.candor);
+  ui.rate.textContent = candorFmt(candorPerSecond(), true) + " per second";
+  ui.storm.textContent = now < s.storm ? `📣 Candor storm ×7: ${Math.ceil((s.storm - now) / 1000)}s` : "";
+  ui.power.textContent = `${candorFmt(candorClickPower(), true)} candor per click`;
+  if (candor.moment) {
+    ui.moment.style.display = "";
+    ui.moment.style.left = candor.moment.x + "%";
+    ui.moment.style.top = candor.moment.y + "%";
+  } else {
+    ui.moment.style.display = "none";
+  }
+  for (const [m, button] of ui.modes) button.classList.toggle("on", candor.mode === m);
+
+  // The tiers: each shown once the one before it is hired (and the first always).
+  let shown = true;
+  candorTiers.forEach((t, i) => {
+    const r = ui.tiers[t.id];
+    const visible = shown;
+    r.row.style.display = visible ? "" : "none";
+    shown = s.bought[t.id] > 0 || s.amounts[t.id] > 0;
+    if (!visible) return;
+    const amount = s.amounts[t.id];
+    r.owned.textContent = amount > 0 ? candorFmt(amount, true) + (s.bought[t.id] && Math.floor(amount) !== s.bought[t.id] ? ` (${s.bought[t.id]} hired)` : "") : "";
+    const each = t.rate * candorTierMult(t);
+    const makes = i === 0 ? "candor" : candorTiers[i - 1].plural;
+    r.what.textContent = amount > 0 ? `Make ${candorFmt(amount * each, true)} ${makes} a second (${candorFmt(each, true)} each)`
+                                    : `Each makes ${candorFmt(each, true)} ${makes} a second`;
+    const toMilestone = 25 - (s.bought[t.id] % 25);
+    r.next.textContent = s.bought[t.id] ? `${toMilestone} more to make them all ×2` : "";
+    const n = candorBuyCount(t), price = candorCost(t, n);
+    const label = `${n}|${candorFmt(price)}`;
+    if (r.buy._label !== label) {
+      r.buy._label = label;
+      r.buy.textContent = "";
+      r.buy.append(el("b", "", `Hire ${n}`), el("small", "", candorFmt(price)));
+    }
+    r.buy.disabled = price > s.candor;
+    r.row.classList.toggle("locked", amount === 0 && price > s.candor);
+  });
+
+  // The upgrades: rebuilt only when which are offered changes.
+  const offered = candorUpgrades.filter(u => !candorHas(u.id) && (u.show(s) || s.total >= u.cost / 3));
+  const key = offered.map(u => u.id).join() + "|" + s.upgrades.join();
+  if (key !== ui.upgradeKey) {
+    ui.upgradeKey = key;
+    ui.upgrades.textContent = "";
+    for (const u of offered) {
+      const card = el("div", "upgrade");
+      const buy = el("button");
+      buy.append(el("b", "", "Buy"), el("small", "", candorFmt(u.cost)));
+      buy.onclick = () => { candorBuyUpgrade(u); candorUpdate(); };
+      buy.dataset.cost = u.cost;
+      card.append(el("span", "icon", u.icon), el("span", "name", u.name), el("span", "desc", u.desc), buy);
+      ui.upgrades.append(card);
+    }
+    if (!offered.length) ui.upgrades.append(el("div", "none", "Keep giving feedback: more upgrades come with more candor."));
+    ui.ownedUpgrades.textContent = s.upgrades.map(id => candorUpgrades.find(u => u.id === id).icon).join(" ");
+    ui.ownedUpgrades.title = s.upgrades.map(id => candorUpgrades.find(u => u.id === id).name).join(", ");
+  }
+  for (const button of ui.upgrades.querySelectorAll("button")) button.disabled = Number(button.dataset.cost) > s.candor;
+
+  // Stats, and the offsite.
+  const stat = (k, v) => { const d = el("div", "stat"); d.append(el("span", "", k), el("span", "", v)); return d; };
+  ui.stats.textContent = "";
+  ui.stats.append(stat("Candor ever", candorFmt(s.total)), stat("Clicks", candorFmt(s.clicks)),
+                  stat("Offsites", candorFmt(s.offsites)), stat("Culture", candorFmt(s.culture)),
+                  stat("  everything", "×" + candorFmt(candorCultureMult(), true)),
+                  stat("  every 50 hired", "×" + candorMilestone().toFixed(3)));
+  if (s.infinities) ui.stats.append(stat("Infinities", "∞ × " + s.infinities));
+  const gain = candorCultureGain();
+  ui.offsite.disabled = gain < 1;
+  ui.offsite.classList.toggle("armed", gain >= 1 && now < candor.offsiteArmed);
+  ui.offsite.textContent = gain < 1 ? `🏕️ Offsite at ${candorFmt(candorOffsiteFrom)} candor this run`
+    : now < candor.offsiteArmed ? `Click again: start over for +${gain} Culture` : `🏕️ Company offsite: +${gain} Culture`;
+  ui.offsite.title = "Start over, team and upgrades too, for Culture: each makes everything 5% more, and every 50 hired more than ×2, for good. Without offsites, Infinity is out of reach.";
+
+  candorBoard(ui, el);
+}
+// The leaderboard, with our own numbers as they are now: the most Infinities first, then the most candor.
+function candorBoard(ui, el) {
+  const s = candor.s;
+  const own = { total: s.total, rate: candorPerSecond(), infinities: s.infinities };
+  const board = candor.board.map(p => p.you ? { ...p, ...own } : p);
+  if (!board.some(p => p.you)) board.push({ name: selfName || "You", color: "#d6d9df", you: true, ...own });
+  board.sort((a, b) => (b.infinities || 0) - (a.infinities || 0) || b.total - a.total);
+  ui.board.textContent = "";
+  board.slice(0, 10).forEach((p, i) => {
+    const row = el("div", "row" + (p.you ? " you" : ""));
+    const who = el("span", "who", p.name);
+    who.style.color = p.color;
+    const tot = (p.infinities ? `∞×${p.infinities}` + (isFinite(p.total) ? " · " : "") : "") + (isFinite(p.total) ? candorFmt(p.total) : "");
+    row.append(el("span", "n", i + 1 + "."), who, el("span", "tot", tot || "∞"));
+    row.title = `${candorFmt(p.rate, true)} candor per second`;
+    ui.board.append(row);
+  });
+}
+function candorGame(state) {
+  if (Array.isArray(state.leaderboard)) candor.board = state.leaderboard;
+  // The saved game (or a new one): it plays from now on, window or not.
+  if (!candor.running && (state.save || state.open)) candorStart(state.save);
+  if (state.open) openCandor();
+  else candorUpdate();
+}
+document.getElementById("candor-open").onclick = () => {
+  if (candor.running && !candorDoc()) openCandor();
+  else window.zchatSend("/game candor");
+};
+document.getElementById("candor-float-close").onclick = closeCandor;
+window.addEventListener("beforeunload", () => { if (candor.running) candorSave(); });
+(() => {
+  const handle = document.getElementById("candor-float-title");
+  let dx = 0, dy = 0, dragging = false;
+  handle.addEventListener("mousedown", e => {
+    dragging = true;
+    const r = candorFloatEl.getBoundingClientRect();
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    candorFloatEl.style.left = Math.max(0, e.clientX - dx) + "px";
+    candorFloatEl.style.top = Math.max(0, e.clientY - dy) + "px";
+    candorFloatEl.style.right = "auto";
+  });
+  document.addEventListener("mouseup", () => { dragging = false; });
+})();
+
 // --- The games' windows: the C++ side calls zchat.game(game, state) with each game's state.
 zchat.game = (game, state) => {
   if (game === "dice") diceGame(state);
@@ -4345,6 +5116,7 @@ zchat.game = (game, state) => {
   else if (game === "kick") kickVotes(state);
   else if (game === "spy") spyRequests(state);
   else if (game === "coins") showCoins(state);
+  else if (game === "candor") candorGame(state);
   else if (game === "casino") openCasino(typeof state.open === "string" ? state.open : undefined);
   else if (game === "blackjack" || game === "roulette" || game === "horses") casinoGame(game, state);
 };
