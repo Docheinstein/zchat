@@ -7,6 +7,7 @@ target_sources(zchat PUBLIC
     bomber.cpp
     capture.cpp
     casino.cpp
+    candor.cpp
     channel.cpp
     chat.cpp
     cipher.cpp

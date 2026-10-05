@@ -32,6 +32,7 @@ Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
     games_.push_back(make_dice(chat, terminal, *this));
     games_.push_back(make_paint(chat, terminal, *this));
     games_.push_back(make_wordle(chat, terminal, *this));
+    games_.push_back(make_candor(chat, terminal, *this));
     games_.push_back(make_pokemon(chat, terminal, *this));
     games_.push_back(make_bomber(chat, terminal, *this));
     games_.push_back(make_arena(chat, terminal, *this));
