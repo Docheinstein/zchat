@@ -4441,7 +4441,8 @@ const candorOffsiteFrom = 1e9;
 function candorFresh() {
   const zero = () => Object.fromEntries(candorTiers.map(t => [t.id, 0]));
   return { v: 1, candor: 0, total: 0, run: 0, clicks: 0, culture: 0, amounts: zero(), bought: zero(), upgrades: [],
-           storm: 0, saved: Date.now(), started: Date.now(), offsites: 0, infinities: 0, broken: false, brokeIn: 0 };
+           storm: 0, saved: Date.now(), started: Date.now(), offsites: 0, infinities: 0, broken: false, brokeIn: 0,
+           auto: {} };
 }
 const candor = { s: null, running: false, popup: null, floatOpen: false, mode: 1, board: [], lastSave: 0, lastShare: 0,
                  dirty: false, moment: null, nextMoment: 0, toast: "", toastUntil: 0, offsiteArmed: 0, built: null };
@@ -4514,15 +4515,31 @@ function candorMaxAffordable(t) {
 function candorBuyCount(t) {
   return candor.mode === "max" ? Math.max(1, candorMaxAffordable(t)) : candor.mode;
 }
-function candorBuy(t) {
+// Hires the selected amount of a tier (×1, ×10, or as many as candor pays for), when candor pays for it: returns
+// whether it did.
+function candorBuy(t, quiet) {
   const n = candorBuyCount(t), price = candorCost(t, n);
-  if (candor.s.broken || price > candor.s.candor) return;
-  const before = Math.floor(candor.s.bought[t.id] / 25);
+  if (candor.s.broken || price > candor.s.candor) return false;
+  const before = Math.floor(candor.s.bought[t.id] / 50);
   candor.s.candor -= price;
   candor.s.bought[t.id] += n;
   candor.s.amounts[t.id] += n;
   candor.dirty = true;
-  if (Math.floor(candor.s.bought[t.id] / 25) > before) candorToast(`🎉 ${candor.s.bought[t.id]} ${t.plural}: they make twice as much!`);
+  if (!quiet && Math.floor(candor.s.bought[t.id] / 50) > before) {
+    candorToast(`🎉 ${candor.s.bought[t.id]} ${t.plural}: they all make ×${candorMilestone().toFixed(3)}!`);
+  }
+  return true;
+}
+// The tiers set to buy themselves: the selected amount, as soon as candor pays for it, over and over. The highest
+// tiers first, as they are worth the most.
+function candorAutoBuy() {
+  if (!candor.s || candor.s.broken) return;
+  for (let i = candorTiers.length - 1; i >= 0; i--) {
+    const t = candorTiers[i];
+    if (!candor.s.auto[t.id]) continue;
+    // A few at a time, so ×1 keeps up with a big income too.
+    for (let k = 0; k < 100 && candorBuy(t, true); k++) {}
+  }
 }
 function candorBuyUpgrade(u) {
   if (candor.s.broken || candorHas(u.id) || u.cost > candor.s.candor) return;
@@ -4558,7 +4575,7 @@ function candorCheckInfinity() {
 }
 // After Infinity: everything starts over, Culture too, but each Infinity makes everything ×2 for good.
 function candorTranscend() {
-  const keep = { clicks: candor.s.clicks, infinities: candor.s.infinities };
+  const keep = { clicks: candor.s.clicks, infinities: candor.s.infinities, auto: candor.s.auto };
   candor.s = Object.assign(candorFresh(), keep);
   candor.dirty = true;
   candorToast(`✨ Transcended. ${candor.s.infinities} Infinit${candor.s.infinities === 1 ? "y" : "ies"}: everything makes ×${Math.pow(2, candor.s.infinities)} for good. Do it again.`);
@@ -4576,7 +4593,7 @@ function candorOffsite() {
   if (gain < 1) return;
   if (Date.now() > candor.offsiteArmed) { candor.offsiteArmed = Date.now() + 4000; candorUpdate(); return; }
   const keep = { total: candor.s.total, clicks: candor.s.clicks, culture: candor.s.culture + gain, started: candor.s.started,
-                 offsites: candor.s.offsites + 1, infinities: candor.s.infinities };
+                 offsites: candor.s.offsites + 1, infinities: candor.s.infinities, auto: candor.s.auto };
   candor.s = Object.assign(candorFresh(), keep);
   candor.offsiteArmed = 0;
   candor.dirty = true;
@@ -4600,6 +4617,7 @@ function candorLoad(save) {
     storm: num(s.storm), saved: num(s.saved, Date.now()), started: num(s.started, Date.now()),
     offsites: Math.floor(num(s.offsites)), infinities: Math.floor(num(s.infinities)), broken: s.broken === true,
     brokeIn: num(s.brokeIn),
+    auto: Object.fromEntries(candorTiers.filter(t => s.auto && s.auto[t.id] === true).map(t => [t.id, true])),
     upgrades: Array.isArray(s.upgrades) ? s.upgrades.filter(id => candorUpgrades.some(u => u.id === id)) : [],
   };
   for (const t of candorTiers) {
@@ -4610,7 +4628,7 @@ function candorLoad(save) {
   const away = Math.min(candorAwayCap, Math.max(0, (Date.now() - candor.s.saved) / 1000));
   if (away > 5) {
     const before = candor.s.candor, steps = Math.min(2000, Math.ceil(away));
-    for (let i = 0; i < steps; i++) candorAdvance(away / steps);
+    for (let i = 0; i < steps; i++) { candorAdvance(away / steps); candorAutoBuy(); }
     const made = candor.s.candor - before;
     if (made >= 1) candorToast(`👋 Welcome back! While you were away, your team made ${candorFmt(made)} candor.`);
   }
@@ -4632,6 +4650,7 @@ function candorStart(save) {
   setInterval(() => {
     const now = Date.now();
     candorAdvance(Math.min(10, (now - last) / 1000));
+    candorAutoBuy();
     last = now;
     // Now and then, a feedback moment to click, for a while.
     if (!candor.moment && now >= candor.nextMoment) {
@@ -4717,7 +4736,7 @@ const candorStyle = `
   .modes button { height: 22px; padding: 0 8px; border-radius: 11px; border: 1px solid #262a33; background: #1e222a;
                   color: #d6d9df; font: inherit; font-size: 11px; cursor: pointer; }
   .modes button.on { background: #6ea8ff; border-color: #6ea8ff; color: #0b0d10; font-weight: 700; }
-  .tier { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center; padding: 8px 6px;
+  .tier { display: grid; grid-template-columns: 40px 1fr auto auto; gap: 10px; align-items: center; padding: 8px 6px;
           border-bottom: 1px solid #1c1f26; }
   .tier .icon { font-size: 26px; text-align: center; }
   .tier .name { font-weight: 700; font-size: 14px; }
@@ -4731,6 +4750,13 @@ const candorStyle = `
   .tier button small, .upgrade button small { color: #9fb8e6; }
   .tier button:disabled, .upgrade button:disabled { opacity: .4; cursor: default; }
   .tier.locked { opacity: .45; }
+  .tier .auto { min-width: 0; width: 54px; height: 40px; border-radius: 8px; border: 1px solid #262a33; background: #15181e;
+                color: #7d8491; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; line-height: 1.15; }
+  .tier .auto span { display: block; font-size: 15px; }
+  .tier .auto:hover { border-color: #3fb950; }
+  .tier .auto.on { background: #12301a; border-color: #3fb950; color: #3fb950; box-shadow: 0 0 10px #3fb95044; }
+  .tier .auto.on { animation: autoglow 1.6s ease-in-out infinite; }
+  @keyframes autoglow { 0%, 100% { box-shadow: 0 0 6px #3fb95033; } 50% { box-shadow: 0 0 14px #3fb95099; } }
   .upgrades { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .upgrade { display: grid; grid-template-columns: 28px 1fr; gap: 6px 8px; align-items: center; background: #15181e;
              border: 1px solid #262a33; border-radius: 8px; padding: 8px; }
@@ -4915,9 +4941,17 @@ function candorRebuild() {
     mid.append(name, what, flavor, next);
     const buy = el("button");
     buy.onclick = () => { candorBuy(t); candorUpdate(); };
-    row.append(icon, mid, buy);
+    const auto = el("button", "auto");
+    auto.append(el("span", "", "🔁"), doc.createTextNode("Auto"));
+    auto.onclick = () => {
+      candor.s.auto[t.id] = !candor.s.auto[t.id];
+      if (!candor.s.auto[t.id]) delete candor.s.auto[t.id];
+      candor.dirty = true;
+      candorUpdate();
+    };
+    row.append(icon, mid, auto, buy);
     team.append(row);
-    ui.tiers[t.id] = { row, owned, what, next, buy };
+    ui.tiers[t.id] = { row, owned, what, next, buy, auto };
   }
   right.append(team);
   const ups = el("div", "card");
@@ -5005,8 +5039,12 @@ function candorUpdate() {
     const makes = i === 0 ? "candor" : candorTiers[i - 1].plural;
     r.what.textContent = amount > 0 ? `Make ${candorFmt(amount * each, true)} ${makes} a second (${candorFmt(each, true)} each)`
                                     : `Each makes ${candorFmt(each, true)} ${makes} a second`;
-    const toMilestone = 25 - (s.bought[t.id] % 25);
-    r.next.textContent = s.bought[t.id] ? `${toMilestone} more to make them all ×2` : "";
+    const toMilestone = 50 - (s.bought[t.id] % 50);
+    r.next.textContent = s.bought[t.id] ? `${toMilestone} more to make them all ×${candorMilestone().toFixed(3)}` : "";
+    const on = !!s.auto[t.id];
+    r.auto.classList.toggle("on", on);
+    r.auto.title = on ? `Hiring ${candor.mode === "max" ? "as many as candor pays for" : candor.mode} at a time, as soon as candor pays for it: click to stop`
+                      : `Hire the selected amount (${candor.mode === "max" ? "Max" : "×" + candor.mode}) by itself, as soon as candor pays for it, over and over`;
     const n = candorBuyCount(t), price = candorCost(t, n);
     const label = `${n}|${candorFmt(price)}`;
     if (r.buy._label !== label) {
