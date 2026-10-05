@@ -362,6 +362,13 @@
     border: 3px dashed var(--accent); font-size: 20px; color: var(--accent); z-index: 10;
   }
   body.dragging #drop { display: grid; }
+  /* The time a line starts with: only the hour, and the whole date after hovering on it a moment. */
+  .time { cursor: default; }
+  #time-tip {
+    position: fixed; z-index: 30; pointer-events: none; display: none; white-space: nowrap; padding: 4px 8px;
+    border-radius: 6px; background: #000e; color: #fff; font: 12px system-ui, -apple-system, "Segoe UI", sans-serif;
+    box-shadow: 0 4px 14px #0008;
+  }
 </style>
 <style id="dice-style"></style>
 <style id="pk-style"></style>
@@ -460,6 +467,7 @@
   <div class="am" id="am-body"></div></div>
 <div id="fr-float" tabindex="-1"><div id="fr-float-title">zchat · frag<button id="fr-float-close" title="Close">×</button></div>
   <div class="fr" id="fr-body"></div></div>
+<div id="time-tip"></div>
 <div id="drop">Drop a picture or a file to send it</div>
 <div id="viewer"><img alt="picture"></div>
 <script>
@@ -544,7 +552,47 @@ function ansiToNodes(text, into) {
     if (deco) span.style.textDecoration = deco;
     into.appendChild(span);
   }
+  markTime(into);
 }
+
+// The time a line starts with ("HH:MM", or "YYYY-MM-DD HH:MM" when it is not today, and a notice's "*" after it, in the
+// same color): shown as the hour only, with the
+// date kept for the tip shown when hovering on it (see below). A line from today is from the day it is shown.
+function markTime(line) {
+  const first = line.firstElementChild;
+  const m = first && first.tagName === "SPAN" && !first.classList.contains("time") &&
+            /^(?:(\d{4})-(\d{2})-(\d{2}) )?(\d{2}):(\d{2})( \*)?$/.exec(first.textContent);
+  if (!m) return;
+  const now = new Date();
+  const when = m[1] ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5])
+                    : new Date(now.getFullYear(), now.getMonth(), now.getDate(), +m[4], +m[5]);
+  if (m[6]) {
+    const star = first.cloneNode(false);
+    star.textContent = m[6];
+    first.after(star);
+  }
+  first.classList.add("time");
+  first.textContent = m[4] + ":" + m[5];
+  first.dataset.date = when.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" }) +
+                       " at " + m[4] + ":" + m[5];
+}
+// After hovering on a time for a moment, its date; above it, or below where there is no room.
+const timeTip = document.getElementById("time-tip");
+let timeTipTimer = null;
+document.addEventListener("mouseover", e => {
+  const time = e.target.closest && e.target.closest(".time");
+  clearTimeout(timeTipTimer);
+  if (!time) { timeTip.style.display = "none"; return; }
+  timeTipTimer = setTimeout(() => {
+    timeTip.textContent = time.dataset.date;
+    timeTip.style.display = "block";
+    const r = time.getBoundingClientRect(), t = timeTip.getBoundingClientRect();
+    const top = r.top - t.height - 6 >= 0 ? r.top - t.height - 6 : r.bottom + 6;
+    timeTip.style.left = Math.max(4, Math.min(r.left, innerWidth - t.width - 4)) + "px";
+    timeTip.style.top = top + "px";
+  }, 800);
+});
+document.addEventListener("scroll", () => { clearTimeout(timeTipTimer); timeTip.style.display = "none"; }, true);
 
 function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 40; }
 

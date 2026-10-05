@@ -44,7 +44,7 @@ UDP port) and the people in the chat, each with an avatar in their color,
 the messages in the middle, and the input box at the bottom: Enter sends, Up and Down go through what was sent,
 typing `@` lists the people to tag, pasting the path of an image turns it into `/image`, and dropping an image file
 on the window types the `/image` command for it (a size or texture can still be added before Enter), or `/file` for
-any other kind of file. Files sent in the chat get a Download button. The text size
+any other kind of file. Files sent in the chat get a Download button. Each line shows the time it came at; hovering on it a moment shows the date too. The text size
 (A− / A+) and font are at the top right, and are saved with the other settings. It is the system's own web view
 (WebView2 on Windows, WebKit on macOS and Linux) showing `src/ui/index.html`, built into zchat, so it is ready for
 more to come: real images and emoji, more channels, avatars, fonts.
