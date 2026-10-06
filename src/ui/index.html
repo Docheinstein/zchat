@@ -4940,6 +4940,8 @@ function candorRebuild() {
     const what = el("div", "what"), flavor = el("div", "flavor", t.flavor), next = el("div", "next");
     mid.append(name, what, flavor, next);
     const buy = el("button");
+    const buyCount = el("b"), buyPrice = el("small");
+    buy.append(buyCount, buyPrice);
     buy.onclick = () => { candorBuy(t); candorUpdate(); };
     const auto = el("button", "auto");
     auto.append(el("span", "", "🔁"), doc.createTextNode("Auto"));
@@ -4951,7 +4953,7 @@ function candorRebuild() {
     };
     row.append(icon, mid, auto, buy);
     team.append(row);
-    ui.tiers[t.id] = { row, owned, what, next, buy, auto };
+    ui.tiers[t.id] = { row, owned, what, next, buy, buyCount, buyPrice, auto };
   }
   right.append(team);
   const ups = el("div", "card");
@@ -5048,9 +5050,11 @@ function candorUpdate() {
     const n = candorBuyCount(t), price = candorCost(t, n);
     const label = `${n}|${candorFmt(price)}`;
     if (r.buy._label !== label) {
+      // Only the text changes: swapping the button's children mid-click (Max ticks every frame)
+      // removes what the mouse went down on, and the browser then drops the click.
       r.buy._label = label;
-      r.buy.textContent = "";
-      r.buy.append(el("b", "", `Hire ${n}`), el("small", "", candorFmt(price)));
+      r.buyCount.textContent = `Hire ${n}`;
+      r.buyPrice.textContent = candorFmt(price);
     }
     r.buy.disabled = price > s.candor;
     r.row.classList.toggle("locked", amount === 0 && price > s.candor);
