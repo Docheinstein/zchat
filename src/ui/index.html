@@ -4374,7 +4374,7 @@ document.getElementById("fr-float-close").onclick = closeFrag;
 // --- Radical Candor, an idle game, ZURU style (zchat.game("candor", {open, save, leaderboard})). The goal: so much
 // candor that JavaScript runs out of numbers, Infinity (past 1.8e308), and NaN soon after. Give feedback by hand for
 // candor; Developers make candor every second, HR Partners hire Developers, Team Leads hire HR Partners, and so on
-// up to the Board, so it all grows on its own. Upgrades multiply it, a feedback moment now and then boosts it, and an
+// up to the Shareholders, so it all grows on its own. Upgrades multiply it, a feedback moment now and then boosts it, and an
 // offsite starts over with Culture, which multiplies everything for good. The game is played here, in the page, also
 // while its window is closed; it saves itself in zchat's config (/game candor save) and catches up on the time zchat
 // was not running, and tells the chat how it is doing (/game candor share) for the leaderboard.
@@ -4393,6 +4393,8 @@ const candorTiers = [
     flavor: "Appoints VPs who challenge directly and care personally." },
   { id: "board", name: "Board Member", plural: "Board Members", icon: "🏛️", cost: 600000000, rate: 0.2,
     flavor: "Sets the vision: anything is possible, with honest feedback." },
+  { id: "share", name: "Shareholder", plural: "Shareholders", icon: "💰", cost: 18000000000, rate: 0.2,
+    flavor: "Elects Board Members who never sugar-coat the numbers." },
 ];
 // What makes each tier: candor for Developers, the tier below for the others.
 const candorUpgrades = [
@@ -4426,6 +4428,8 @@ const candorUpgrades = [
     show: s => s.bought.cx >= 5, tier: ["cx", 2], all: 2 },
   { id: "fivesurprise", icon: "🎁", name: "5 Surprise Town Hall", cost: 5e13, desc: "Five surprises, all of them honest. Board Members ×3.",
     show: s => s.bought.board >= 3, tier: ["board", 3] },
+  { id: "agm", icon: "🗳️", name: "Brutally Honest AGM", cost: 2e15, desc: "The annual report says what really happened. Shareholders ×3.",
+    show: s => s.bought.share >= 3, tier: ["share", 3] },
   { id: "moonshot", icon: "🚀", name: "Moonshot Prototypes", cost: 1e25, desc: "Ten prototypes a week, every one honestly reviewed. Everything ×3.",
     show: s => s.total >= 1e22, all: 3 },
   { id: "global", icon: "🌏", name: "Global Launch", cost: 1e50, desc: "Every market, every language, every opinion. Everything ×5.",
