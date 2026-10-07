@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -47,5 +48,13 @@ std::optional<long long> price(std::string_view name);
 // A balance as text, and back: a whole number from 0 to most; nullopt when it is not one.
 std::string encode(long long coins);
 std::optional<long long> decode(std::string_view text);
+
+// A balance as kept on disk, ours in the config and the others' in the "coins" file, so that it is not a number to
+// change in a text editor: encrypted, with a checksum, for one user (their id, see Chat::user()), so that another's
+// cannot be copied over ours either. "z1" and 32 hex digits. It is a simple cipher whose key is in this source, so
+// it stops the casual edit, not someone who reads the code.
+std::string seal(long long coins, std::uint64_t user);
+// nullopt when it is not a sealed balance of this user, or was changed by hand.
+std::optional<long long> unseal(std::string_view text, std::uint64_t user);
 
 } // namespace zchat::coins

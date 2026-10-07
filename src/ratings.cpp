@@ -11,8 +11,9 @@
 // round as well, to show them right away, but what the player's own zchat says is what counts.
 // People whose zchat does not know about ratings are rated too, by name, for this session only.
 //
-// The coins won in the rounds (see coins.hpp) are kept the same way: ours in the config ("coins"), the others' in the
-// "coins" file of the config folder, as they tell them:
+// The coins won in the rounds (see coins.hpp) are kept the same way: ours in the config ("wallet"), the others' in
+// the "coins" file of the config folder, as they tell them, both sealed (see coins::seal()) so they are not numbers
+// to edit by hand:
 //   elo coins <user> <coins>         our coins (see coins::encode()), with our user id
 // along with our ratings. They are spent on the annoying commands, like /trill and /kick (see spend()).
 
@@ -204,7 +205,7 @@ namespace {
             pay(players, places);
             if (us) {
                 config::set("elo", elo::encode(own_));
-                config::set("coins", coins::encode(coins_));
+                save_coins();
                 announce();
                 show_coins();
             }
@@ -285,7 +286,7 @@ namespace {
                 return false;
             }
             coins_ -= it->price;
-            config::set("coins", coins::encode(coins_));
+            save_coins();
             announce();
             show_coins();
             chat_.notice(std::format("💸 {} for the {}: {} left.", plural(it->price, "coin"), it->name,
@@ -454,9 +455,15 @@ namespace {
 
         // Ours changed: kept, told, and shown.
         void changed_coins() {
-            config::set("coins", coins::encode(coins_));
+            save_coins();
             announce();
             show_coins();
+        }
+
+        // Ours in the config, sealed. Versions before kept them as a plain number, in "coins".
+        void save_coins() {
+            config::set("wallet", coins::seal(coins_, chat_.user()));
+            config::remove("coins");
         }
 
         // Our coins in the window, by our name.
@@ -624,13 +631,24 @@ namespace {
         }
 
         // Ours from the config, and the others' from their files: a line each, "USER\tSENDER\tNAME\tRATINGS", and
-        // "USER\tSENDER\tNAME\tCOINS" for the coins.
+        // "USER\tSENDER\tNAME\tCOINS" for the coins, sealed.
         void load() {
             if (const auto saved = config::get("elo")) {
                 own_ = elo::decode(*saved).value_or(elo::Ratings {});
             }
-            if (const auto saved = config::get("coins")) {
-                coins_ = coins::decode(*saved).value_or(coins::initial);
+            if (const auto saved = config::get("wallet")) {
+                if (const auto amount = coins::unseal(*saved, chat_.user())) {
+                    coins_ = *amount;
+                } else {
+                    // Changed by hand, or copied from somebody else's config: back to the start.
+                    coins_ = coins::initial;
+                    save_coins();
+                    chat_.notice(std::format("🚨 Your coins were tampered with: back to {}.",
+                                             plural(coins_, "coin")));
+                }
+            } else if (const auto legacy = config::get("coins")) {
+                coins_ = coins::decode(*legacy).value_or(coins::initial);
+                save_coins();
             }
             const auto path = others_file("ratings");
             if (path.empty()) {
@@ -659,7 +677,14 @@ namespace {
                 const auto user = parse_hex(next_field(rest, '\t'));
                 const auto sender = parse_hex(next_field(rest, '\t'));
                 const std::string_view name = next_field(rest, '\t');
-                const auto amount = coins::decode(rest);
+                std::optional<long long> amount;
+                if (user) {
+                    // Older versions kept them as plain numbers: only what they told, which they tell again.
+                    amount = coins::unseal(rest, *user);
+                    if (!amount) {
+                        amount = coins::decode(rest);
+                    }
+                }
                 if (user && sender && !name.empty() && amount && *user != chat_.user()) {
                     Person& p = people_[*user];
                     if (p.name.empty()) {
@@ -673,17 +698,17 @@ namespace {
 
         // The others' ratings, and their coins, each in a file of their own.
         void save_others() const {
-            save_file("ratings", [](const Person& p) {
+            save_file("ratings", [](std::uint64_t, const Person& p) {
                 return std::optional(elo::encode(p.ratings));
             });
-            save_file("coins", [](const Person& p) {
-                return p.coins ? std::optional(coins::encode(*p.coins)) : std::nullopt;
+            save_file("coins", [](std::uint64_t user, const Person& p) {
+                return p.coins ? std::optional(coins::seal(*p.coins, user)) : std::nullopt;
             });
         }
 
         // A line for each of the others that what() has something for: "USER\tSENDER\tNAME\tWHAT".
         void save_file(std::string_view name,
-                       const std::function<std::optional<std::string>(const Person&)>& what) const {
+                       const std::function<std::optional<std::string>(std::uint64_t, const Person&)>& what) const {
             const auto path = others_file(name);
             if (path.empty()) {
                 return;
@@ -696,7 +721,7 @@ namespace {
             {
                 std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
                 for (const auto& [user, p] : people_) {
-                    if (const auto text = what(p)) {
+                    if (const auto text = what(user, p)) {
                         out << std::format("{:x}\t{:x}\t{}\t{}\n", user, p.sender, p.name, *text);
                     }
                 }
