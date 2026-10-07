@@ -1232,8 +1232,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             updated = true;
             terminal.interrupt();
         });
-    // Whether there is a newer zchat, in the background: startup does not wait for the network.
-    updater.check();
+    // Installs any newer zchat, now and every few minutes, in the background: startup does not wait for the network.
+    updater.watch();
 
     while (!updated && !kicked) {
         const auto line = terminal.read_line();

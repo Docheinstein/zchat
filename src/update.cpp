@@ -5,6 +5,7 @@
 #include "text.hpp"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <filesystem>
 #include <format>
@@ -34,6 +35,8 @@ namespace {
     constexpr std::size_t shown_lines = 10;
     // How many of the new commits are listed.
     constexpr std::size_t shown_commits = 8;
+    // How often a running zchat checks for a newer one, see Updater::watch().
+    constexpr std::chrono::minutes check_interval {5};
 
     fs::path utf8_path(std::string_view s) {
         return fs::path(std::u8string(reinterpret_cast<const char8_t*>(s.data()), s.size()));
@@ -151,21 +154,27 @@ Updater::Updater(std::function<void(std::string_view)> notice, std::function<voi
 }
 
 Updater::~Updater() {
+    // First, so that it does not start a check while this one is being stopped.
+    timer_.request_stop();
+    if (timer_.joinable()) {
+        timer_.join();
+    }
     thread_.request_stop();
 }
 
 bool Updater::start() {
-    std::unique_lock lock(mutex_);
+    // Held throughout: check() can be called from the timer's thread at the same time.
+    std::lock_guard lock(mutex_);
     if (checking_) {
         // The check's thread updates as soon as it is over.
         update_after_check_ = true;
         return true;
     }
-    lock.unlock();
     if (running_.exchange(true)) {
         return false;
     }
-    // The previous update, if any, is over: this only waits for its thread to exit.
+    // The previous update, if any, is over: this only waits for its thread to exit (which never needs the mutex
+    // once it is not running).
     if (thread_.joinable()) {
         thread_.join();
     }
@@ -177,6 +186,7 @@ bool Updater::start() {
 }
 
 void Updater::check() {
+    std::lock_guard lock(mutex_);
     if (running_.exchange(true)) {
         return;
     }
@@ -185,10 +195,10 @@ void Updater::check() {
     }
     checking_ = true;
     thread_ = std::jthread([this](std::stop_token stop) {
-        run_check(stop);
+        const bool install = run_check(stop);
         std::unique_lock lock(mutex_);
         checking_ = false;
-        if (!update_after_check_.exchange(false)) {
+        if (!update_after_check_.exchange(false) && !install) {
             running_ = false;
             return;
         }
@@ -200,11 +210,30 @@ void Updater::check() {
     });
 }
 
-void Updater::run_check(std::stop_token stop) {
+void Updater::watch() {
+    check();
+    timer_ = std::jthread([this](std::stop_token stop) {
+        std::mutex mutex;
+        std::condition_variable_any wake;
+        std::unique_lock lock(mutex);
+        while (true) {
+            // Nothing wakes it up but the time, or the stop.
+            wake.wait_for(lock, stop, check_interval, [] {
+                return false;
+            });
+            if (stop.stop_requested()) {
+                return;
+            }
+            check();
+        }
+    });
+}
+
+bool Updater::run_check(std::stop_token stop) {
     const fs::path source = utf8_path(ZCHAT_SOURCE_DIR);
     std::error_code ec;
     if (executable().empty() || !fs::exists(source / ".git", ec)) {
-        return;
+        return false;
     }
     no_password_prompt();
     const Git git = [&](std::vector<std::string> args) {
@@ -212,15 +241,44 @@ void Updater::run_check(std::stop_token stop) {
         return process::run(args, stop, git_timeout);
     };
     if (git({"fetch", "--quiet"}).exit_code != 0 || stop.stop_requested()) {
-        return;
+        return false;
     }
     const auto commits = news(git);
     // Once /update is asked for, it tells what is new itself.
     if (commits.empty() || stop.stop_requested() || update_after_check_) {
-        return;
+        return false;
     }
-    tell_news(notice_, commits, "🆕 A new zchat is available");
-    notice_("   Type /update to install it: zchat builds it and restarts.");
+    // Each new version once: a build that failed, or a clone that cannot be updated, is not tried every few
+    // minutes, but a newer push is.
+    const auto upstream = git({"rev-parse", "--verify", "--quiet", "@{upstream}"});
+    if (upstream.exit_code != 0 || stop.stop_requested()) {
+        return false;
+    }
+    const std::string upstream_commit = trimmed(upstream.output);
+    if (upstream_commit == checked_) {
+        return false;
+    }
+    checked_ = upstream_commit;
+
+    // Installed by itself only when /update would not refuse: never over local commits or changes.
+    std::string blocked;
+    if (git({"merge-base", "--is-ancestor", "HEAD", "@{upstream}"}).exit_code != 0) {
+        blocked = "the clone has commits that are not on the remote";
+    } else if (const auto status = git({"status", "--porcelain", "--untracked-files=no"});
+               status.exit_code != 0 || !trimmed(status.output).empty()) {
+        blocked = "the clone has uncommitted changes";
+    }
+    if (stop.stop_requested() || update_after_check_) {
+        return false;
+    }
+    if (!blocked.empty()) {
+        tell_news(notice_, commits, "🆕 A new zchat is available");
+        notice_(std::format("   It cannot install by itself: {} ({}). Sort them out, then type /update.", blocked,
+                            utf8(source)));
+        return false;
+    }
+    notice_("🆕 A new zchat is available: installing it, so that everybody runs the same one.");
+    return true;
 }
 
 void Updater::run(std::stop_token stop) {

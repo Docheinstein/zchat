@@ -3,6 +3,7 @@
 #include <atomic>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <string_view>
 #include <thread>
 
@@ -24,13 +25,19 @@ public:
     // check(), the update starts as soon as the check is over.
     bool start();
 
-    // Checks in the background whether there is a newer zchat, saying so (and that /update installs it) only when
-    // there is: meant for startup, so it is quiet when it cannot tell.
+    // Checks in the background whether there is a newer zchat, and installs it when there is, so that everybody
+    // in the chat runs the same, newest one. When it cannot install it by itself (the clone has local commits or
+    // uncommitted changes), it says so instead, and that /update installs it. Quiet when it cannot tell, and it
+    // tries each new version only once: a build that fails is not tried again until there is a newer one.
     void check();
+
+    // check() now, and again every few minutes while zchat runs.
+    void watch();
 
 private:
     void run(std::stop_token stop);
-    void run_check(std::stop_token stop);
+    // Whether the update should be installed now.
+    bool run_check(std::stop_token stop);
 
     std::function<void(std::string_view)> notice_;
     std::function<void()> ready_;
@@ -39,7 +46,11 @@ private:
     std::mutex mutex_;
     bool checking_ = false;
     std::atomic<bool> update_after_check_ {false};
+    // The remote commit check() last told about or tried to install, so that it does so once.
+    std::string checked_;
     std::jthread thread_;
+    // Runs check() every few minutes, see watch().
+    std::jthread timer_;
 };
 
 // To be called first thing at startup: remembers where the executable is, and deletes the old executable left
