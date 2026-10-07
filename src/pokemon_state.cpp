@@ -1322,7 +1322,7 @@ namespace {
              {"player",      "win",   "tie",      "error",       "c",    "chat", "c:",      "-message",
               "message",     "-hint", "inactive", "inactiveoff", "raw",  "html", "request", "bigerror",
               "j",           "l",     "n",        "J",           "L",    "N",    "rule",    "tier",
-              "zchat-types", "uhtml", "name",     "join",        "leave"}) {
+              "zchat-types", "uhtml", "name",     "join",        "leave", "zchat-move"}) {
             if (cmd == c) {
                 return true;
             }
@@ -1562,6 +1562,12 @@ void Battle::line(std::string_view text) {
             l.args.pop_back();
         }
     }
+    // What the Pokédex says of the move on the next line, for its event.
+    if (l.cmd == "zchat-move") {
+        next_move_ = {std::string(trim(l.arg(1))), std::string(trim(l.arg(2))), std::string(trim(l.arg(3))),
+                      trim(l.arg(4)) == "contact"};
+        return;
+    }
     say(l, describe(l));
     apply(l);
     // The event goes with the last line the protocol line said ("Go! Gholdengo!" after "Volbeat, come back!"); with
@@ -1572,6 +1578,9 @@ void Battle::line(std::string_view text) {
             with.events += ',';
         }
         with.events += e;
+    }
+    if (l.cmd == "move") {
+        next_move_.reset();
     }
 }
 
@@ -2413,6 +2422,19 @@ std::string Battle::event(const Line& l) const {
     Writer w(out);
     w.key("s").string(side == 0 ? "p1" : "p2");
     w.key("fx").string(fx);
+    if (fx == "move") {
+        w.key("move").string(trim(l.arg(2)));
+        const int target = side_index(l.arg(3));
+        w.key("target").string(target < 0 ? "" : target == 0 ? "p1" : "p2");
+        w.key("miss").boolean(l.has("miss") || l.has("notarget"));
+        w.key("still").boolean(l.has("still"));
+        if (next_move_) {
+            w.key("type").string(next_move_->type);
+            w.key("category").string(next_move_->category);
+            w.key("range").string(next_move_->range);
+            w.key("contact").boolean(next_move_->contact);
+        }
+    }
     if (whole || hp || status) {
         w.key("mon");
         out += '{';

@@ -1323,6 +1323,29 @@ const pkStyle = `
   .sprite.fx-hit { animation: pk-hit .5s linear; }
   .sprite.fx-heal { animation: pk-heal .7s ease-in-out; }
   .sprite.fx-enter { animation: pk-enter .45s ease-out; }
+  .sprite.fx-cast { animation: pk-cast .45s ease-in-out; }
+  .fxl { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .bit { position: absolute; left: 0; top: 0; opacity: 0; will-change: transform, opacity; }
+  .bit.orb, .bit.flash { border-radius: 50%; background: radial-gradient(circle, #fff 0 22%, var(--c) 52%, transparent 70%); }
+  .bit.flame { border-radius: 50% 0 50% 50%; background: radial-gradient(circle at 60% 40%, #fff6c0 0 18%, var(--c) 55%, #c03018); }
+  .bit.bubble { border-radius: 50%; border: 2px solid var(--c); box-shadow: inset 0 0 6px var(--c);
+    background: radial-gradient(circle at 32% 30%, #fffd 0 14%, transparent 28%); }
+  .bit.bolt { background: linear-gradient(#fff, var(--c) 40%);
+    clip-path: polygon(42% 0, 74% 0, 55% 38%, 84% 38%, 30% 100%, 44% 55%, 16% 55%); }
+  .bit.leaf { border-radius: 0 100% 0 100%; background: linear-gradient(135deg, #fff9, var(--c) 55%, #0003); }
+  .bit.shard { background: linear-gradient(#fff, var(--c)); clip-path: polygon(50% 0, 76% 50%, 50% 100%, 24% 50%); }
+  .bit.ring { border-radius: 50%; border: 3px solid var(--c); box-shadow: 0 0 8px var(--c), inset 0 0 8px var(--c); }
+  .bit.star { background: radial-gradient(circle, #fff 0 30%, var(--c) 70%);
+    clip-path: polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%); }
+  .bit.rock { background: linear-gradient(135deg, #fff6, var(--c) 40%, #0006);
+    clip-path: polygon(20% 10%, 70% 0, 100% 40%, 80% 90%, 30% 100%, 0 55%); }
+  .bit.wisp { border-radius: 50%; background: radial-gradient(circle, #fff8 0 10%, var(--c) 35%, transparent 70%); }
+  .bit.sparkle { background: radial-gradient(circle, #fff 0 35%, var(--c));
+    clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%); }
+  .bit.wind { border-radius: 50%; border-top: 3px solid var(--c); border-right: 2px solid var(--c); }
+  .bit.beam { border-radius: 8px; transform-origin: 0 50%;
+    background: linear-gradient(transparent, var(--c) 22%, #fff 50%, var(--c) 78%, transparent); }
+  .bit.wash { width: 100%; height: 100%; background: radial-gradient(ellipse at 50% 60%, transparent 15%, var(--c)); }
   .sprite.dmax img, .sprite.dmax .ph { transform: scale(1.5); transform-origin: 50% 100%; transition: transform .4s;
     filter: drop-shadow(0 0 6px #ff2a55) drop-shadow(0 0 14px #ff2a55aa); }
   .ph { width: 120px; height: 120px; border-radius: 50%; background: #0006; border: 2px dashed #fff8; color: #fff;
@@ -1421,6 +1444,7 @@ const pkKeyframes = `
     50% { transform: translateX(-6px); opacity: .25; } 70% { transform: translateX(4px); opacity: 1; } }
   @keyframes pk-heal { 50% { filter: brightness(1.5) drop-shadow(0 0 12px #8dffb0); } }
   @keyframes pk-enter { from { transform: scale(.15); opacity: 0; } }
+  @keyframes pk-cast { 40% { transform: scale(1.07); filter: brightness(1.35); } }
 `;
 let pkState = null, pkPopup = null, pkClosedBattle = null, pkClosing = false, pkGimmick = { rqid: 0, on: "" };
 document.getElementById("pk-style").textContent = pkStyle.replace(/:root \{[^}]*\}/, "").replace(/(^|\})\s*([^{}@]+)\{/g,
@@ -1562,8 +1586,10 @@ function pkBuild(doc, root, popup) {
     p.conds = el("div", "conds " + pos);
     v.field.append(p.sprite, p.stat, p.team, p.conds);
   }
+  // What a move throws, over the Pokémon.
+  v.fx = el("div", "fxl");
   v.overlay = el("div", "overlay");
-  v.field.append(v.overlay);
+  v.field.append(v.fx, v.overlay);
   v.controls = el("div", "controls");
   v.bottom = el("div", "bottom");
   left.append(head, v.field, v.controls, v.bottom);
@@ -1644,7 +1670,7 @@ function pkMonTip(v, mon) {
 }
 
 // The effects on a sprite, one at a time: started again when it is the same one.
-const pkFxClasses = ["fx-lunge-near", "fx-lunge-far", "fx-hit", "fx-heal", "fx-enter"];
+const pkFxClasses = ["fx-lunge-near", "fx-lunge-far", "fx-hit", "fx-heal", "fx-enter", "fx-cast"];
 function pkFxClear(p) { p.sprite.classList.remove(...pkFxClasses); }
 function pkFx(p, cls) {
   pkFxClear(p);
@@ -1938,6 +1964,150 @@ function pkRenderLog(v, s, count) {
   if (stick) v.log.scrollTop = v.log.scrollHeight;
 }
 
+// A move played on the field, from what the Pokédex says of it (see "e" in Battle::json()): an attack flies from the
+// one using it to its target, or strikes it up close (contact), and bursts there; a status move glows around its user,
+// drifts over to its target, scatters on the other side's ground, or washes over the whole field. Each type throws its
+// own bits, in its color.
+const pkMoveShapes = {
+  Normal: "star", Fire: "flame", Water: "bubble", Electric: "bolt", Grass: "leaf", Ice: "shard", Fighting: "star",
+  Poison: "bubble", Ground: "rock", Flying: "wind", Psychic: "ring", Bug: "orb", Rock: "rock", Ghost: "wisp",
+  Dragon: "orb", Dark: "wisp", Steel: "shard", Fairy: "sparkle", Stellar: "sparkle",
+};
+function pkCenter(v, pos) {
+  const s = v[pos].sprite;
+  return { x: s.offsetLeft + s.offsetWidth / 2, y: s.offsetTop + s.offsetHeight * .62 };
+}
+const pkRand = (a, b) => a + Math.random() * (b - a);
+// One bit: its frames are [x, y, scale, rotation, opacity], evenly apart; it goes once played.
+function pkBit(v, shape, color, size, frames, timing) {
+  const b = v.el("div", "bit " + shape);
+  if (size) b.style.width = b.style.height = size + "px";
+  b.style.setProperty("--c", color);
+  v.fx.append(b);
+  const half = (size || 0) / 2;
+  const a = b.animate(frames.map(([x, y, k, r, o]) => ({
+    transform: `translate(${x - half}px, ${y - half}px) rotate(${r}deg) scale(${k})`, opacity: o })),
+    { fill: "backwards", easing: "ease-out", ...timing });
+  a.onfinish = a.oncancel = () => b.remove();
+}
+function pkBurst(v, at, shape, color, delay, big) {
+  pkBit(v, "flash", color, big ? 120 : 80, [[at.x, at.y, .2, 0, .95], [at.x, at.y, 1.4, 0, 0]], { duration: 380, delay });
+  const n = big ? 10 : 7;
+  for (let i = 0; i < n; i++) {
+    const t = (i / n + pkRand(0, .1)) * Math.PI * 2, d = pkRand(38, big ? 85 : 65);
+    pkBit(v, shape, color, pkRand(12, 20),
+          [[at.x, at.y, .5, 0, 1], [at.x + Math.cos(t) * d, at.y + Math.sin(t) * d, .3, pkRand(-90, 90), 0]],
+          { duration: 480, delay: delay + pkRand(0, 60) });
+  }
+}
+// Past b, for a miss.
+function pkPast(a, b) { return { x: b.x + (b.x - a.x) * .5, y: b.y + (b.y - a.y) * .5 }; }
+// Bits flying from a to b, on slight arcs.
+function pkShoot(v, a, b, shape, color, opt) {
+  const to = opt.miss ? pkPast(a, b) : b;
+  const len = Math.hypot(to.x - a.x, to.y - a.y) || 1, nx = -(to.y - a.y) / len, ny = (to.x - a.x) / len;
+  for (let i = 0; i < opt.count; i++) {
+    const j = pkRand(-14, 14), arc = pkRand(-36, 36), r = pkRand(-180, 180);
+    pkBit(v, shape, color, pkRand(opt.size * .75, opt.size * 1.2), [
+      [a.x + nx * j, a.y + ny * j, .4, 0, 0],
+      [(a.x + to.x) / 2 + nx * arc, (a.y + to.y) / 2 + ny * arc, 1, r / 2, 1],
+      [to.x + nx * j, to.y + ny * j, 1, r, opt.miss ? 0 : 1],
+    ], { duration: opt.duration, delay: i * opt.gap, easing: "ease-in" });
+  }
+}
+// A beam from a to b, drawn out, then thinning away.
+function pkBeam(v, a, b, color, miss) {
+  const to = miss ? pkPast(a, b) : b;
+  const len = Math.hypot(to.x - a.x, to.y - a.y), angle = Math.atan2(to.y - a.y, to.x - a.x) * 180 / Math.PI;
+  const beam = v.el("div", "bit beam");
+  beam.style.width = len + "px";
+  beam.style.height = "16px";
+  beam.style.setProperty("--c", color);
+  v.fx.append(beam);
+  const at = (sx, sy) => `translate(${a.x}px, ${a.y - 8}px) rotate(${angle}deg) scale(${sx}, ${sy})`;
+  const anim = beam.animate([{ transform: at(0, .5), opacity: 1 }, { transform: at(1, 1), opacity: 1, offset: .35 },
+                             { transform: at(1, 1.3), opacity: 1, offset: .7 }, { transform: at(1, .2), opacity: 0 }],
+                            { duration: 650, easing: "ease-out" });
+  anim.onfinish = anim.oncancel = () => beam.remove();
+}
+// A glow around one: rings, and bits rising.
+function pkAura(v, at, shape, color, delay) {
+  for (let i = 0; i < 2; i++)
+    pkBit(v, "ring", color, 70, [[at.x, at.y, .3, 0, .9], [at.x, at.y, 1.8, 0, 0]], { duration: 600, delay: delay + i * 180 });
+  for (let i = 0; i < 8; i++) {
+    const x = at.x + pkRand(-55, 55);
+    pkBit(v, shape, color, pkRand(10, 16),
+          [[x, at.y + 45, .5, 0, 0], [x, at.y, 1, 90, 1], [x + pkRand(-10, 10), at.y - 60, .4, 180, 0]],
+          { duration: 700, delay: delay + pkRand(0, 250) });
+  }
+}
+function pkMoveFx(v, pos, e, positions) {
+  const win = v.doc.defaultView;
+  if (e.still || (win && win.matchMedia && win.matchMedia("(prefers-reduced-motion: reduce)").matches)) return;
+  const user = v[pos];
+  // Without what the Pokédex says of it: the lunge alone.
+  if (!e.type) { pkFx(user, "fx-lunge-" + pos); return; }
+  const color = pkTypeColor(e.type), shape = pkMoveShapes[e.type] || "orb";
+  const other = pos === "near" ? "far" : "near";
+  const targetPos = positions[e.target] || (e.category === "Status" ? pos : other);
+  const a = pkCenter(v, pos), b = pkCenter(v, targetPos);
+  const range = e.range || "normal", aimed = range === "normal" || range === "any" || range === "adjacentFoe";
+  if (e.category === "Status") {
+    pkFx(user, "fx-cast");
+    if (range === "all") {
+      // Weather, terrain, rooms: over the whole field.
+      pkBit(v, "wash", color, 0, [[0, 0, 1, 0, 0], [0, 0, 1, 0, .5], [0, 0, 1, 0, 0]], { duration: 900 });
+      pkAura(v, a, shape, color, 100);
+    } else if (range === "foeSide") {
+      // Hazards: thrown over, they lie on the ground a moment.
+      const ground = pkCenter(v, other);
+      for (let i = 0; i < 6; i++) {
+        const x = ground.x + pkRand(-70, 70), y = ground.y + pkRand(45, 70);
+        pkBit(v, shape, color, pkRand(12, 18), [[a.x, a.y, .4, 0, 0], [(a.x + x) / 2, Math.min(a.y, y) - 70, 1, 180, 1],
+                                                [x, y, 1, 360, 1], [x, y, 1, 360, 0]],
+              { duration: 900, delay: i * 60, easing: "ease-in-out" });
+      }
+    } else if (targetPos === pos || !aimed) {
+      pkAura(v, a, shape, color, 80);
+    } else {
+      pkShoot(v, a, b, "ring", color, { count: 3, size: 46, duration: 520, gap: 110, miss: e.miss });
+      if (!e.miss) pkAura(v, b, shape, color, 450);
+    }
+    return;
+  }
+  if (e.contact) {
+    pkFx(user, "fx-lunge-" + pos);
+    if (!e.miss) {
+      pkBurst(v, b, shape, color, 200, false);
+      pkBit(v, "star", "#ffffff", 46, [[b.x, b.y, .3, 0, 1], [b.x, b.y, 1.3, 40, 0]], { duration: 300, delay: 200 });
+    }
+    return;
+  }
+  pkFx(user, "fx-cast");
+  const name = e.move || "";
+  if (e.type === "Ground" && !aimed) {
+    // A quake: the field shakes, and rocks burst up under the target.
+    v.field.animate([0, -7, 7, -6, 6, -3, 3, 0].map(x => ({ transform: `translate(${x}px, ${x / 3}px)` })),
+                    { duration: 600, delay: 100 });
+    if (!e.miss) for (let i = 0; i < 9; i++) {
+      const x = b.x + pkRand(-70, 70);
+      pkBit(v, "rock", color, pkRand(12, 22),
+            [[x, b.y + 60, .5, 0, 1], [x, b.y + pkRand(-50, 10), 1, 180, 1], [x, b.y + 70, .8, 300, 0]],
+            { duration: 650, delay: 150 + pkRand(0, 200), easing: "ease-in-out" });
+    }
+    return;
+  }
+  if (/Beam|Ray\b/.test(name)) {
+    pkBeam(v, a, b, color, e.miss);
+    if (!e.miss) pkBurst(v, b, shape, color, 280, true);
+    return;
+  }
+  const big = /Blast|Cannon|Burst|Storm|Hurricane|Eruption|Outrage|Meteor|^Max |^G-Max /.test(name);
+  pkShoot(v, a, b, shape, color, { count: big ? 9 : 6, size: e.category === "Physical" ? 26 : 22, duration: 400,
+                                   gap: big ? 30 : 45, miss: e.miss });
+  if (!e.miss) pkBurst(v, b, shape, color, 400, big);
+}
+
 // Playing a turn: its lines one after the other, each with what it did on the field (the "e" of the line: who moved,
 // was hit, healed, fainted, came in), from the Pokémon as they were shown before. The state is already how it is after
 // the turn; it is shown once the lines are all played, or skipped.
@@ -1966,6 +2136,7 @@ function pkStop(v) {
   if (!v.play) return;
   clearTimeout(v.play.timer);
   v.play = null;
+  v.fx.textContent = "";
 }
 function pkStep(v) {
   const s = pkState;
@@ -1977,7 +2148,7 @@ function pkStep(v) {
   const l = lines[at];
   pkRenderLog(v, s, at + 1);
   const positions = pkPositions(s);
-  const fx = [];
+  const fx = [], moves = [];
   for (const e of l.e || []) {
     const pos = positions[e.s];
     if (!pos) continue;
@@ -1992,12 +2163,13 @@ function pkStep(v) {
         v.play.shown[pos] = { ...before, ...e.mon };
       }
     }
-    if (e.fx === "move") fx.push([pos, "fx-lunge-" + pos]);
+    if (e.fx === "move") moves.push([pos, e]);
     else if (e.fx === "hit" || e.fx === "damage") fx.push([pos, "fx-hit"]);
     else if (e.fx === "heal" || e.fx === "form") fx.push([pos, "fx-heal"]);
   }
   pkRenderField(v, s);
   for (const [pos, cls] of fx) pkFx(v[pos], cls);
+  for (const [pos, e] of moves) pkMoveFx(v, pos, e, positions);
   const delay = l.e || l.k === "move" || l.k === "turn" ? pkLineDelays[l.k] || 600 : l.k === "text" || l.k === "minor" ? 450 : 0;
   v.play.timer = setTimeout(() => pkStep(v), delay);
 }
