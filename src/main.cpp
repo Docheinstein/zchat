@@ -185,13 +185,85 @@ std::pair<std::string_view, std::string_view> channel_and_rest(std::string_view 
 
 void print_channels(zchat::Chat& chat) {
     std::string list;
+    std::string direct;
     for (const auto& c : chat.channels()) {
+        if (c.direct) {
+            direct += direct.empty() ? "" : ", ";
+            direct += std::format("@{}{}{}", c.with.name, c.current ? " (here)" : "", c.unread ? " (new)" : "");
+            continue;
+        }
         list += list.empty() ? "" : ", ";
         list += std::format("#{}{}{}{}", c.name, c.is_public ? "" : " (private)", c.current ? " (here)" : "",
                             c.unread ? " (new)" : c.member || c.name == zchat::channel::general ? "" : " (not in)");
     }
     chat.notice(std::format("Channels: {}.", list));
-    chat.notice("/join NAME to go to one, /create NAME [public|private] for a new one.");
+    if (!direct.empty()) {
+        chat.notice(std::format("Private chats: {}.", direct));
+    }
+    chat.notice("/join NAME to go to one, /create NAME [public|private] for a new one, /msg NAME for a private chat.");
+}
+
+// "NAME REST": the name of someone in the chat (or ours) that arg starts with, the longest one, '@' in front or not,
+// and the rest; nullopt when there is none. Names can have spaces.
+std::optional<std::pair<std::string, std::string_view>> person_and_rest(zchat::Chat& chat, std::string_view arg) {
+    const auto trim_front = [](std::string_view s) {
+        while (!s.empty() && s.front() == ' ') {
+            s.remove_prefix(1);
+        }
+        return s;
+    };
+    const auto same = [](std::string_view a, std::string_view b) {
+        return std::ranges::equal(a, b, [](char x, char y) {
+            return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+        });
+    };
+    arg = trim_front(arg);
+    if (arg.starts_with('@')) {
+        arg.remove_prefix(1);
+    }
+    std::vector<std::string> names {chat.name()};
+    for (auto& [id, name] : chat.people()) {
+        names.push_back(std::move(name));
+    }
+    // The longest name first, so "@Rex Jr" is not taken for "@Rex".
+    std::ranges::stable_sort(names, std::ranges::greater {}, [](const std::string& name) {
+        return name.size();
+    });
+    const auto found = std::ranges::find_if(names, [&](const std::string& name) {
+        return !name.empty() && arg.size() >= name.size() && same(arg.substr(0, name.size()), name) &&
+               (arg.size() == name.size() || arg[name.size()] == ' ');
+    });
+    if (found == names.end()) {
+        return std::nullopt;
+    }
+    return std::pair {*found, trim_front(arg.substr(found->size()))};
+}
+
+// /msg NAME [MESSAGE]: goes to the private chat with NAME, and says the message there.
+void message_person(zchat::Chat& chat, std::string_view arg) {
+    while (!arg.empty() && arg.front() == ' ') {
+        arg.remove_prefix(1);
+    }
+    if (arg.empty()) {
+        chat.notice("Use /msg NAME [MESSAGE]: a private chat with NAME, who must be in the chat; only the two of you "
+                    "see it.");
+        return;
+    }
+    const auto person = person_and_rest(chat, arg);
+    if (!person) {
+        // Somebody not in the chat now: only the private chat there is with them already, to read it.
+        if (const auto error = chat.open_direct(arg)) {
+            chat.notice(*error);
+        }
+        return;
+    }
+    if (const auto error = chat.open_direct(person->first)) {
+        chat.notice(*error);
+        return;
+    }
+    if (!person->second.empty()) {
+        chat.say(person->second);
+    }
 }
 
 void print_members(zchat::Chat& chat, std::string_view arg) {
@@ -209,7 +281,13 @@ void print_members(zchat::Chat& chat, std::string_view arg) {
         list += list.empty() ? "" : ", ";
         list += n;
     }
-    chat.notice(std::format("In #{}: {}{}.", name, list.empty() ? "nobody here now" : list,
+    std::string label = "#" + name;
+    for (const auto& c : chat.channels()) {
+        if (c.direct && c.name == name) {
+            label = std::format("your private chat with {}", c.with.name);
+        }
+    }
+    chat.notice(std::format("In {}: {}{}.", label, list.empty() ? "nobody here now" : list,
                             away ? std::format(", and {} not in the chat now", away) : ""));
 }
 
@@ -279,6 +357,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /create NAME [public|private]  make a channel: public anybody can join, private only who you add");
     chat.notice("  /add [#CHANNEL] NAME, /remove [#CHANNEL] NAME  add or remove someone (the current channel if none)");
     chat.notice("  /members [#CHANNEL]  who is in a channel; /leave [NAME] leaves one; /delete NAME deletes yours");
+    chat.notice("  /msg NAME [MESSAGE]  a private chat with NAME: only the two of you see it; /leave closes it");
+    chat.notice("               (in the window, click someone under People)");
     chat.notice("Messages, pictures and files:");
     chat.notice("  /quote [@NAME] MESSAGE  reply quoting the last message in the channel (of NAME)");
     chat.notice("               (in the window, hover on a message and click Quote)");
@@ -373,39 +453,18 @@ void change_avatar(zchat::Chat& chat, std::string_view arg) {
 
 // /quote [@NAME] MESSAGE: says the message quoting the last one said in the channel by NAME, or by anybody else.
 void quote_reply(zchat::Chat& chat, std::string_view arg) {
-    const auto trim_front = [](std::string_view s) {
-        while (!s.empty() && s.front() == ' ') {
-            s.remove_prefix(1);
-        }
-        return s;
-    };
-    const auto same = [](std::string_view a, std::string_view b) {
-        return std::ranges::equal(a, b, [](char x, char y) {
-            return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
-        });
-    };
-    arg = trim_front(arg);
+    while (!arg.empty() && arg.front() == ' ') {
+        arg.remove_prefix(1);
+    }
     std::string person;
     if (arg.starts_with('@')) {
-        std::vector<std::string> names {chat.name()};
-        for (auto& [id, name] : chat.people()) {
-            names.push_back(std::move(name));
-        }
-        // The longest name first, so "@Rex Jr" is not taken for "@Rex".
-        std::ranges::stable_sort(names, std::ranges::greater {}, [](const std::string& name) {
-            return name.size();
-        });
-        const std::string_view rest = arg.substr(1);
-        const auto found = std::ranges::find_if(names, [&](const std::string& name) {
-            return !name.empty() && rest.size() >= name.size() && same(rest.substr(0, name.size()), name) &&
-                   (rest.size() == name.size() || rest[name.size()] == ' ');
-        });
-        if (found == names.end()) {
+        auto found = person_and_rest(chat, arg);
+        if (!found) {
             chat.notice(std::format("Nobody called {} is in the chat.", arg.substr(0, arg.find(' '))));
             return;
         }
-        person = *found;
-        arg = trim_front(rest.substr(person.size()));
+        person = std::move(found->first);
+        arg = found->second;
     }
     if (arg.empty()) {
         chat.notice("Usage: /quote [@NAME] MESSAGE  replies quoting the last message in the channel (of NAME)");
@@ -1128,7 +1187,7 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
     terminal.set_channels([&chat] {
         std::vector<zchat::Screen::ChannelItem> items;
         for (const auto& c : chat.channels()) {
-            items.push_back({c.name, c.is_public, c.member, c.current, c.unread, c.owner});
+            items.push_back({c.name, c.is_public, c.member, c.current, c.unread, c.owner, c.direct, c.with});
         }
         return items;
     });
@@ -1202,6 +1261,10 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
         }
         if (input == "/channels") {
             print_channels(chat);
+            continue;
+        }
+        if (command == "/msg" || command == "/dm") {
+            message_person(chat, input.substr(command.size()));
             continue;
         }
         if (input == "/members" || input.starts_with("/members ")) {

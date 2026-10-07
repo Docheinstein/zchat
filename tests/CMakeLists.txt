@@ -4,6 +4,7 @@ file(GLOB zchat_test_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cp
 add_executable(zchat_tests
     ${zchat_test_sources}
     "${PROJECT_SOURCE_DIR}/src/casino.cpp"
+    "${PROJECT_SOURCE_DIR}/src/channel.cpp"
     "${PROJECT_SOURCE_DIR}/src/coins.cpp"
     "${PROJECT_SOURCE_DIR}/src/color.cpp"
     "${PROJECT_SOURCE_DIR}/src/elo.cpp"

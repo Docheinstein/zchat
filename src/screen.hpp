@@ -60,6 +60,9 @@ public:
         bool current = false;
         bool unread = false;
         bool owner = false;
+        // A private chat, and with whom.
+        bool direct = false;
+        Mention with = {};
     };
     virtual void set_channels(std::function<std::vector<ChannelItem>()> /*source*/) {}
 

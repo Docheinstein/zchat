@@ -62,14 +62,15 @@ While chatting:
 |--------------------|--------------------------------------------------------|
 | text + Enter       | send a message                                         |
 | `/who`             | list who is in the chat                                |
-| `/channels`        | list the channels: `#general`, the public ones, and the private ones you are in |
+| `/channels`        | list the channels: `#general`, the public ones, and the private ones you are in; then your private chats |
 | `/create NAME [public\|private]` | make a channel and go to it: public (the default) anybody can join, private starts with just you |
-| `/join NAME`       | go to a channel, joining it if it is public; what you say, draw and send goes there |
+| `/join NAME`       | go to a channel, joining it if it is public; what you say, draw and send goes there (`/join @NAME` goes to the private chat with NAME) |
 | `/add [#CHANNEL] NAME` | add someone in the chat to a channel (the one you are in, if not named) |
 | `/remove [#CHANNEL] NAME` | remove someone from a channel                     |
 | `/members [#CHANNEL]` | who is in a channel                                 |
 | `/leave [NAME]`    | leave a channel (not `#general`)                        |
 | `/delete NAME`     | delete a channel you created; `#general` can never be removed |
+| `/msg NAME [MESSAGE]` | a private chat with NAME (`/dm` works too): goes to it, opening it the first time, and says the message there. Only the two of you are in it, nobody can be added, and it is listed under *Private chats* (in the window, a click on someone under *People* opens it). `/leave` closes it, until something new is said in it. NAME must be in the chat to start one. Like a private channel, it is kept from the others' zchats, but not encrypted: it travels on the local network as everything else does |
 | `/whoami`          | show your name                                         |
 | `/nick NAME`       | change your name; it is saved and used next time too   |
 | `/forget`          | forget the saved name and get a new random one         |
