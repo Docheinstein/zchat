@@ -319,6 +319,12 @@ It needs git, CMake and the compiler used for the first build. It changes nothin
 commits or uncommitted changes, or when the build fails: the build errors are shown and the running zchat is
 kept. The remote must not ask for a password (use an SSH key or a credential helper).
 
+Everybody in the chat should run the same, newest zchat, so it does not wait for `/update`: at startup, and every
+5 minutes while it runs, zchat fetches in the background and, when the remote has new commits, updates itself as
+`/update` does. When it cannot (the clone has local commits or uncommitted changes) it says so once, with what is
+new, and `/update` installs it when the clone is sorted out. Each new version is tried once: when its build fails,
+zchat keeps running and tries again with the next push.
+
 ## Building
 
 Needs CMake 3.16+ and a C++23 compiler (GCC 13+, Clang 17+, or Visual Studio 2022), and an internet connection the
