@@ -280,6 +280,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /add [#CHANNEL] NAME, /remove [#CHANNEL] NAME  add or remove someone (the current channel if none)");
     chat.notice("  /members [#CHANNEL]  who is in a channel; /leave [NAME] leaves one; /delete NAME deletes yours");
     chat.notice("Messages, pictures and files:");
+    chat.notice("  /quote [@NAME] MESSAGE  reply quoting the last message in the channel (of NAME)");
+    chat.notice("               (in the window, hover on a message and click Quote)");
     chat.notice("  /tags [NAME] list the tags for messages, like <color=red>text</color>, or explain one");
     chat.notice("  /image [SIZE] FILE  send a picture (windows show it, terminals draw it with characters)");
     chat.notice("  /ascii [SIZE] [TEXTURE%] FILE  send a picture drawn with characters, for everyone");
@@ -367,6 +369,55 @@ void change_avatar(zchat::Chat& chat, std::string_view arg) {
     if (file.empty() || !out.flush()) {
         chat.notice("Could not save your avatar for next time.");
     }
+}
+
+// /quote [@NAME] MESSAGE: says the message quoting the last one said in the channel by NAME, or by anybody else.
+void quote_reply(zchat::Chat& chat, std::string_view arg) {
+    const auto trim_front = [](std::string_view s) {
+        while (!s.empty() && s.front() == ' ') {
+            s.remove_prefix(1);
+        }
+        return s;
+    };
+    const auto same = [](std::string_view a, std::string_view b) {
+        return std::ranges::equal(a, b, [](char x, char y) {
+            return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+        });
+    };
+    arg = trim_front(arg);
+    std::string person;
+    if (arg.starts_with('@')) {
+        std::vector<std::string> names {chat.name()};
+        for (auto& [id, name] : chat.people()) {
+            names.push_back(std::move(name));
+        }
+        // The longest name first, so "@Rex Jr" is not taken for "@Rex".
+        std::ranges::stable_sort(names, std::ranges::greater {}, [](const std::string& name) {
+            return name.size();
+        });
+        const std::string_view rest = arg.substr(1);
+        const auto found = std::ranges::find_if(names, [&](const std::string& name) {
+            return !name.empty() && rest.size() >= name.size() && same(rest.substr(0, name.size()), name) &&
+                   (rest.size() == name.size() || rest[name.size()] == ' ');
+        });
+        if (found == names.end()) {
+            chat.notice(std::format("Nobody called {} is in the chat.", arg.substr(0, arg.find(' '))));
+            return;
+        }
+        person = *found;
+        arg = trim_front(rest.substr(person.size()));
+    }
+    if (arg.empty()) {
+        chat.notice("Usage: /quote [@NAME] MESSAGE  replies quoting the last message in the channel (of NAME)");
+        return;
+    }
+    const auto quote = chat.quote_last(person);
+    if (!quote) {
+        chat.notice(person.empty() ? std::string("There is no message to quote here.")
+                                   : std::format("There is no message of {} to quote here.", person));
+        return;
+    }
+    chat.say(*quote + std::string(arg));
 }
 
 void change_nick(zchat::Chat& chat, std::string_view arg) {
@@ -1159,6 +1210,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
         }
         if (input == "/who" || input == "/list") {
             print_who(chat);
+        } else if (input == "/quote" || input.starts_with("/quote ")) {
+            quote_reply(chat, input.substr(std::string_view("/quote").size()));
         } else if (input == "/whoami") {
             chat.notice(std::format("You are {}.", chat.colored_own_name()));
         } else if (input == "/avatar" || input.starts_with("/avatar ")) {

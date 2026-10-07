@@ -125,6 +125,18 @@ public:
         return false;
     }
 
+    // Shows a chat message (line, as print() would) with a way to reply quoting it: reply_quote is what to put before
+    // the reply (see markup::quote()). When the message quotes another one, quote is that quote's line (the name, then
+    // the text), shown with it. Returns false where messages cannot be quoted but with /quote (a terminal), for it to
+    // be printed instead. Thread-safe.
+    virtual bool show_message(std::string_view line, std::optional<std::string_view> quote,
+                              std::string_view reply_quote) {
+        (void)line;
+        (void)quote;
+        (void)reply_quote;
+        return false;
+    }
+
     // A trill (/trill): brings the window to the front, shown again if it is minimized, and shakes it, where it can
     // (see popup::nudge()). Takes about half a second. Thread-safe.
     virtual void nudge() {}

@@ -534,6 +534,17 @@ bool Gui::show_file(std::string_view line, std::size_t index, std::string_view n
     return true;
 }
 
+bool Gui::show_message(std::string_view line, std::optional<std::string_view> quote, std::string_view reply_quote) {
+    const std::string js = std::format("zchat.message({},{},{})", json_string(line),
+                                       quote ? json_string(*quote) : std::string("null"), json_string(reply_quote));
+    std::scoped_lock lock(impl_->mutex);
+    if (!impl_->ready) {
+        return false;
+    }
+    impl_->eval(js);
+    return true;
+}
+
 void Gui::nudge() {
     if (void* const window = impl_->view.native_window()) {
         popup::nudge(window);

@@ -272,6 +272,16 @@
     line-height: 1.35;
   }
   #log .line { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* A message: hovering on it shows a button to reply quoting it; one quoting another shows the quote above it. */
+  #log .message { position: relative; border-radius: 4px; }
+  #log .message:hover { background: #ffffff0a; }
+  #log .message .quote { margin: 2px 0 1px 6ch; padding: 0 8px; border-left: 3px solid var(--border);
+    color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+  #log .message .quote-button { position: absolute; top: 0; right: 4px; display: none; font: inherit;
+    font-size: 0.85em; padding: 0 8px; cursor: pointer; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--muted); }
+  #log .message:hover .quote-button { display: block; }
+  #log .message .quote-button:hover { border-color: var(--accent); color: var(--text); }
   /* Pictures and the paint canvas: characters touching, like in a terminal. */
   #log .block { white-space: pre; line-height: 1; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
   #log .file { display: flex; align-items: center; gap: 10px; margin: 4px 0 6px 6ch; padding: 8px 12px;
@@ -297,6 +307,15 @@
     border-radius: 8px; padding: 10px 12px; font-family: var(--font); font-size: var(--size); outline: none;
   }
   #input:focus { border-color: var(--accent); }
+  /* The message being quoted, above the input box, until the reply is sent (or ✕). */
+  #quoting { display: none; align-items: center; gap: 8px; margin-bottom: 8px; padding: 2px 4px 2px 10px;
+    border-left: 3px solid var(--accent); color: var(--muted); font-family: var(--font); font-size: var(--size); }
+  #quoting.on { display: flex; }
+  #quoting .text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #quoting .who { color: var(--text); font-weight: 600; }
+  #quoting button { font: inherit; padding: 0 6px; cursor: pointer; border: none; background: transparent;
+    color: inherit; }
+  #quoting button:hover { color: var(--text); }
   /* Changing our name and color: opened by clicking them, above the channels. */
   #profile {
     position: fixed; top: 112px; left: 8px; width: 264px; z-index: 15; display: none;
@@ -432,6 +451,7 @@
   <div id="log"></div>
   <div id="inputbar">
     <div id="mentions"></div>
+    <div id="quoting"><span class="text"></span><button title="Do not quote it">✕</button></div>
     <input id="input" autocomplete="off" spellcheck="false" placeholder="Type a message, or /help for commands">
   </div>
 </main>
@@ -667,6 +687,34 @@ window.zchat = {
       }
     }, { once: true });
     div.append(head, img);
+    log.appendChild(div);
+    while (log.childElementCount > maxLines) log.firstElementChild.remove();
+    if (stick) log.scrollTop = log.scrollHeight;
+  },
+  // A chat message, and a button to reply quoting it, putting replyQuote before the reply. quote is the line of the
+  // message it quotes (the name, then the text), or null.
+  message(line, quote, replyQuote) {
+    const stick = atBottom();
+    const div = document.createElement("div");
+    div.className = "message";
+    if (quote !== null) {
+      const q = document.createElement("div");
+      q.className = "quote";
+      ansiToNodes(quote, q);
+      div.appendChild(q);
+    }
+    const head = document.createElement("div");
+    head.className = "line";
+    ansiToNodes(line, head);
+    div.appendChild(head);
+    if (replyQuote) {
+      const button = document.createElement("button");
+      button.className = "quote-button";
+      button.textContent = "❝ Quote";
+      button.title = "Reply quoting this message";
+      button.onclick = () => startQuote(replyQuote);
+      div.appendChild(button);
+    }
     log.appendChild(div);
     while (log.childElementCount > maxLines) log.firstElementChild.remove();
     if (stick) log.scrollTop = log.scrollHeight;
@@ -5389,7 +5437,30 @@ async function refreshPeople() {
 }
 setInterval(refreshPeople, 2000);
 
-// --- Input: Enter sends, Up/Down go through what was sent, '@' opens the list of people.
+// --- Quoting: the Quote button of a message shows it above the input box, and the next message sent (not a command)
+// replies to it. replyQuote is "<quote=NAME>TEXT</quote> ", as zchat makes it.
+const quoting = document.getElementById("quoting");
+let replyQuote = "";
+function startQuote(quote) {
+  const m = /^<quote=([^>]*)>([\s\S]*)<\/quote> $/.exec(quote);
+  if (!m) return;
+  replyQuote = quote;
+  const text = quoting.querySelector(".text");
+  const who = document.createElement("span");
+  who.className = "who";
+  who.textContent = m[1];
+  text.replaceChildren(who, ": " + m[2]);
+  text.title = m[1] + ": " + m[2];
+  quoting.classList.add("on");
+  input.focus();
+}
+function stopQuote() {
+  replyQuote = "";
+  quoting.classList.remove("on");
+}
+quoting.querySelector("button").onclick = () => { stopQuote(); input.focus(); };
+
+// --- Input: Enter sends, Up/Down go through what was sent, '@' opens the list of people. Escape stops quoting.
 const sent = [];
 let sentPos = 0, draft = "";
 let list = [], selected = 0, atStart = -1;
@@ -5445,8 +5516,14 @@ input.addEventListener("keydown", e => {
     if (e.key === "Tab" || e.key === "Enter") { acceptMention(selected); e.preventDefault(); return; }
     if (e.key === "Escape") { closeMentions(); e.preventDefault(); return; }
   }
-  if (e.key === "Enter") {
+  if (e.key === "Escape" && replyQuote) {
+    stopQuote();
+    e.preventDefault();
+  } else if (e.key === "Enter") {
     const line = input.value;
+    // A reply to the message quoted; a command leaves it quoted for the next message.
+    const quote = replyQuote && line.trim() && !line.trim().startsWith("/") ? replyQuote : "";
+    if (quote) stopQuote();
     input.value = "";
     if (line.trim() && sent[sent.length - 1] !== line) sent.push(line);
     sentPos = sent.length;
@@ -5457,7 +5534,7 @@ input.addEventListener("keydown", e => {
         channelList.some(c => c[0] === gamesLog)) {
       channelCommand("/join " + gamesLog);
     }
-    window.zchatSend(line);
+    window.zchatSend(quote + line);
     // A new name or color (/nick, /color) shows right away.
     setTimeout(refreshSelf, 150);
     e.preventDefault();
