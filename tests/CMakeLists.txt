@@ -5,9 +5,12 @@ add_executable(zchat_tests
     ${zchat_test_sources}
     "${PROJECT_SOURCE_DIR}/src/casino.cpp"
     "${PROJECT_SOURCE_DIR}/src/coins.cpp"
+    "${PROJECT_SOURCE_DIR}/src/color.cpp"
     "${PROJECT_SOURCE_DIR}/src/elo.cpp"
+    "${PROJECT_SOURCE_DIR}/src/markup.cpp"
     "${PROJECT_SOURCE_DIR}/src/pokemon_state.cpp"
     "${PROJECT_SOURCE_DIR}/src/process.cpp"
+    "${PROJECT_SOURCE_DIR}/src/text.cpp"
 )
 find_package(Threads REQUIRED)
 target_link_libraries(zchat_tests PRIVATE Threads::Threads)

@@ -18,6 +18,7 @@
 #include <format>
 #include <fstream>
 #include <memory>
+#include <ranges>
 #include <stdexcept>
 #include <utility>
 
@@ -1258,10 +1259,67 @@ bool Chat::print_message(std::uint64_t id, std::string_view name, std::string_vi
     const std::string stamp = when ? timestamp(*when) : timestamp();
     const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", stamp) : stamp;
     bool tags_us = false;
-    const std::string marked = mark_mentions(text, tags_us);
-    terminal_.print(
-        std::format("{} {}: {}", time, colored_name(id, name), markup::render(marked, terminal_.colors())));
+    const auto quote = markup::split_quote(text);
+    const std::string_view said = quote ? quote->reply : text;
+    const std::string marked = mark_mentions(said, tags_us);
+    const std::string line =
+        std::format("{} {}: {}", time, colored_name(id, name), markup::render(marked, terminal_.colors()));
+    const std::string reply_quote = markup::quote(name, text);
+    if (!quote) {
+        if (!terminal_.show_message(line, std::nullopt, reply_quote)) {
+            terminal_.print(line);
+        }
+        return tags_us;
+    }
+    // Being quoted tags us too.
+    tags_us = tags_us || quotes_us(*quote);
+    const std::string quoted =
+        std::format("{}: {}", colored_name_of(quote->name), markup::render(quote->text, false));
+    if (!terminal_.show_message(line, quoted, reply_quote)) {
+        // The quote first, under the time, then the message.
+        terminal_.print(terminal_.colors() ? std::format("\x1b[90m      ┃\x1b[0m {}\n{}", quoted, line)
+                                           : std::format("      | {}\n{}", quoted, line));
+    }
     return tags_us;
+}
+
+bool Chat::quotes_us(const markup::Quote& quote) const {
+    return lowercase(quote.name) == lowercase(name());
+}
+
+std::string Chat::colored_name_of(std::string_view name) const {
+    const std::string wanted = lowercase(name);
+    if (wanted == lowercase(this->name())) {
+        return colored_name(id_, name);
+    }
+    {
+        std::scoped_lock lock(peers_mutex_);
+        for (const auto& [id, peer] : peers_) {
+            if (lowercase(peer.name) == wanted) {
+                return colored_name(id, name);
+            }
+        }
+    }
+    // Gone, or renamed since.
+    return std::string(name);
+}
+
+std::optional<std::string> Chat::quote_last(std::string_view person) const {
+    const std::string wanted = lowercase(person);
+    std::scoped_lock lock(channels_mutex_);
+    const auto it = backlog_.find(current_);
+    if (it == backlog_.end()) {
+        return std::nullopt;
+    }
+    for (const auto& entry : std::views::reverse(it->second)) {
+        if (entry.kind != Entry::Kind::Message || !entry.data) {
+            continue;
+        }
+        if (wanted.empty() ? entry.id != id_ : lowercase(entry.name) == wanted) {
+            return markup::quote(entry.name, *entry.data);
+        }
+    }
+    return std::nullopt;
 }
 
 std::string Chat::mark_mentions(std::string_view text, bool& tags_us) const {
@@ -1606,7 +1664,9 @@ void Chat::deliver(const std::string& channel, Entry entry) {
     }
     bool tags_us = false;
     if (entry.kind == Entry::Kind::Message && entry.id != id_) {
-        mark_mentions(*entry.data, tags_us);
+        const auto quote = markup::split_quote(*entry.data);
+        mark_mentions(quote ? quote->reply : std::string_view(*entry.data), tags_us);
+        tags_us = tags_us || (quote && quotes_us(*quote));
     }
     if (tags_us) {
         terminal_.bell();

@@ -4,6 +4,7 @@
 #include "color.hpp"
 #include "file.hpp"
 #include "history.hpp"
+#include "markup.hpp"
 #include "net.hpp"
 #include "protocol.hpp"
 #include "screen.hpp"
@@ -155,6 +156,10 @@ public:
     // Formats a name with its color.
     std::string colored_name(std::uint64_t id, std::string_view name) const;
 
+    // What to put before a reply to quote the last message in the current channel said by person, or by anybody
+    // else when empty (see markup::quote()); nullopt when there is none.
+    std::optional<std::string> quote_last(std::string_view person) const;
+
     // Prints an informational line (joins, leaves, command output).
     void notice(std::string_view text) const;
 
@@ -241,6 +246,10 @@ private:
     // Turns the "@Name" tags of the people in the chat into markup showing them bold in their color, ours also
     // underlined. Sets tags_us when we are tagged.
     std::string mark_mentions(std::string_view text, bool& tags_us) const;
+    // Whether a quote is of something we said.
+    bool quotes_us(const markup::Quote& quote) const;
+    // A name in the color of whoever in the chat has it, or plain when nobody does.
+    std::string colored_name_of(std::string_view name) const;
     void print_art(std::uint64_t id, std::string_view name, std::string_view art,
                    std::optional<std::time_t> when = std::nullopt) const;
     // Also files, which come the same way.

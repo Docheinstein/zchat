@@ -7,6 +7,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <format>
 #include <optional>
 #include <vector>
 
@@ -363,6 +364,54 @@ std::string render(std::string_view text, bool colors) {
         }
     }
     return out;
+}
+
+namespace {
+
+    constexpr std::string_view quote_open = "<quote=";
+    constexpr std::string_view quote_close = "</quote>";
+    // The longest text a quote keeps, so the reply has room in the message.
+    constexpr std::size_t max_quote_bytes = 200;
+
+} // namespace
+
+std::optional<Quote> split_quote(std::string_view message) {
+    if (!message.starts_with(quote_open)) {
+        return std::nullopt;
+    }
+    const auto gt = message.find('>');
+    const auto close = message.find(quote_close);
+    if (close == std::string_view::npos || gt > close) {
+        return std::nullopt;
+    }
+    Quote quote;
+    quote.name = trim(message.substr(quote_open.size(), gt - quote_open.size()));
+    quote.text = trim(message.substr(gt + 1, close - gt - 1));
+    quote.reply = trim(message.substr(close + quote_close.size()));
+    if (quote.name.empty() || quote.text.empty()) {
+        return std::nullopt;
+    }
+    return quote;
+}
+
+std::string quote(std::string_view name, std::string_view message) {
+    if (const auto inner = split_quote(message)) {
+        // Just a quote, with nothing said after it: what it quotes.
+        message = inner->reply.empty() ? inner->text : inner->reply;
+    }
+    std::string text = render(message, false);
+    if (text.size() > max_quote_bytes) {
+        text = text::sanitize(text, max_quote_bytes - std::string_view("…").size()) + "…";
+    }
+    // Nothing in it may end the quote early: no '>' in the name, no "</quote>" in the text.
+    std::string clean_name(name);
+    std::erase_if(clean_name, [](char c) {
+        return c == '<' || c == '>';
+    });
+    for (auto at = text.find(quote_close); at != std::string::npos; at = text.find(quote_close, at)) {
+        text.replace(at, 1, "‹");
+    }
+    return std::format("{}{}>{}{} ", quote_open, clean_name, trim(text), quote_close);
 }
 
 } // namespace zchat::markup
