@@ -69,6 +69,21 @@
   #channels .item:hover .act.leave { display: block; }
   #channels .item:hover .dot { display: none; }
   #channels .item .act:hover { background: var(--accent); border-color: var(--accent); color: #0b0d10; }
+  /* Private chats: like the channels, with whom they are; and the people, clicked to open one. */
+  #direct .item { cursor: pointer; }
+  #direct .item:hover { background: #20242d; }
+  #direct .item.active { background: #232833; font-weight: 600; }
+  #direct .item.away .label { color: var(--muted) !important; }
+  #direct .dot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  #direct .item .act {
+    display: none; margin-left: auto; width: 20px; height: 20px; padding: 0; border-radius: 50%;
+    border: 1px solid var(--border); background: var(--input); color: var(--text); cursor: pointer;
+  }
+  #direct .item:hover .act { display: block; }
+  #direct .item:hover .dot { display: none; }
+  #direct .item .act:hover { background: var(--accent); border-color: var(--accent); color: #0b0d10; }
+  #people .item { cursor: pointer; }
+  #people .item:hover { background: #20242d; }
   /* The current channel's buttons, in the header. */
   header .channel-actions { display: flex; gap: 6px; }
   header .channel-actions button[hidden] { display: none; }
@@ -443,6 +458,8 @@
     <div class="row"><button id="new-channel-cancel">Cancel</button><button class="primary" id="new-channel-create">Create</button></div>
   </div>
   <div id="channels"></div>
+  <h2 id="direct-title" style="display: none">Private chats</h2>
+  <div id="direct"></div>
   <h2>People</h2>
   <div id="people"></div>
 </aside>
@@ -773,8 +790,11 @@ window.zchat = {
 // After #general comes the games log: what the games say goes there, and not in the chat.
 const gamesLog = "games-log";
 let port = 0, currentChannel = "general", channelsShown = "";
+// The private chat shown: whom it is with; null in a channel.
+let currentDirect = null;
 function showHeader() {
-  document.getElementById("channel").textContent = "# " + currentChannel + (port ? `  ·  UDP port ${port}` : "");
+  document.getElementById("channel").textContent = (currentDirect ? "@ " + currentDirect + "  ·  private"
+    : "# " + currentChannel) + (port ? `  ·  UDP port ${port}` : "");
 }
 async function refreshChannels() {
   let channels = [];
@@ -785,7 +805,10 @@ async function refreshChannels() {
   const box = document.getElementById("channels");
   box.textContent = "";
   channelList = channels;
-  for (const [name, isPublic, member, current, unread] of channels) {
+  currentDirect = null;
+  showDirect(channels.filter(c => c[6]));
+  for (const [name, isPublic, member, current, unread, , direct] of channels) {
+    if (direct) continue;
     const item = document.createElement("div");
     const log = name === gamesLog;
     item.className = "item" + (current ? " active" : "") + (member ? "" : " away");
@@ -831,6 +854,41 @@ async function refreshChannels() {
   showHeader();
   showChannelActions();
 }
+// The private chats, under the channels: whom with (grey when they are not in the chat now), a dot for something new,
+// and a button to close it.
+function showDirect(chats) {
+  const box = document.getElementById("direct");
+  box.textContent = "";
+  // (Not hidden: aside h2 is a flex box.)
+  document.getElementById("direct-title").style.display = chats.length ? "" : "none";
+  for (const [name, , , current, unread, , , [who, style, hash]] of chats) {
+    const item = document.createElement("div");
+    item.className = "item" + (current ? " active" : "") + (style ? "" : " away");
+    item.title = "Private chat with " + who + (style ? "" : " (not in the chat now)");
+    const avatar = document.createElement("span");
+    avatar.className = "avatar";
+    setAvatar(avatar, who, style, hash);
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = who;
+    label.style.color = styleColor(style);
+    item.append(avatar, label);
+    if (unread && !current) {
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      item.append(dot);
+    }
+    const close = document.createElement("button");
+    close.className = "act";
+    close.textContent = "×";
+    close.title = "Close the private chat with " + who;
+    close.onclick = e => { e.stopPropagation(); channelCommand("/leave " + name); };
+    item.append(close);
+    item.onclick = () => channelCommand("/join " + name);
+    box.appendChild(item);
+    if (current) { currentChannel = name; currentDirect = who; }
+  }
+}
 // Runs a channel command, as typed; what it says shows in the chat.
 function channelCommand(line) {
   window.zchatSend(line);
@@ -841,9 +899,13 @@ function showChannelActions() {
   const here = channelList.find(c => c[3]);
   const general = !here || here[0] === "general";
   const log = !!here && here[0] === gamesLog;
-  document.getElementById("channel-members").hidden = log;
-  document.getElementById("channel-leave").hidden = general || log;
-  document.getElementById("channel-delete").hidden = general || log || !here[5];
+  const direct = !!here && !!here[6];
+  document.getElementById("channel-members").hidden = log || direct;
+  const leave = document.getElementById("channel-leave");
+  leave.hidden = general || log;
+  leave.textContent = direct ? "Close" : "Leave";
+  leave.title = direct ? "Close this private chat: it opens again when something is said in it" : "Leave this channel";
+  document.getElementById("channel-delete").hidden = general || log || direct || !here[5];
 }
 document.getElementById("channel-leave").onclick = () => channelCommand("/leave " + currentChannel);
 // Deleting asks for a second click.
@@ -5432,6 +5494,8 @@ async function refreshPeople() {
     label.textContent = name;
     label.style.color = styleColor(style);
     item.append(avatar, label);
+    item.title = "Private chat with " + name;
+    item.onclick = () => channelCommand("/msg " + name);
     box.appendChild(item);
   }
 }

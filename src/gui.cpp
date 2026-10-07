@@ -299,7 +299,8 @@ Gui::Gui() {
         return std::format("{{\"members\":{},\"others\":{},\"away\":{}}}", list(people.members), list(people.others),
                            people.away);
     });
-    // The channels: [[name, public, member, current, unread, owner], ...].
+    // The channels: [[name, public, member, current, unread, owner, direct, [name, style, avatar]], ...], the last two
+    // for private chats: whom it is with.
     view.bind("zchatChannels", [this](const std::string&) -> std::string {
         std::vector<ChannelItem> channels;
         {
@@ -311,8 +312,9 @@ Gui::Gui() {
         std::string out = "[";
         for (const auto& c : channels) {
             out += out.size() > 1 ? "," : "";
-            out += std::format("[{},{},{},{},{},{}]", json_string(c.name), c.is_public, c.member, c.current, c.unread,
-                               c.owner);
+            out += std::format("[{},{},{},{},{},{},{},[{},{},{}]]", json_string(c.name), c.is_public, c.member,
+                               c.current, c.unread, c.owner, c.direct, json_string(c.with.name),
+                               json_string(c.with.style), json_string(c.with.avatar));
         }
         return out + "]";
     });

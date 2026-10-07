@@ -4,6 +4,7 @@
 #include <cctype>
 #include <charconv>
 #include <format>
+#include <utility>
 #include <vector>
 
 namespace zchat::channel {
@@ -51,10 +52,27 @@ std::string clean_name(std::string_view name) {
     return out;
 }
 
+std::string direct_name(std::uint64_t a, std::uint64_t b) {
+    if (a > b) {
+        std::swap(a, b);
+    }
+    // FNV-1a, the same everywhere (unlike std::hash).
+    std::uint64_t hash = 0xcbf29ce484222325ULL;
+    for (const std::uint64_t id : {a, b}) {
+        for (int i = 0; i < 8; ++i) {
+            hash ^= (id >> (8 * i)) & 0xff;
+            hash *= 0x100000001b3ULL;
+        }
+    }
+    return std::format("{}{:016x}", direct_prefix, hash);
+}
+
 std::string encode(const Channel& channel) {
     std::string out = std::format("{} {} {} {} {:x} {:x}", channel.name, channel.version,
-                                  channel.is_public ? "public" : "private", channel.deleted ? "deleted" : "live",
-                                  channel.owner, channel.author);
+                                  channel.direct      ? "direct"
+                                  : channel.is_public ? "public"
+                                                      : "private",
+                                  channel.deleted ? "deleted" : "live", channel.owner, channel.author);
     for (const auto member : channel.members) {
         out += std::format(" {:x}", member);
     }
@@ -69,11 +87,12 @@ std::optional<Channel> decode(std::string_view text) {
     Channel c;
     c.name = clean_name(w[0]);
     if (c.name.empty() || c.name == general || !number(w[1], c.version, 10) || c.version == 0 ||
-        (w[2] != "public" && w[2] != "private") || (w[3] != "live" && w[3] != "deleted") ||
+        (w[2] != "public" && w[2] != "private" && w[2] != "direct") || (w[3] != "live" && w[3] != "deleted") ||
         !number(w[4], c.owner, 16) || !number(w[5], c.author, 16)) {
         return std::nullopt;
     }
     c.is_public = w[2] == "public";
+    c.direct = w[2] == "direct";
     c.deleted = w[3] == "deleted";
     for (std::size_t i = 6; i < w.size(); ++i) {
         std::uint64_t member = 0;
@@ -82,10 +101,31 @@ std::optional<Channel> decode(std::string_view text) {
         }
         c.members.insert(member);
     }
+    // A private chat is of its two, by name; and only those are called so.
+    if (c.direct) {
+        if (c.deleted || c.members.size() != 2 ||
+            c.name != direct_name(*c.members.begin(), *c.members.rbegin())) {
+            return std::nullopt;
+        }
+    } else if (c.name.starts_with(direct_prefix)) {
+        return std::nullopt;
+    }
     return c;
 }
 
 bool accepts(const std::optional<Channel>& known, const Channel& incoming) {
+    // A private chat: made by one of its two, and the same ever after (decode() checks its name and members).
+    if (incoming.direct || (known && known->direct)) {
+        if (!incoming.direct || incoming.deleted || !incoming.has(incoming.author)) {
+            return false;
+        }
+        if (!known) {
+            return true;
+        }
+        return known->direct && incoming.members == known->members &&
+               (incoming.version > known->version ||
+                (incoming.version == known->version && incoming.author > known->author));
+    }
     if (!known) {
         // Nothing to go by: the first one heard.
         return true;

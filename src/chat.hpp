@@ -113,6 +113,10 @@ public:
     std::optional<std::string> add_to_channel(std::string_view channel, std::string_view person);
     std::optional<std::string> remove_from_channel(std::string_view channel, std::string_view person);
     std::string current_channel() const;
+    // Private chats (see channel::Channel::direct): goes to the one with person, opening it when there is none yet
+    // (then they must be in the chat). /join, /leave and the others also take "@NAME" for one. Closing one (leave_channel()) only takes it off our list, until something new is said
+    // in it or it is opened again.
+    std::optional<std::string> open_direct(std::string_view person);
     struct ChannelInfo {
         std::string name;
         bool is_public = true;
@@ -122,8 +126,13 @@ public:
         std::size_t members = 0;
         // We created it: we can delete it.
         bool owner = false;
+        // A private chat, with whom: their name as it is (or was, when they are not in the chat now), its style and
+        // their avatar, as in a Screen::Mention.
+        bool direct = false;
+        Screen::Mention with;
     };
-    // General first, then the others there are for us: the public ones, and the private ones we are in.
+    // General first, then the others there are for us: the public ones, and the private ones we are in; then our
+    // private chats, by name.
     std::vector<ChannelInfo> channels() const;
     // The names of the members in the chat; away is how many others there are.
     std::vector<std::string> channel_members(std::string_view channel, std::size_t& away) const;
@@ -283,6 +292,15 @@ private:
     // Channels: whether we are in one, who a user is, and who someone named is.
     bool in_channel(const std::string& name) const;
     std::string user_name(std::uint64_t user) const;
+    // A user's name as it is, or as it was when they are not in the chat now (see names_); empty when not known.
+    std::string plain_user_name(std::uint64_t user) const;
+    // Who else is in a private chat; 0 when it is not one of ours.
+    std::uint64_t direct_partner(const std::string& channel) const;
+    // How a channel is called in what is said: "#NAME", or "the private chat with NAME"; and how to go to it.
+    std::string channel_label(const std::string& channel) const;
+    std::string join_hint(const std::string& channel) const;
+    // Our private chat with someone named so, in the chat or not ('@' in front or not); empty when there is none.
+    std::string direct_with(std::string_view person) const;
     std::optional<std::uint64_t> find_user(std::string_view person, std::string& error) const;
     // Makes a new version of a channel with edit (which returns what is wrong, if anything), and tells everybody.
     std::optional<std::string> change_channel(const std::string& name,
@@ -399,6 +417,11 @@ private:
     std::string current_ {channel::general};
     std::map<std::string, std::deque<Entry>> backlog_;
     std::set<std::string> unread_;
+    // The private chats closed, kept with the channels.
+    std::set<std::string> closed_;
+    // The last name of each user heard, for the private chats with who is not in the chat now: kept with the channels.
+    // Guarded by peers_mutex_.
+    std::map<std::uint64_t, std::string> names_;
 
     // Held while a hook runs, so set_game_hooks() can wait for it.
     std::mutex hooks_mutex_;

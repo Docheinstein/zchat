@@ -192,7 +192,7 @@ void Chat::say(std::string_view text) {
     const std::string channel = speaking_channel();
     if (channel != channel::general) {
         if (!in_channel(channel)) {
-            notice(std::format("You are not in #{} anymore.", channel));
+            notice(std::format("You are not in {} anymore.", channel_label(channel)));
             switch_to(std::string(channel::general));
             return;
         }
@@ -651,6 +651,9 @@ void Chat::receive_presence(std::uint64_t sender, std::string_view text, std::ui
         if (const auto it = peers_.find(sender); it != peers_.end()) {
             it->second.avatar = hash;
             it->second.user = user;
+            if (user) {
+                names_[user] = it->second.name;
+            }
         }
     }
     if (!hash || from == 0) {
@@ -722,9 +725,22 @@ void Chat::set_user(std::uint64_t user, std::filesystem::path channels_file) {
     user_ = user;
     channels_file_ = std::move(channels_file);
     std::ifstream in(channels_file_);
-    std::scoped_lock lock(channels_mutex_);
+    std::scoped_lock lock(channels_mutex_, peers_mutex_);
     for (std::string line; std::getline(in, line);) {
-        if (auto c = channel::decode(line)) {
+        // Besides the channels, "closed NAME" for a private chat closed, and "name USER NAME" for whom it is with.
+        if (line.starts_with("closed ")) {
+            closed_.insert(channel::clean_name(std::string_view(line).substr(7)));
+        } else if (line.starts_with("name ")) {
+            const std::string_view rest = std::string_view(line).substr(5);
+            const auto space = rest.find(' ');
+            std::uint64_t id = 0;
+            if (space != std::string_view::npos) {
+                const auto [ptr, ec] = std::from_chars(rest.data(), rest.data() + space, id, 16);
+                if (ec == std::errc {} && ptr == rest.data() + space && id != 0 && space + 1 < rest.size()) {
+                    names_[id] = text::sanitize(rest.substr(space + 1), max_name_bytes);
+                }
+            }
+        } else if (auto c = channel::decode(line)) {
             channels_[c->name] = std::move(*c);
         }
     }
@@ -736,8 +752,22 @@ void Chat::save_channels() const {
         return;
     }
     std::ofstream out(channels_file_, std::ios::trunc);
+    std::set<std::uint64_t> partners;
     for (const auto& [name, c] : channels_) {
         out << channel::encode(c) << '\n';
+        if (c.direct && c.has(user_)) {
+            partners.insert(c.members.begin(), c.members.end());
+            if (closed_.contains(name)) {
+                out << "closed " << name << '\n';
+            }
+        }
+    }
+    partners.erase(user_);
+    std::scoped_lock lock(peers_mutex_);
+    for (const auto partner : partners) {
+        if (const auto it = names_.find(partner); it != names_.end()) {
+            out << std::format("name {:x} {}\n", partner, it->second);
+        }
     }
 }
 
@@ -774,6 +804,79 @@ std::string Chat::user_name(std::uint64_t user) const {
         }
     }
     return "someone";
+}
+
+std::string Chat::plain_user_name(std::uint64_t user) const {
+    if (user == user_) {
+        return name();
+    }
+    std::scoped_lock lock(peers_mutex_);
+    for (const auto& [id, peer] : peers_) {
+        if (peer.user == user) {
+            return peer.name;
+        }
+    }
+    const auto it = names_.find(user);
+    return it != names_.end() ? it->second : std::string();
+}
+
+std::uint64_t Chat::direct_partner(const std::string& channel) const {
+    std::scoped_lock lock(channels_mutex_);
+    const auto it = channels_.find(channel);
+    if (it == channels_.end() || !it->second.direct || !it->second.has(user_)) {
+        return 0;
+    }
+    for (const auto member : it->second.members) {
+        if (member != user_) {
+            return member;
+        }
+    }
+    return 0;
+}
+
+std::string Chat::channel_label(const std::string& channel) const {
+    const std::uint64_t partner = direct_partner(channel);
+    if (!partner) {
+        return "#" + channel;
+    }
+    std::string who = user_name(partner);
+    if (who == "someone") {
+        const std::string plain = plain_user_name(partner);
+        who = plain.empty() ? who : plain;
+    }
+    return std::format("your private chat with {}", who);
+}
+
+std::string Chat::join_hint(const std::string& channel) const {
+    const std::uint64_t partner = direct_partner(channel);
+    const std::string who = partner ? plain_user_name(partner) : std::string();
+    return who.empty() ? std::format("/join {}", channel) : std::format("/msg {}", who);
+}
+
+std::string Chat::direct_with(std::string_view person) const {
+    while (!person.empty() && (person.front() == ' ' || person.front() == '@')) {
+        person.remove_prefix(1);
+    }
+    const std::string wanted = lowercase(person);
+    std::vector<std::pair<std::string, std::uint64_t>> chats;
+    {
+        std::scoped_lock lock(channels_mutex_);
+        for (const auto& [name, c] : channels_) {
+            if (c.direct && c.has(user_)) {
+                for (const auto member : c.members) {
+                    if (member != user_) {
+                        chats.emplace_back(name, member);
+                    }
+                }
+            }
+        }
+    }
+    for (const auto& [name, partner] : chats) {
+        if (!wanted.empty() && lowercase(plain_user_name(partner)) == wanted) {
+            return name;
+        }
+    }
+    return {};
 }
 
 std::optional<std::uint64_t> Chat::find_user(std::string_view person, std::string& error) const {
@@ -848,6 +951,10 @@ std::optional<std::string> Chat::create_channel(std::string_view name, bool is_p
     if (clean == channel::games_log) {
         return std::format("#{} is where a window shows what the games say: pick another name.", clean);
     }
+    if (clean.starts_with(channel::direct_prefix)) {
+        return std::format("Names starting with {} are for private chats (/msg NAME): pick another one.",
+                           channel::direct_prefix);
+    }
     const auto error = change_channel(clean, [&](channel::Channel& c) -> std::optional<std::string> {
         if (c.version > 0 && !c.deleted) {
             return std::format("#{} already exists: /join {}", clean, clean);
@@ -866,6 +973,9 @@ std::optional<std::string> Chat::create_channel(std::string_view name, bool is_p
 }
 
 std::optional<std::string> Chat::join_channel(std::string_view name) {
+    if (name.starts_with('@')) {
+        return open_direct(name);
+    }
     const std::string clean = channel::clean_name(name);
     if (clean.empty()) {
         return std::format("{} is not a channel name (see /channels).", name);
@@ -873,6 +983,15 @@ std::optional<std::string> Chat::join_channel(std::string_view name) {
     if (games_apart_ && clean == channel::games_log) {
         switch_to(clean);
         return std::nullopt;
+    }
+    if (clean.starts_with(channel::direct_prefix)) {
+        if (!in_channel(clean)) {
+            return "That is not a private chat of yours: /msg NAME opens one with NAME.";
+        }
+        std::scoped_lock lock(channels_mutex_);
+        if (closed_.erase(clean)) {
+            save_channels();
+        }
     }
     if (clean != channel::general && !in_channel(clean)) {
         const auto error = change_channel(clean, [&](channel::Channel& c) -> std::optional<std::string> {
@@ -893,7 +1012,53 @@ std::optional<std::string> Chat::join_channel(std::string_view name) {
     return std::nullopt;
 }
 
+std::optional<std::string> Chat::open_direct(std::string_view person) {
+    // The one there is already, with them in the chat or not; or else a new one, with them in the chat.
+    std::string name = direct_with(person);
+    if (name.empty()) {
+        std::string error;
+        const auto user = find_user(person, error);
+        if (!user) {
+            return error;
+        }
+        if (*user == user_) {
+            return "That is you: a private chat takes somebody else.";
+        }
+        name = channel::direct_name(user_, *user);
+        if (!in_channel(name)) {
+            if (const auto e = change_channel(name, [&](channel::Channel& c) -> std::optional<std::string> {
+                    if (c.version > 0 && !c.direct) {
+                        return "That private chat cannot be opened.";
+                    }
+                    c.is_public = false;
+                    c.direct = true;
+                    c.deleted = false;
+                    c.owner = user_;
+                    c.members = {user_, *user};
+                    return std::nullopt;
+                })) {
+                return e;
+            }
+        }
+    }
+    {
+        std::scoped_lock lock(channels_mutex_);
+        if (closed_.erase(name)) {
+            save_channels();
+        }
+    }
+    switch_to(name);
+    return std::nullopt;
+}
+
 std::optional<std::string> Chat::leave_channel(std::string_view name) {
+    if (name.starts_with('@')) {
+        const std::string direct = direct_with(name);
+        if (direct.empty()) {
+            return std::format("You have no private chat with {}.", name.substr(1));
+        }
+        return leave_channel(direct);
+    }
     const std::string clean = name.empty() ? current_channel() : channel::clean_name(name);
     if (clean == channel::general) {
         return "Everybody is always in #general.";
@@ -903,6 +1068,22 @@ std::optional<std::string> Chat::leave_channel(std::string_view name) {
     }
     if (clean.empty() || !in_channel(clean)) {
         return std::format("You are not in #{}.", clean.empty() ? std::string(name) : clean);
+    }
+    // A private chat is only closed: off our list, until something new is said in it.
+    if (direct_partner(clean)) {
+        const std::string label = channel_label(clean);
+        const std::string hint = join_hint(clean);
+        {
+            std::scoped_lock lock(channels_mutex_);
+            closed_.insert(clean);
+            unread_.erase(clean);
+            save_channels();
+        }
+        notice(std::format("Closed {}: {} opens it again.", label, hint));
+        if (current_channel() == clean) {
+            switch_to(std::string(channel::general));
+        }
+        return std::nullopt;
     }
     if (const auto error = change_channel(clean, [&](channel::Channel& c) -> std::optional<std::string> {
             c.members.erase(user_);
@@ -927,6 +1108,9 @@ std::optional<std::string> Chat::delete_channel(std::string_view name) {
     }
     if (clean.empty()) {
         return std::format("{} is not a channel name (see /channels).", name);
+    }
+    if (direct_partner(clean)) {
+        return "A private chat cannot be deleted: /leave closes it.";
     }
     if (const auto error = change_channel(clean, [&](channel::Channel& c) -> std::optional<std::string> {
             if (c.version == 0 || c.deleted) {
@@ -964,6 +1148,9 @@ std::optional<std::string> Chat::add_to_channel(std::string_view name, std::stri
     if (clean.empty() || !in_channel(clean)) {
         return std::format("You are not in #{}.", clean.empty() ? std::string(name) : clean);
     }
+    if (direct_partner(clean)) {
+        return "A private chat is just the two of you: /create NAME private for a channel with more people.";
+    }
     std::string error;
     const auto user = find_user(person, error);
     if (!user) {
@@ -992,6 +1179,9 @@ std::optional<std::string> Chat::remove_from_channel(std::string_view name, std:
     }
     if (clean.empty() || !in_channel(clean)) {
         return std::format("You are not in #{}.", clean.empty() ? std::string(name) : clean);
+    }
+    if (direct_partner(clean)) {
+        return "A private chat is just the two of you: /leave closes it.";
     }
     std::string error;
     const auto user = find_user(person, error);
@@ -1028,14 +1218,42 @@ std::vector<Chat::ChannelInfo> Chat::channels() const {
         out.push_back({std::string(channel::games_log), false, true, current_ == channel::games_log,
                        unread_.contains(std::string(channel::games_log)), 1});
     }
+    std::vector<ChannelInfo> direct;
     for (const auto& [name, c] : channels_) {
         // Private ones only for their members; and none can be the games log (from versions without it).
         if (c.deleted || (!c.is_public && !c.has(user_)) || (games_apart_ && name == channel::games_log)) {
             continue;
         }
-        out.push_back({name, c.is_public, c.has(user_), current_ == name, unread_.contains(name), c.members.size(),
-                       c.owner == user_});
+        if (!c.direct) {
+            out.push_back({name, c.is_public, c.has(user_), current_ == name, unread_.contains(name),
+                           c.members.size(), c.owner == user_});
+            continue;
+        }
+        // Closed ones are not listed, unless shown.
+        if (closed_.contains(name) && current_ != name) {
+            continue;
+        }
+        ChannelInfo info {name, false, true, current_ == name, unread_.contains(name), 2, false, true, {}};
+        const auto partner = *std::ranges::find_if(c.members, [&](std::uint64_t m) {
+            return m != user_;
+        });
+        std::scoped_lock peers_lock(peers_mutex_);
+        const auto online = std::ranges::find_if(peers_, [&](const auto& p) {
+            return p.second.user == partner;
+        });
+        if (online != peers_.end()) {
+            info.with = {online->second.name, ansi_foreground(color_of_id(online->first)),
+                         online->second.avatar ? std::format("{:016x}", online->second.avatar) : std::string()};
+        } else {
+            const auto known = names_.find(partner);
+            info.with.name = known != names_.end() ? known->second : "someone";
+        }
+        direct.push_back(std::move(info));
     }
+    std::ranges::sort(direct, {}, [](const ChannelInfo& c) {
+        return lowercase(c.with.name);
+    });
+    out.insert(out.end(), std::make_move_iterator(direct.begin()), std::make_move_iterator(direct.end()));
     return out;
 }
 
@@ -1122,6 +1340,7 @@ Chat::ChannelPeople Chat::channel_people(std::string_view channel_name) const {
 void Chat::switch_to(const std::string& name) {
     std::vector<Entry> entries;
     std::string what;
+    bool direct = false;
     {
         std::scoped_lock lock(channels_mutex_);
         current_ = name;
@@ -1130,14 +1349,26 @@ void Chat::switch_to(const std::string& name) {
             entries.assign(it->second.begin(), it->second.end());
         }
         if (const auto it = channels_.find(name); it != channels_.end()) {
+            direct = it->second.direct;
             what = std::format(" ({}, {} {})", it->second.is_public ? "public" : "private", it->second.members.size(),
                                it->second.members.size() == 1 ? "person" : "people");
         }
     }
     // A window shows only the channel; a terminal goes on below a line.
     if (!terminal_.clear()) {
-        terminal_.print(terminal_.colors() ? std::format("\x1b[90m──────── #{} ────────\x1b[0m", name)
-                                           : std::format("-------- #{} --------", name));
+        const std::string title = direct ? "@" + plain_user_name(direct_partner(name)) : "#" + name;
+        terminal_.print(terminal_.colors() ? std::format("\x1b[90m──────── {} ────────\x1b[0m", title)
+                                           : std::format("-------- {} --------", title));
+    }
+    if (direct) {
+        notice(std::format("You are in {}: only the two of you see what is said, drawn and sent here; /leave "
+                           "closes it.{}",
+                           channel_label(name),
+                           entries.empty() ? " Nothing said here yet (since zchat started)." : ""));
+        for (const auto& entry : entries) {
+            show(entry, false);
+        }
+        return;
     }
     if (games_apart_ && name == channel::games_log) {
         notice(std::format("You are in #{}: what the games say is here, so the chat stays a chat. What you type "
@@ -1174,7 +1405,8 @@ void Chat::receive_channel_state(const Packet& packet) {
         save_channels();
     }
     const bool now_member = !c.deleted && c.has(user_);
-    if (c.author == user_) {
+    // A private chat says nothing until something is said in it (see deliver()).
+    if (c.author == user_ || c.direct) {
         return;
     }
     const std::string author = user_name(c.author);
@@ -1637,6 +1869,10 @@ void Chat::deliver(const std::string& channel, Entry entry) {
     bool first_unread = false;
     {
         std::scoped_lock lock(channels_mutex_);
+        // Something new in a private chat closed opens it again.
+        if (closed_.erase(channel)) {
+            save_channels();
+        }
         current = channel == current_;
         if (!current) {
             first_unread = unread_.insert(channel).second;
@@ -1668,7 +1904,14 @@ void Chat::deliver(const std::string& channel, Entry entry) {
         mark_mentions(quote ? quote->reply : std::string_view(*entry.data), tags_us);
         tags_us = tags_us || (quote && quotes_us(*quote));
     }
-    if (tags_us) {
+    // A private message rings like a tag.
+    if (direct_partner(channel) && entry.id != id_) {
+        terminal_.bell();
+        if (first_unread || tags_us) {
+            notice(std::format("{} sent you a private message: {}", colored_name(entry.id, entry.name),
+                               join_hint(channel)));
+        }
+    } else if (tags_us) {
         terminal_.bell();
         notice(std::format("{} tagged you in #{}: /join {}", colored_name(entry.id, entry.name), channel, channel));
     } else if (first_unread) {
