@@ -176,7 +176,7 @@
   header button#casino-open.live { border-color: #3fb950; color: #3fb950; }
   /* The same for the Pokémon battle. */
   #pk-float {
-    position: fixed; top: 54px; right: 20px; width: min(1000px, calc(100vw - 40px)); z-index: 18; display: none;
+    position: fixed; top: 54px; right: 20px; width: min(1200px, calc(100vw - 40px)); z-index: 18; display: none;
     background: #111317; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 34px #000b; overflow: hidden;
   }
   #pk-float.open { display: block; }
@@ -1449,7 +1449,7 @@ const pkKeyframes = `
 let pkState = null, pkPopup = null, pkClosedBattle = null, pkClosing = false, pkGimmick = { rqid: 0, on: "" };
 document.getElementById("pk-style").textContent = pkStyle.replace(/:root \{[^}]*\}/, "").replace(/(^|\})\s*([^{}@]+)\{/g,
   (m, end, sel) => end + " " + sel.split(",").map(x => x.trim() === "body" ? "#pk-float" : "#pk-float " + x.trim()).join(", ") + " {")
-  + " #pk-float .pk { height: min(620px, calc(100vh - 100px)); }" + pkKeyframes;
+  + " #pk-float .pk { height: min(840px, calc(100vh - 100px)); }" + pkKeyframes;
 const pkFloat = document.getElementById("pk-float");
 
 // Showdown's colors of the types, and the text that reads on them.
@@ -1510,7 +1510,7 @@ function pkDoc() {
 function openPokemon(focus) {
   if (!pkDoc()) {
     let w = null;
-    try { w = window.open("", "zchat-pokemon", "popup,width=1000,height=640"); } catch {}
+    try { w = window.open("", "zchat-pokemon", "popup,width=1200,height=860"); } catch {}
     if (w && w.document) {
       w.document.open();
       w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · Pokémon</title><style>${pkStyle}${pkKeyframes}</style></head><body><div class="pk" id="pk"></div></body></html>`);
