@@ -1495,11 +1495,11 @@ void Battle::feed(std::string_view message) {
 }
 
 void Battle::chat(std::string_view name, std::string_view color, std::string_view text) {
-    log_.push_back({LogLine::Kind::Chat, plain(text), plain(name), plain(color)});
+    log_.push_back({LogLine::Kind::Chat, plain(text), plain(name), plain(color), {}});
 }
 
 void Battle::notice(std::string_view text) {
-    log_.push_back({LogLine::Kind::Notice, plain(text), {}, {}});
+    log_.push_back({LogLine::Kind::Notice, plain(text), {}, {}, {}});
 }
 
 std::string Battle::player_name(std::string_view side) const {
@@ -1564,6 +1564,15 @@ void Battle::line(std::string_view text) {
     }
     say(l, describe(l));
     apply(l);
+    // The event goes with the last line the protocol line said ("Go! Gholdengo!" after "Volbeat, come back!"); with
+    // none (Pain Split's second Pokémon), with the line before.
+    if (std::string e = event(l); !e.empty() && !log_.empty()) {
+        LogLine& with = log_.back();
+        if (!with.events.empty()) {
+            with.events += ',';
+        }
+        with.events += e;
+    }
 }
 
 int Battle::side_index(std::string_view ident) {
@@ -2359,8 +2368,75 @@ void Battle::say(const Line& l, std::string_view text) {
         if (cmd == "-sethp" && !log_.empty() && log_.back().text == s) {
             continue;
         }
-        log_.push_back({line_kind, std::move(s), {}, {}});
+        log_.push_back({line_kind, std::move(s), {}, {}, {}});
     }
+}
+
+std::string Battle::event(const Line& l) const {
+    const std::string_view cmd = l.cmd;
+    const std::string_view a1 = l.arg(1);
+    const int side = side_index(a1);
+    if (side < 0) {
+        return {};
+    }
+    std::string_view fx;
+    // What of the Pokémon goes with it: all that is shown, its HP, its status.
+    bool whole = false, hp = false, status = false;
+    if (cmd == "move") {
+        fx = "move";
+    } else if (cmd == "switch" || cmd == "drag" || cmd == "replace") {
+        fx = "switch";
+        whole = true;
+    } else if (cmd == "detailschange" || cmd == "-formechange" || cmd == "-transform" || cmd == "-terastallize") {
+        fx = "form";
+        whole = true;
+    } else if (cmd == "-damage") {
+        fx = l.has("from") ? "damage" : "hit";
+        hp = true;
+    } else if (cmd == "-heal" || cmd == "-sethp") {
+        fx = "heal";
+        hp = true;
+    } else if (cmd == "faint") {
+        fx = "faint";
+        hp = status = true;
+    } else if (cmd == "-status" || cmd == "-curestatus") {
+        fx = "status";
+        status = true;
+    } else {
+        return {};
+    }
+    const Mon* mon = find(a1);
+    if (!mon && fx != "move") {
+        return {};
+    }
+    std::string out = "{";
+    Writer w(out);
+    w.key("s").string(side == 0 ? "p1" : "p2");
+    w.key("fx").string(fx);
+    if (whole || hp || status) {
+        w.key("mon");
+        out += '{';
+        Writer mw(out);
+        mw.key("name").string(mon->name);
+        if (whole) {
+            mw.key("species").string(mon->species);
+            mw.key("level").number(mon->level);
+            mw.key("gender").string(mon->gender);
+            mw.key("shiny").boolean(mon->shiny);
+            mw.key("exact").boolean(own(side));
+            mw.key("tera").string(mon->tera);
+        }
+        if (whole || hp) {
+            mw.key("hp").number(mon->hp);
+            mw.key("maxhp").number(mon->maxhp);
+        }
+        if (whole || status) {
+            mw.key("status").string(mon->status);
+        }
+        out += '}';
+    }
+    out += '}';
+    return out;
 }
 
 void Battle::set_hp(Mon& mon, std::string_view condition) const {
@@ -3427,6 +3503,13 @@ std::string Battle::json(std::string_view extra) const {
     w.key("error").string(rqid() != 0 ? error_ : std::string());
     w.key("log");
     out += '[';
+    // The events of the lines since the turn before the last: those the window may still have to play.
+    std::size_t events_from = log_.size();
+    for (int turns = 0; events_from > 0 && turns < 2;) {
+        if (log_[--events_from].kind == LogLine::Kind::Turn) {
+            ++turns;
+        }
+    }
     for (std::size_t i = 0; i < log_.size(); ++i) {
         static constexpr std::string_view kinds[] = {"turn", "move",   "text",  "minor",
                                                      "chat", "notice", "error", "result"};
@@ -3441,6 +3524,9 @@ std::string Battle::json(std::string_view extra) const {
         if (line.kind == LogLine::Kind::Chat) {
             lw.key("n").string(line.name);
             lw.key("c").string(line.color);
+        }
+        if (i >= events_from && !line.events.empty()) {
+            lw.key("e").raw("[" + line.events + "]");
         }
         out += '}';
     }

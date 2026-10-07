@@ -755,6 +755,46 @@ TEST(pokemon_split_lines) {
              1);
 }
 
+TEST(pokemon_log_events) {
+    // What each line did, as it was then, for the window to play the turn: the request with the HP after the turn
+    // comes before the turn's lines.
+    Battle b("p1");
+    b.feed("|turn|1\n|switch|p1a: Volbeat|Volbeat, L80, M|263/263\n|switch|p2a: Gholdengo|Gholdengo, L77|100/100");
+    b.feed(R"(|request|{"rqid":2,"side":{"id":"p1","pokemon":[{"ident":"p1: Volbeat","details":"Volbeat, L80, M",)"
+           R"("condition":"100/263","active":true}]},"active":[{"moves":[]}]})");
+    b.feed("|move|p2a: Gholdengo|Make It Rain|p1a: Volbeat\n|-damage|p1a: Volbeat|150/263\n"
+           "|move|p1a: Volbeat|Tackle|p2a: Gholdengo\n|-damage|p2a: Gholdengo|0 fnt\n|faint|p2a: Gholdengo\n"
+           "|-damage|p1a: Volbeat|100/263|[from] item: Life Orb\n|turn|2");
+    const auto state = parsed(b);
+    std::vector<const zchat::json::Value*> events;
+    for (const auto& line : state["log"].items) {
+        for (const auto& e : line["e"].items) {
+            events.push_back(&e);
+        }
+    }
+    REQUIRE(events.size() == 8u);
+    CHECK_EQ((*events[0])["fx"].str(), std::string_view("switch"));
+    CHECK_EQ((*events[0])["mon"]["species"].str(), std::string_view("Volbeat"));
+    CHECK_EQ((*events[0])["mon"]["hp"].integer(), 263);
+    CHECK((*events[0])["mon"]["exact"].boolean);
+    CHECK(!(*events[1])["mon"]["exact"].boolean);
+    CHECK_EQ((*events[2])["fx"].str(), std::string_view("move"));
+    CHECK_EQ((*events[2])["s"].str(), std::string_view("p2"));
+    CHECK_EQ((*events[3])["fx"].str(), std::string_view("hit"));
+    CHECK_EQ((*events[3])["mon"]["hp"].integer(), 150);
+    CHECK_EQ((*events[5])["mon"]["hp"].integer(), 0);
+    CHECK_EQ((*events[6])["fx"].str(), std::string_view("faint"));
+    CHECK_EQ((*events[6])["mon"]["status"].str(), std::string_view("fnt"));
+    CHECK_EQ((*events[7])["fx"].str(), std::string_view("damage"));
+    CHECK_EQ((*events[7])["mon"]["hp"].integer(), 100);
+    // Only the lines since the turn before the last have them.
+    b.feed("|turn|3\n|turn|4");
+    const auto later = parsed(b);
+    CHECK(std::ranges::none_of(later["log"].items, [](const zchat::json::Value& l) {
+        return l["e"].is_array();
+    }));
+}
+
 TEST(pokemon_illusion) {
     Battle b("p1");
     b.feed("|player|p1|Ash||\n|player|p2|Gary||\n|switch|p2a: Lugia|Lugia, L75|100/100\n"

@@ -1316,7 +1316,13 @@ const pkStyle = `
   .sprite.near { left: 40px; bottom: 14px; width: 240px; height: 210px; }
   .sprite img { max-width: 100%; max-height: 100%; image-rendering: auto; }
   .sprite img.small { width: 144px; height: 144px; image-rendering: pixelated; }
-  .sprite.fainted img, .sprite.fainted .ph { opacity: .25; filter: grayscale(1); }
+  .sprite img, .sprite .ph { transition: opacity .6s, filter .6s, transform .6s; }
+  .sprite.fainted img, .sprite.fainted .ph { opacity: .25; filter: grayscale(1); transform: translateY(14px); }
+  .sprite.fx-lunge-near { animation: pk-lunge-near .5s ease-in-out; }
+  .sprite.fx-lunge-far { animation: pk-lunge-far .5s ease-in-out; }
+  .sprite.fx-hit { animation: pk-hit .5s linear; }
+  .sprite.fx-heal { animation: pk-heal .7s ease-in-out; }
+  .sprite.fx-enter { animation: pk-enter .45s ease-out; }
   .sprite.dmax img, .sprite.dmax .ph { transform: scale(1.5); transform-origin: 50% 100%; transition: transform .4s;
     filter: drop-shadow(0 0 6px #ff2a55) drop-shadow(0 0 14px #ff2a55aa); }
   .ph { width: 120px; height: 120px; border-radius: 50%; background: #0006; border: 2px dashed #fff8; color: #fff;
@@ -1330,7 +1336,7 @@ const pkStyle = `
   .stat .lv { font-weight: 400; font-size: 11px; color: #aab; }
   .m { color: #6ea8ff; } .f { color: #f78fb3; }
   .hpbar { height: 7px; border-radius: 4px; background: #333a; border: 1px solid #000; overflow: hidden; margin: 3px 0 2px; }
-  .hpbar div { height: 100%; transition: width .5s, background .5s; }
+  .hpbar div { height: 100%; transition: width .6s ease-out, background .6s; }
   .hpline { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #ccd; gap: 6px; }
   .chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
   .chip { font-size: 10px; border-radius: 3px; padding: 0 4px; line-height: 15px; background: #2a2f3a; color: #ddd; white-space: nowrap; }
@@ -1406,10 +1412,20 @@ const pkStyle = `
   .tip .t { font-weight: 700; font-size: 13px; }
   .tip .d { color: #9aa3b2; }
 `;
+// What happens to a sprite while a turn is played (the fx- classes): kept apart, for the floating window's rules are
+// made from the others by putting #pk-float before their selectors.
+const pkKeyframes = `
+  @keyframes pk-lunge-near { 45% { transform: translate(46px, -26px); } }
+  @keyframes pk-lunge-far { 45% { transform: translate(-46px, 26px); } }
+  @keyframes pk-hit { 15% { transform: translateX(-9px); opacity: .25; } 30% { transform: translateX(9px); opacity: 1; }
+    50% { transform: translateX(-6px); opacity: .25; } 70% { transform: translateX(4px); opacity: 1; } }
+  @keyframes pk-heal { 50% { filter: brightness(1.5) drop-shadow(0 0 12px #8dffb0); } }
+  @keyframes pk-enter { from { transform: scale(.15); opacity: 0; } }
+`;
 let pkState = null, pkPopup = null, pkClosedBattle = null, pkClosing = false, pkGimmick = { rqid: 0, on: "" };
 document.getElementById("pk-style").textContent = pkStyle.replace(/:root \{[^}]*\}/, "").replace(/(^|\})\s*([^{}@]+)\{/g,
   (m, end, sel) => end + " " + sel.split(",").map(x => x.trim() === "body" ? "#pk-float" : "#pk-float " + x.trim()).join(", ") + " {")
-  + " #pk-float .pk { height: min(620px, calc(100vh - 100px)); }";
+  + " #pk-float .pk { height: min(620px, calc(100vh - 100px)); }" + pkKeyframes;
 const pkFloat = document.getElementById("pk-float");
 
 // Showdown's colors of the types, and the text that reads on them.
@@ -1473,7 +1489,7 @@ function openPokemon(focus) {
     try { w = window.open("", "zchat-pokemon", "popup,width=1000,height=640"); } catch {}
     if (w && w.document) {
       w.document.open();
-      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · Pokémon</title><style>${pkStyle}</style></head><body><div class="pk" id="pk"></div></body></html>`);
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · Pokémon</title><style>${pkStyle}${pkKeyframes}</style></head><body><div class="pk" id="pk"></div></body></html>`);
       w.document.close();
       pkPopup = w;
       // Closed by its own window's close button: the same as ours.
@@ -1532,7 +1548,16 @@ function pkBuild(doc, root, popup) {
     p.ph = el("div", "ph");
     p.ph.style.display = "none";
     p.sprite.append(p.img, p.ph);
+    p.sprite.addEventListener("animationend", e => { if (e.target === p.sprite) pkFxClear(p); });
+    // The stat bar: the HP bar is kept, for its width to slide from the HP before to the HP now.
     p.stat = el("div", "stat " + pos);
+    p.nm = el("div", "nm");
+    p.bar = el("div", "hpbar");
+    p.fill = el("div");
+    p.bar.append(p.fill);
+    p.hpline = el("div", "hpline");
+    p.chips = el("div", "chips");
+    p.stat.append(p.nm, p.bar, p.hpline, p.chips);
     p.team = el("div", "teambar " + pos);
     p.conds = el("div", "conds " + pos);
     v.field.append(p.sprite, p.stat, p.team, p.conds);
@@ -1618,15 +1643,27 @@ function pkMonTip(v, mon) {
   return out;
 }
 
-// One side of the field: its Pokémon in, its stat bar, its team and its conditions.
-function pkRenderSide(v, pos, side, color, ours, gen) {
+// The effects on a sprite, one at a time: started again when it is the same one.
+const pkFxClasses = ["fx-lunge-near", "fx-lunge-far", "fx-hit", "fx-heal", "fx-enter"];
+function pkFxClear(p) { p.sprite.classList.remove(...pkFxClasses); }
+function pkFx(p, cls) {
+  pkFxClear(p);
+  void p.sprite.offsetWidth;
+  p.sprite.classList.add(cls);
+}
+
+// One side of the field: its Pokémon in, its stat bar, its team and its conditions. shown, while a turn is played, is
+// its Pokémon in as it was then (undefined: the one in now).
+function pkRenderSide(v, pos, side, color, ours, gen, shown) {
   const el = v.el, p = v[pos];
   const team = side.team || [];
-  const mon = side.active >= 0 ? team[side.active] : null;
+  const mon = shown !== undefined ? shown : side.active >= 0 ? team[side.active] || null : null;
+  p.shown = mon;
   // The sprite, loaded again only for another Pokémon.
   const urls = mon ? pkSpriteUrls(mon.species, mon.shiny, pos === "near", gen) : null;
   const spriteKey = urls ? urls[0] : "";
   if (p.spriteKey !== spriteKey) {
+    if (v.play && urls) pkFx(p, "fx-enter");
     p.spriteKey = spriteKey;
     p.urls = urls;
     p.stage = 0;
@@ -1649,10 +1686,14 @@ function pkRenderSide(v, pos, side, color, ours, gen) {
   }
   p.sprite._mon = mon;
 
-  pkPart(v, p.stat, JSON.stringify([mon, ours]), node => {
-    node.style.display = mon ? "" : "none";
+  p.stat.style.display = mon ? "" : "none";
+  if (!p.stat._tipped) {
+    p.stat._tipped = true;
+    pkTip(v, p.stat, () => p.shown ? pkMonTip(v, p.shown) : []);
+  }
+  if (!mon) p.fillName = null;
+  pkPart(v, p.nm, mon ? JSON.stringify([mon.name, mon.species, mon.gender, mon.level, mon.tera]) : "", nm => {
     if (!mon) return;
-    const nm = el("div", "nm");
     nm.append(el("span", "n", mon.name || mon.species));
     if (mon.gender === "M") nm.append(el("span", "m", "♂"));
     if (mon.gender === "F") nm.append(el("span", "f", "♀"));
@@ -1663,35 +1704,44 @@ function pkRenderSide(v, pos, side, color, ours, gen) {
       t.style.color = pkInk(pkTypeColor(mon.tera));
       nm.append(t);
     }
-    node.append(nm);
+  });
+  if (mon) {
+    // Sliding from the HP before, unless it is another Pokémon.
     const pct = pkPercent(mon);
-    const bar = el("div", "hpbar"), fill = el("div");
-    fill.style.width = pct + "%";
-    fill.style.background = pkHpColor(pct);
-    bar.append(fill);
-    node.append(bar);
-    const line = el("div", "hpline");
-    line.append(el("span", "", mon.exact ? mon.hp + "/" + mon.maxhp : pct + "%"));
+    const another = p.fillName !== mon.name;
+    if (another) p.fill.style.transition = "none";
+    p.fill.style.width = pct + "%";
+    p.fill.style.background = pkHpColor(pct);
+    if (another) { void p.fill.offsetWidth; p.fill.style.transition = ""; p.fillName = mon.name; }
+  }
+  pkPart(v, p.hpline, mon ? JSON.stringify([mon.hp, mon.maxhp, mon.exact, mon.status]) : "", line => {
+    if (!mon) return;
+    line.append(el("span", "", mon.exact ? mon.hp + "/" + mon.maxhp : pkPercent(mon) + "%"));
     if (mon.status) line.append(el("span", "st " + mon.status, mon.status.toUpperCase()));
-    node.append(line);
-    const chips = el("div", "chips");
+  });
+  pkPart(v, p.chips, mon ? JSON.stringify([mon.boosts, mon.dynamaxed, mon.mega, mon.volatiles]) : "", chips => {
+    chips.style.display = "none";
+    if (!mon) return;
     for (const [k, n] of Object.entries(mon.boosts || {}))
       if (n) chips.append(el("span", "chip " + (n > 0 ? "up" : "down"), (n > 0 ? "+" : "") + n + " " + (pkStatNames[k] || k)));
     if (mon.dynamaxed) chips.append(el("span", "chip dmax", "Dynamax"));
     if (mon.mega) chips.append(el("span", "chip vol", "Mega"));
     for (const x of mon.volatiles || []) chips.append(el("span", "chip vol", x));
-    if (chips.childElementCount) node.append(chips);
-    pkTip(v, node, () => pkMonTip(v, mon));
+    if (chips.childElementCount) chips.style.display = "";
   });
 
-  pkPart(v, p.team, JSON.stringify([side.name, color, team, side.active, side.teamSize]), node => {
+  // While a turn is played, the one in and whether it fainted are as they were then.
+  const isShown = m => !!mon && !!m && m.name === mon.name;
+  pkPart(v, p.team, JSON.stringify([side.name, color, team, side.active, side.teamSize, shown || null]), node => {
     const who = el("span", "who", side.name || "");
     who.style.color = color || "#fff";
     node.append(who);
     const size = Math.max(side.teamSize || 6, team.length);
     for (let i = 0; i < size; i++) {
       const m = team[i];
-      const ball = el("span", "ball" + (!m ? " unknown" : pkFainted(m) ? " fnt" : "") + (m && i === side.active ? " active" : ""));
+      const active = shown !== undefined ? isShown(m) : !!m && i === side.active;
+      const fainted = m && pkFainted(isShown(m) ? mon : m);
+      const ball = el("span", "ball" + (!m ? " unknown" : fainted ? " fnt" : "") + (active ? " active" : ""));
       if (m) pkTip(v, ball, () => pkMonTip(v, m));
       else ball.title = "Not seen yet";
       node.append(ball);
@@ -1706,8 +1756,17 @@ function pkRenderSide(v, pos, side, color, ours, gen) {
 function pkRenderControls(v, s, player) {
   const el = v.el, rq = s.request;
   const key = JSON.stringify([s.phase, s.setup, s.watching, player, s.chosen, s.choice, s.cancelling, rq, s.error,
-                              s.result]);
+                              s.result, !!v.play]);
   pkPart(v, v.controls, key, node => {
+    // While the turn is played, what to choose next waits.
+    if (v.play) {
+      const skip = el("button", "btn", "Skip ▸▸");
+      skip.style.width = "fit-content";
+      skip.title = "Show the end of the turn now";
+      skip.onclick = () => pkSkip(v);
+      node.append(el("div", "wait", "The turn is played…"), skip);
+      return;
+    }
     if (s.phase === "setup") { node.append(el("div", "wait", s.setup || "Getting ready…")); return; }
     if (s.phase === "over") {
       node.append(el("div", "wait", s.result || "The battle is over."));
@@ -1851,8 +1910,8 @@ function pkRenderControls(v, s, player) {
   }
 }
 
-// The log: only the new lines are added, unless it is another battle or it got shorter.
-function pkRenderLog(v, s) {
+// The log: only the new lines are added (up to count, or all), unless it is another battle or it got shorter.
+function pkRenderLog(v, s, count) {
   const el = v.el, lines = s.log || [];
   if (v.log._battle !== s.battle || lines.length < (v.log._count || 0)) {
     v.log.textContent = "";
@@ -1860,9 +1919,10 @@ function pkRenderLog(v, s) {
     v.log._count = 0;
     v.stick = true;
   }
-  if (lines.length === v.log._count) return;
+  const end = Math.min(lines.length, count === undefined ? lines.length : count);
+  if (end <= v.log._count) return;
   const stick = v.stick;
-  for (let i = v.log._count; i < lines.length; i++) {
+  for (let i = v.log._count; i < end; i++) {
     const l = lines[i];
     const div = el("div", l.k);
     if (l.k === "chat") {
@@ -1874,8 +1934,104 @@ function pkRenderLog(v, s) {
     }
     v.log.append(div);
   }
-  v.log._count = lines.length;
+  v.log._count = end;
   if (stick) v.log.scrollTop = v.log.scrollHeight;
+}
+
+// Playing a turn: its lines one after the other, each with what it did on the field (the "e" of the line: who moved,
+// was hit, healed, fainted, came in), from the Pokémon as they were shown before. The state is already how it is after
+// the turn; it is shown once the lines are all played, or skipped.
+const pkLineDelays = { turn: 350, move: 950, text: 750, minor: 600 };
+function pkView() {
+  const doc = pkDoc();
+  const root = doc ? doc.getElementById("pk") : pkFloat.classList.contains("open") ? document.getElementById("pk-body") : null;
+  return root && root._pk;
+}
+function pkPositions(s) {
+  const near = s.you === "p2" ? "p2" : "p1";
+  return { [near]: "near", [near === "p1" ? "p2" : "p1"]: "far" };
+}
+// Whether the new lines are worth playing: something happened on the field, and not too much (catching up).
+function pkPlayable(v, s) {
+  const lines = s.log || [];
+  const from = v.log._count || 0;
+  if (!from || v.log._battle !== s.battle || lines.length <= from || lines.length - from > 150) return false;
+  return lines.slice(from).some(l => l.e);
+}
+function pkPlay(v) {
+  v.play = { shown: { near: v.near.shown, far: v.far.shown }, timer: 0 };
+  pkStep(v);
+}
+function pkStop(v) {
+  if (!v.play) return;
+  clearTimeout(v.play.timer);
+  v.play = null;
+}
+function pkStep(v) {
+  const s = pkState;
+  if (!v.play) return;
+  if (!s || pkView() !== v || v.log._battle !== s.battle) { pkStop(v); return; }
+  const lines = s.log || [];
+  const at = v.log._count || 0;
+  if (at >= lines.length) { pkStop(v); renderPokemon(); return; }
+  const l = lines[at];
+  pkRenderLog(v, s, at + 1);
+  const positions = pkPositions(s);
+  const fx = [];
+  for (const e of l.e || []) {
+    const pos = positions[e.s];
+    if (!pos) continue;
+    if (e.mon) {
+      const before = v.play.shown[pos];
+      if (e.fx === "switch" || e.fx === "form" || !before || before.name !== e.mon.name) {
+        // What the state knows of it (its types, boosts...), with how it was then.
+        const side = (s.sides || []).find(x => x.id === e.s) || { team: [] };
+        const known = (side.team || []).find(m => m.name === e.mon.name) || {};
+        v.play.shown[pos] = { ...known, ...e.mon };
+      } else {
+        v.play.shown[pos] = { ...before, ...e.mon };
+      }
+    }
+    if (e.fx === "move") fx.push([pos, "fx-lunge-" + pos]);
+    else if (e.fx === "hit" || e.fx === "damage") fx.push([pos, "fx-hit"]);
+    else if (e.fx === "heal" || e.fx === "form") fx.push([pos, "fx-heal"]);
+  }
+  pkRenderField(v, s);
+  for (const [pos, cls] of fx) pkFx(v[pos], cls);
+  const delay = l.e || l.k === "move" || l.k === "turn" ? pkLineDelays[l.k] || 600 : l.k === "text" || l.k === "minor" ? 450 : 0;
+  v.play.timer = setTimeout(() => pkStep(v), delay);
+}
+function pkSkip(v) {
+  pkStop(v);
+  if (pkState) pkRenderLog(v, pkState);
+  renderPokemon();
+}
+
+// The field: both sides (as shown while a turn is played), the weather, and what is over it.
+function pkRenderField(v, s) {
+  const player = !s.watching && (s.you === "p1" || s.you === "p2");
+  const sides = s.sides || [];
+  // Our side near, at the bottom; for a spectator, p1.
+  const nearIndex = s.you === "p2" ? 1 : 0;
+  const colors = s.colors || {};
+  for (const [pos, i] of [["near", nearIndex], ["far", 1 - nearIndex]]) {
+    const side = sides[i] || { id: "p" + (i + 1), team: [], active: -1, conditions: [], teamSize: 6 };
+    pkRenderSide(v, pos, side, colors[side.id || "p" + (i + 1)], player && i === nearIndex, s.gen,
+                 v.play ? v.play.shown[pos] || null : undefined);
+  }
+  const f = s.field || {};
+  const weather = (f.weather || "").toLowerCase();
+  v.field.className = "field" + (/rain/.test(weather) ? " rain" : /sand/.test(weather) ? " sand" : /sun/.test(weather) ? " sun"
+    : /snow|hail/.test(weather) ? " snow" : "");
+  pkPart(v, v.weather, JSON.stringify(f), node => {
+    for (const x of [f.weather, f.terrain, ...(f.other || [])]) if (x) node.append(v.el("span", "", x));
+  });
+  // The result once it is played.
+  const phase = v.play ? "" : s.phase;
+  pkPart(v, v.overlay, JSON.stringify([phase, s.setup, s.result]), node => {
+    if (phase === "setup") node.append(v.el("div", "", s.setup || "Getting ready…"));
+    else if (phase === "over" && s.result) node.append(v.el("div", "result", s.result));
+  });
 }
 
 function renderPokemon() {
@@ -1892,27 +2048,15 @@ function renderPokemon() {
   v.title.textContent = title;
   v.turn.textContent = s.phase === "battle" && s.turn ? "Turn " + s.turn : s.watching ? "watching" : "";
 
-  // Our side near, at the bottom; for a spectator, p1.
-  const sides = s.sides || [];
-  const nearIndex = s.you === "p2" ? 1 : 0;
-  const colors = s.colors || {};
-  for (const [pos, i] of [["near", nearIndex], ["far", 1 - nearIndex]]) {
-    const side = sides[i] || { id: "p" + (i + 1), team: [], active: -1, conditions: [], teamSize: 6 };
-    pkRenderSide(v, pos, side, colors[side.id || "p" + (i + 1)], player && i === nearIndex, s.gen);
+  // New lines with something happening on the field: played one after the other; the play picks up the lines that
+  // come meanwhile.
+  if (v.play && v.log._battle !== s.battle) pkStop(v);
+  if (!v.play && pkPlayable(v, s)) pkPlay(v);
+  if (!v.play) {
+    pkRenderField(v, s);
+    pkRenderLog(v, s);
   }
-  const f = s.field || {};
-  const weather = (f.weather || "").toLowerCase();
-  v.field.className = "field" + (/rain/.test(weather) ? " rain" : /sand/.test(weather) ? " sand" : /sun/.test(weather) ? " sun"
-    : /snow|hail/.test(weather) ? " snow" : "");
-  pkPart(v, v.weather, JSON.stringify(f), node => {
-    for (const x of [f.weather, f.terrain, ...(f.other || [])]) if (x) node.append(v.el("span", "", x));
-  });
-  pkPart(v, v.overlay, JSON.stringify([s.phase, s.setup, s.result]), node => {
-    if (s.phase === "setup") node.append(v.el("div", "", s.setup || "Getting ready…"));
-    else if (s.phase === "over" && s.result) node.append(v.el("div", "result", s.result));
-  });
   pkRenderControls(v, s, player);
-  pkRenderLog(v, s);
 }
 function pokemonGame(state) {
   const fresh = !pkState || pkState.battle !== state.battle;

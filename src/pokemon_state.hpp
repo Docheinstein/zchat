@@ -30,6 +30,9 @@ struct LogLine {
     std::string name;
     // "#rrggbb"
     std::string color;
+    // What happened on the field with the line, for the battle window to play it: JSON objects separated by commas
+    // (see Battle::json()), or empty.
+    std::string events;
 };
 
 class Battle {
@@ -131,7 +134,14 @@ public:
     //                      "status": "", "fainted": bool, "active": bool}...]   (the whole team, by slot)}
     //   "error": the last choice refused, while its request is waiting again; else ""
     //   "log": [{"k": "turn" | "move" | "text" | "minor" | "chat" | "notice" | "error" | "result",
-    //            "t": text, "n": name, "c": color}...]   (n and c only for chat)
+    //            "t": text, "n": name, "c": color,   (n and c only for chat)
+    //            "e": [event...]}...]   (only on the lines since the turn before the last, and only when some)
+    //       event: what the line did to the active Pokémon of a side, as it was then (the state is how it is now):
+    //              {"s": "p1" | "p2", "fx": "move" | "hit" (a move's damage) | "damage" | "heal" | "faint" |
+    //               "status" | "switch" | "form",
+    //               "mon": {"name", "species", "level", "gender", "shiny", "hp", "maxhp", "exact", "status", "tera"}
+    //                      (switch and form), or {"name", "hp", "maxhp"} (damage, heal), {"name", "hp", "status"}
+    //                      (faint), {"name", "status"} (status); none for a move}
     std::string json(std::string_view extra) const;
 
 private:
@@ -225,6 +235,8 @@ private:
     void say(const Line& line, std::string_view text);
     // Updates the state for the line.
     void apply(const Line& line);
+    // What the line did on the field (see "e" in json()), from the state after it changed it; empty when nothing.
+    std::string event(const Line& line) const;
 
     // The side of an ident ("p1a: Volbeat" is side 0), or -1 when it is not one.
     static int side_index(std::string_view ident);
