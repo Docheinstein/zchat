@@ -18,7 +18,9 @@
 // What zchat cannot know without the Pokédex (the battle's generation's) is added to the messages: each move of a
 // request gets its type, category, base power, accuracy and short description, and so do its Z-Moves and Max Moves;
 // each Pokémon of a request gets its types, and the request its rqid; and after every line showing a Pokémon
-// (switching in, changing forme) comes "|zchat-types|POKEMON|TYPE1/TYPE2".
+// (switching in, changing forme) comes "|zchat-types|POKEMON|TYPE1/TYPE2", and before every move used,
+// "|zchat-move|TYPE|CATEGORY|TARGET|contact" (TARGET as the Pokédex has it: "normal", "self", "foeSide"...; "contact"
+// only for one that makes contact), for the battle window to play it.
 
 "use strict";
 
@@ -89,8 +91,14 @@ function enrich(chunk, tag) {
                 continue;
             } catch {}
         }
-        lines.push(line);
         const parts = line.split("|");
+        if (parts[1] === "move" && parts[3]) {
+            const move = Dex.moves.get(parts[3]);
+            if (move.exists) {
+                lines.push(`|zchat-move|${move.type}|${move.category}|${move.target}|${move.flags.contact ? "contact" : ""}`);
+            }
+        }
+        lines.push(line);
         if (["switch", "drag", "replace", "detailschange", "-formechange"].includes(parts[1]) && parts[3]) {
             lines.push(`|zchat-types|${parts[2]}|${typesOf(parts[3])}`);
         }

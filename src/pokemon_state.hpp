@@ -141,7 +141,10 @@ public:
     //               "status" | "switch" | "form",
     //               "mon": {"name", "species", "level", "gender", "shiny", "hp", "maxhp", "exact", "status", "tera"}
     //                      (switch and form), or {"name", "hp", "maxhp"} (damage, heal), {"name", "hp", "status"}
-    //                      (faint), {"name", "status"} (status); none for a move}
+    //                      (faint), {"name", "status"} (status); none for a move,
+    //               and for a move: "move": its name, "target": "p1" | "p2" | "", "miss": bool, "still": bool (no
+    //               animation), and what the Pokédex says of it: "type", "category" ("Physical" | "Special" |
+    //               "Status"), "range" (Showdown's target: "normal", "self", "foeSide"...), "contact": bool}
     std::string json(std::string_view extra) const;
 
 private:
@@ -267,6 +270,14 @@ private:
     std::string terrain_;
     std::vector<std::string> field_other_;
     std::vector<LogLine> log_;
+    // What the Pokédex says of the move on the next line (from the |zchat-move| line before it).
+    struct MoveInfo {
+        std::string type;
+        std::string category; // "Physical", "Special" or "Status"
+        std::string range;    // Showdown's target: "normal", "self", "allySide", "foeSide", "all"...
+        bool contact = false;
+    };
+    std::optional<MoveInfo> next_move_;
     // The request waiting, whether it was answered, and the count of requests, for an rqid when they have none.
     std::optional<Request> request_;
     bool answered_ = true;

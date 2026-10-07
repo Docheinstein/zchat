@@ -795,6 +795,40 @@ TEST(pokemon_log_events) {
     }));
 }
 
+TEST(pokemon_move_events) {
+    // The bridge's |zchat-move| line says what the move on the next line is, for the window to play it.
+    Battle b("p1");
+    b.feed("|turn|1\n|switch|p1a: Volbeat|Volbeat, L80, M|263/263\n|switch|p2a: Gholdengo|Gholdengo, L77|100/100");
+    b.feed("|zchat-move|Steel|Special|allAdjacentFoes|\n|move|p2a: Gholdengo|Make It Rain|p1a: Volbeat\n"
+           "|-damage|p1a: Volbeat|150/263\n"
+           "|zchat-move|Normal|Physical|normal|contact\n|move|p1a: Volbeat|Tackle|p2a: Gholdengo|[miss]\n"
+           "|move|p1a: Volbeat|Splash|p1a: Volbeat\n|turn|2");
+    const auto state = parsed(b);
+    std::vector<const zchat::json::Value*> moves;
+    for (const auto& line : state["log"].items) {
+        CHECK(line["t"].str().find("zchat") == std::string_view::npos);
+        for (const auto& e : line["e"].items) {
+            if (e["fx"].str() == "move") {
+                moves.push_back(&e);
+            }
+        }
+    }
+    REQUIRE(moves.size() == 3u);
+    CHECK_EQ((*moves[0])["move"].str(), std::string_view("Make It Rain"));
+    CHECK_EQ((*moves[0])["target"].str(), std::string_view("p1"));
+    CHECK_EQ((*moves[0])["type"].str(), std::string_view("Steel"));
+    CHECK_EQ((*moves[0])["category"].str(), std::string_view("Special"));
+    CHECK_EQ((*moves[0])["range"].str(), std::string_view("allAdjacentFoes"));
+    CHECK(!(*moves[0])["contact"].boolean);
+    CHECK(!(*moves[0])["miss"].boolean);
+    CHECK_EQ((*moves[1])["category"].str(), std::string_view("Physical"));
+    CHECK((*moves[1])["contact"].boolean);
+    CHECK((*moves[1])["miss"].boolean);
+    // Without a |zchat-move| line before it, nothing of the Pokédex.
+    CHECK_EQ((*moves[2])["target"].str(), std::string_view("p1"));
+    CHECK(!(*moves[2])["type"].is_string());
+}
+
 TEST(pokemon_illusion) {
     Battle b("p1");
     b.feed("|player|p1|Ash||\n|player|p2|Gary||\n|switch|p2a: Lugia|Lugia, L75|100/100\n"
