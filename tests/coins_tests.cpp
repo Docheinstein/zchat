@@ -66,3 +66,26 @@ TEST(coins_encode_decode) {
     CHECK(!decode(" 12").has_value());
     CHECK(!decode("99999999999").has_value());
 }
+
+TEST(coins_seal_unseal) {
+    constexpr std::uint64_t me = 0x1234abcd;
+    constexpr std::uint64_t you = 0x5678ef01;
+    for (const long long coins : {0LL, 1LL, 56LL, 1234LL, most}) {
+        CHECK_EQ(unseal(seal(coins, me), me).value_or(-1), coins);
+    }
+    CHECK_EQ(unseal(seal(most + 1, me), me).value_or(-1), most);
+    const std::string sealed = seal(56, me);
+    CHECK_EQ(sealed.size(), std::size_t {34});
+    CHECK(!decode(sealed).has_value());
+    // Somebody else's cannot be copied over ours.
+    CHECK(!unseal(sealed, you).has_value());
+    // Any digit changed by hand is found out.
+    for (std::size_t i = 2; i < sealed.size(); ++i) {
+        std::string changed = sealed;
+        changed[i] = changed[i] == '0' ? '1' : '0';
+        CHECK(!unseal(changed, me).has_value());
+    }
+    CHECK(!unseal("56", me).has_value());
+    CHECK(!unseal("", me).has_value());
+    CHECK(!unseal(sealed.substr(0, 33), me).has_value());
+}
