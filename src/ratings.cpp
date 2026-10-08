@@ -14,8 +14,9 @@
 // The coins won in the rounds (see coins.hpp) are kept the same way: ours in the config ("wallet"), the others' in
 // the "coins" file of the config folder, as they tell them, both sealed (see coins::seal()) so they are not numbers
 // to edit by hand:
-//   elo coins <user> <coins>         our coins (see coins::encode()), with our user id
-// along with our ratings. They are spent on the annoying commands, like /trill and /kick (see spend()).
+//   elo wallet <user> <coins>        our coins (see coins::encode()), with our user id
+// along with our ratings. Versions before sent "elo coins", and kept plain numbers that were easy to change: when
+// coins were sealed, everybody went back to coins::initial, so what they tell, and kept, is ignored. They are spent on the annoying commands, like /trill and /kick (see spend()).
 
 #include "coins.hpp"
 #include "config.hpp"
@@ -122,7 +123,7 @@ namespace {
 
         void receive(std::uint64_t sender, std::string_view name, std::string_view text) override {
             const std::string_view kind = next_field(text);
-            if (kind == "coins") {
+            if (kind == "wallet") {
                 receive_coins(sender, name, text);
                 return;
             }
@@ -460,7 +461,7 @@ namespace {
             show_coins();
         }
 
-        // Ours in the config, sealed. Versions before kept them as a plain number, in "coins".
+        // Ours in the config, sealed. Versions before kept them as a plain number, in "coins" (see load()).
         void save_coins() {
             config::set("wallet", coins::seal(coins_, chat_.user()));
             config::remove("coins");
@@ -620,7 +621,7 @@ namespace {
             reply_at_.reset();
             if (chat_.user() != 0) {
                 chat_.send_game(std::format("{} ratings {:x} {}", game_name, chat_.user(), elo::encode(own_)));
-                chat_.send_game(std::format("{} coins {:x} {}", game_name, chat_.user(), coins::encode(coins_)));
+                chat_.send_game(std::format("{} wallet {:x} {}", game_name, chat_.user(), coins::encode(coins_)));
             }
         }
 
@@ -646,9 +647,12 @@ namespace {
                     chat_.notice(std::format("🚨 Your coins were tampered with: back to {}.",
                                              plural(coins_, "coin")));
                 }
-            } else if (const auto legacy = config::get("coins")) {
-                coins_ = coins::decode(*legacy).value_or(coins::initial);
+            } else if (config::get("coins")) {
+                // Kept as a plain number by versions before, and changed by hand by some: everybody starts again.
+                coins_ = coins::initial;
                 save_coins();
+                chat_.notice(std::format("💰 Coins are now sealed, and everybody starts again from {}.",
+                                         plural(coins_, "coin")));
             }
             const auto path = others_file("ratings");
             if (path.empty()) {
@@ -677,14 +681,8 @@ namespace {
                 const auto user = parse_hex(next_field(rest, '\t'));
                 const auto sender = parse_hex(next_field(rest, '\t'));
                 const std::string_view name = next_field(rest, '\t');
-                std::optional<long long> amount;
-                if (user) {
-                    // Older versions kept them as plain numbers: only what they told, which they tell again.
-                    amount = coins::unseal(rest, *user);
-                    if (!amount) {
-                        amount = coins::decode(rest);
-                    }
-                }
+                // Plain numbers, kept by versions before, are what they had before everybody started again.
+                const auto amount = user ? coins::unseal(rest, *user) : std::nullopt;
                 if (user && sender && !name.empty() && amount && *user != chat_.user()) {
                     Person& p = people_[*user];
                     if (p.name.empty()) {
