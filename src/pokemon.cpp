@@ -47,10 +47,12 @@
 #include "pokemon_engine.hpp"
 #include "pokemon_link.hpp"
 #include "pokemon_state.hpp"
+#include "popup.hpp"
 #include "text.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <deque>
@@ -61,6 +63,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <thread>
 #include <vector>
 
 namespace zchat::game {
@@ -361,6 +364,7 @@ namespace {
 
         void tick() override {
             const auto now = clock::now();
+            answer_asked();
             std::erase_if(challenges_, [&](const Challenge& c) {
                 if (now - c.at < challenge_time) {
                     return false;
@@ -568,6 +572,43 @@ namespace {
                                           "/game pokemon decline",
                                           colored, format_name(gen)));
             terminal_.bell();
+            ask(battle, name, gen);
+        }
+
+        // Asks about a challenge to us in a popup above every window, not to be missed, until it is answered there,
+        // or here (the chat, the window's card), or it is over (see answer_asked()).
+        void ask(std::uint64_t battle, std::string_view name, int gen) {
+            if (!popup::available()) {
+                return;
+            }
+            auto answer = std::make_shared<std::atomic<popup::Answer>>(popup::Answer::None);
+            const std::string question = std::format("{} challenges you to a Pokémon battle! ({})",
+                                                     text::sanitize(name, 48), format_name(gen));
+            asking_[battle] = {answer, std::jthread([answer, question](std::stop_token stop) {
+                                   answer->store(popup::ask(question, "Accept", "Decline", challenge_time, stop));
+                               })};
+        }
+
+        // Does what was answered in the popups, and closes those of the challenges no longer waiting for an answer.
+        void answer_asked() {
+            for (auto it = asking_.begin(); it != asking_.end();) {
+                const popup::Answer answer = it->second.answer->load();
+                const auto c = std::ranges::find_if(challenges_, [&](const Challenge& x) {
+                    return x.battle == it->first && !x.ours && !x.accepted;
+                });
+                const bool waiting = c != challenges_.end();
+                // Erased first: answering may change the challenges.
+                if (answer != popup::Answer::None || !waiting) {
+                    it = asking_.erase(it);
+                } else {
+                    ++it;
+                }
+                if (waiting && answer == popup::Answer::Yes) {
+                    accept_challenge(*c);
+                } else if (waiting && answer == popup::Answer::No) {
+                    decline_challenge(*c);
+                }
+            }
         }
 
         // The challenges to us waiting for an answer, for the window to show them with buttons to accept or decline
@@ -616,6 +657,11 @@ namespace {
                                       : std::format("{} did not challenge you (lately).", text::sanitize(who, 48)));
                 return;
             }
+            accept_challenge(*c);
+        }
+
+        void accept_challenge(Challenge& challenge) {
+            Challenge* c = &challenge;
             if (own_battle()) {
                 chat_.game_notice("Finish your battle first (or /game pokemon forfeit).");
                 return;
@@ -643,6 +689,11 @@ namespace {
                 chat_.game_notice("Nobody challenged you (lately).");
                 return;
             }
+            decline_challenge(*c);
+        }
+
+        void decline_challenge(Challenge& challenge) {
+            const Challenge* c = &challenge;
             send(std::format("decline {:x}", c->battle));
             chat_.game_notice(std::format("You decline {}'s challenge.", c->colored_name));
             std::erase_if(challenges_, [&](const Challenge& x) {
@@ -1661,6 +1712,13 @@ namespace {
         std::vector<Challenge> challenges_;
         // The challenges last shown in the window, see show_challenges().
         std::string shown_challenges_;
+        // The challenges to us asked in a popup of their own (see ask()), by battle: what was answered there, set by
+        // the popup's thread, for tick() to do it. Erasing one closes its popup.
+        struct Asking {
+            std::shared_ptr<std::atomic<popup::Answer>> answer;
+            std::jthread thread;
+        };
+        std::map<std::uint64_t, Asking> asking_;
         std::map<std::uint64_t, Battle> battles_;
     };
 

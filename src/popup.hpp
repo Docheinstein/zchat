@@ -9,7 +9,7 @@
 
 namespace zchat::popup {
 
-// Windows of their own for trills (see /trill), above all the others on the screen. On Windows they are made on the
+// Windows of their own for trills (see /trill) and Pokémon challenges, above all the others on the screen. On Windows they are made on the
 // thread that asks, which waits for them; on Linux with GTK 3, on the thread of the zchat window (see
 // set_dispatcher()), so only while it is open. Elsewhere there are none (see available()), and zchat does without.
 
@@ -22,6 +22,15 @@ void set_dispatcher(std::function<void(std::function<void()>)> dispatch);
 // A little window saying text, with a STOP button, running around the screen for wait, or until stop is requested.
 // Returns whether STOP was pressed.
 bool alert(std::string_view text, std::chrono::milliseconds wait, std::stop_token stop);
+
+// What ask() was answered.
+enum class Answer { None, Yes, No };
+
+// A question that cannot be missed, like a challenge: a big window in the middle of the screen, above every window,
+// flashing, with the buttons yes and no, until one is pressed, wait is over (the seconds left are shown), or stop is
+// requested. Clicked without taking the focus from what the user types in. Returns the button pressed, or None.
+Answer ask(std::string_view text, std::string_view yes, std::string_view no, std::chrono::milliseconds wait,
+           std::stop_token stop);
 
 // A picture flying around the screen, big and shaking, above every window, for duration, or until stop is requested.
 // Clicks go through it.
