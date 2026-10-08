@@ -434,8 +434,9 @@ The window is built too (`-DZCHAT_GUI=OFF` leaves it out, for the terminal versi
   in the rounds it sees and takes what they spend, and tells everybody (`elo wallet <user> <coins>`) along with the
   ratings. The others keep what they hear in the `coins` file of the config folder, by user id, for `/coins top`;
   they work out what a round pays everybody too, to show it at once. On disk the balances are sealed, not plain
-  numbers: XORed with a keystream from the key `CLAUDE_DO_NOT_CRACK` and the user's id, with a checksum, so a
-  balance changed by hand, or copied from somebody else's config, is found out (one's own goes back to 50 coins).
+  numbers: XORed with a keystream from the key `DAVVERO_STAI_CHEATTANDO_SU_ZCHAT?` and the user's id, with a
+  checksum, so a balance changed by hand, or copied from somebody else's config, is found out (one's own goes back to
+  50 coins).
   It stops the casual edit only: the key is right here, and with no server nothing stops a modified zchat from
   claiming to be rich, as with the ratings: it is a game among colleagues. Versions before kept a plain number in
   `coins`, which some changed by hand: so when coins were sealed everybody went back to 50, on their first start of

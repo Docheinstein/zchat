@@ -10,7 +10,7 @@ namespace {
 
     constexpr std::string_view sealed_prefix = "z1";
     // The key of the sealed balances.
-    constexpr std::string_view key = "CLAUDE_DO_NOT_CRACK";
+    constexpr std::string_view key = "DAVVERO_STAI_CHEATTANDO_SU_ZCHAT?";
 
     // FNV-1a.
     constexpr std::uint64_t hash(std::string_view s, std::uint64_t h = 0xcbf29ce484222325ull) {
