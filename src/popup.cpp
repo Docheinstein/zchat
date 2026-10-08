@@ -226,6 +226,116 @@ namespace {
         return L"zchat_trill_picture";
     }
 
+    // What a question shows, where its buttons are, and which was pressed, for its window procedure.
+    struct Ask {
+        std::wstring text;
+        std::wstring left;
+        std::wstring yes;
+        std::wstring no;
+        RECT yes_button {};
+        RECT no_button {};
+        HFONT font = nullptr;
+        HFONT small_font = nullptr;
+        HFONT button_font = nullptr;
+        // 0 to 1: how far the background is from its yellow to its orange, as it flashes.
+        double glow = 0;
+        Answer answer = Answer::None;
+    };
+
+    void draw_button(HDC dc, const RECT& r, COLORREF fill, COLORREF edge, const std::wstring& label, HFONT font) {
+        HBRUSH brush = CreateSolidBrush(fill);
+        HPEN pen = CreatePen(PS_SOLID, 2, edge);
+        HGDIOBJ old_brush = SelectObject(dc, brush);
+        HGDIOBJ old_pen = SelectObject(dc, pen);
+        const int round = (r.bottom - r.top) / 3;
+        RoundRect(dc, r.left, r.top, r.right, r.bottom, round, round);
+        SelectObject(dc, old_pen);
+        SelectObject(dc, old_brush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+        HGDIOBJ old_font = SelectObject(dc, font);
+        SetTextColor(dc, RGB(255, 255, 255));
+        RECT text = r;
+        DrawTextW(dc, label.c_str(), -1, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, old_font);
+    }
+
+    LRESULT CALLBACK ask_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+        auto* a = reinterpret_cast<Ask*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        switch (msg) {
+        case WM_MOUSEACTIVATE:
+            return MA_NOACTIVATE;
+        case WM_LBUTTONUP:
+            if (const POINT p {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}; a) {
+                if (PtInRect(&a->yes_button, p)) {
+                    a->answer = Answer::Yes;
+                } else if (PtInRect(&a->no_button, p)) {
+                    a->answer = Answer::No;
+                }
+            }
+            return 0;
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC dc = BeginPaint(hwnd, &ps);
+            RECT r;
+            GetClientRect(hwnd, &r);
+            // Drawn aside, then at once: no flicker as it flashes.
+            HDC memory = CreateCompatibleDC(dc);
+            HBITMAP bitmap = CreateCompatibleBitmap(dc, r.right, r.bottom);
+            HGDIOBJ old_bitmap = SelectObject(memory, bitmap);
+            const double g = a ? a->glow : 0;
+            const auto mix = [g](int from, int to) {
+                return static_cast<BYTE>(std::lround(from + (to - from) * g));
+            };
+            HBRUSH edge = CreateSolidBrush(RGB(220, 38, 38));
+            FillRect(memory, &r, edge);
+            DeleteObject(edge);
+            const int border = std::max(4, static_cast<int>(r.bottom - r.top) / 40);
+            RECT inside {r.left + border, r.top + border, r.right - border, r.bottom - border};
+            HBRUSH back = CreateSolidBrush(RGB(255, mix(243, 190), mix(176, 90)));
+            FillRect(memory, &inside, back);
+            DeleteObject(back);
+            if (a) {
+                SetBkMode(memory, TRANSPARENT);
+                HGDIOBJ old_font = SelectObject(memory, a->font);
+                SetTextColor(memory, RGB(30, 30, 30));
+                RECT text {inside.left + 12, inside.top + 8, inside.right - 12, a->yes_button.top - 24};
+                DrawTextW(memory, a->text.c_str(), -1, &text, DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
+                SelectObject(memory, a->small_font);
+                SetTextColor(memory, RGB(90, 60, 20));
+                RECT left {inside.left, a->yes_button.top - 24, inside.right, a->yes_button.top - 4};
+                DrawTextW(memory, a->left.c_str(), -1, &left, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                SelectObject(memory, old_font);
+                draw_button(memory, a->yes_button, RGB(22, 163, 74), RGB(10, 100, 40), a->yes, a->button_font);
+                draw_button(memory, a->no_button, RGB(220, 38, 38), RGB(150, 20, 20), a->no, a->button_font);
+            }
+            BitBlt(dc, 0, 0, r.right, r.bottom, memory, 0, 0, SRCCOPY);
+            SelectObject(memory, old_bitmap);
+            DeleteObject(bitmap);
+            DeleteDC(memory);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        default:
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        }
+    }
+
+    const wchar_t* ask_class() {
+        static const ATOM atom = [] {
+            WNDCLASSW wc {};
+            wc.lpfnWndProc = ask_proc;
+            wc.hInstance = GetModuleHandleW(nullptr);
+            wc.hCursor = LoadCursor(nullptr, IDC_HAND);
+            wc.lpszClassName = L"zchat_ask";
+            return RegisterClassW(&wc);
+        }();
+        (void)atom;
+        return L"zchat_ask";
+    }
+
     HFONT make_font(double height, int weight) {
         return CreateFontW(-px(height), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
@@ -321,6 +431,67 @@ bool alert(std::string_view text, std::chrono::milliseconds wait, std::stop_toke
     DeleteObject(a.font);
     DeleteObject(a.button_font);
     return pressed;
+}
+
+Answer ask(std::string_view text, std::string_view yes, std::string_view no, std::chrono::milliseconds wait,
+           std::stop_token stop) {
+    const double s = dpi_scale();
+    const RECT area = work_area();
+    const int w = std::min(px(400 * s), static_cast<int>(area.right - area.left));
+    const int h = std::min(px(170 * s), static_cast<int>(area.bottom - area.top));
+    const int x = area.left + (area.right - area.left - w) / 2;
+    const int y = area.top + (area.bottom - area.top - h) / 2;
+    Ask a;
+    a.text = widen(text);
+    a.yes = widen(yes);
+    a.no = widen(no);
+    const int button_w = (w - px(52 * s)) / 2;
+    const int button_top = h - px(58 * s);
+    const int button_bottom = h - px(14 * s);
+    a.yes_button = {px(18 * s), button_top, px(18 * s) + button_w, button_bottom};
+    a.no_button = {w - px(18 * s) - button_w, button_top, w - px(18 * s), button_bottom};
+    a.font = make_font(16 * s, FW_SEMIBOLD);
+    a.small_font = make_font(12 * s, FW_NORMAL);
+    a.button_font = make_font(18 * s, FW_BOLD);
+    // In the taskbar too, flashing there.
+    const HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_APPWINDOW | WS_EX_NOACTIVATE, ask_class(), L"zchat",
+                                      WS_POPUP, x, y, w, h, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Answer answer = Answer::None;
+    if (hwnd) {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&a));
+        const auto start = clock::now();
+        const auto end = start + wait;
+        long long shown = -1;
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        FLASHWINFO flash {sizeof flash, hwnd, FLASHW_TRAY | FLASHW_TIMER, 0, 0};
+        FlashWindowEx(&flash);
+        const double shake = 8 * s;
+        while (a.answer == Answer::None && !stop.stop_requested()) {
+            const auto now = clock::now();
+            if (now >= end) {
+                break;
+            }
+            if (const auto left = std::chrono::ceil<std::chrono::seconds>(end - now).count(); left != shown) {
+                shown = left;
+                a.left = std::format(L"{} seconds left to answer", left);
+            }
+            const double t = seconds(now - start);
+            a.glow = (1 + std::sin(t * 2 * std::numbers::pi * 1.5)) / 2;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            // Shaking the first second, and again every five; always above the others (which may want to be too).
+            const double since = std::fmod(t, 5.0);
+            const double amplitude = since < 1 ? shake * (1 - since) : 0;
+            SetWindowPos(hwnd, HWND_TOPMOST, x + px(random(-amplitude, amplitude)), y + px(random(-amplitude, amplitude)),
+                         0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+            pump(15);
+        }
+        answer = a.answer;
+        DestroyWindow(hwnd);
+    }
+    DeleteObject(a.font);
+    DeleteObject(a.small_font);
+    DeleteObject(a.button_font);
+    return answer;
 }
 
 void fly(const image::DecodedImage& picture, std::chrono::milliseconds duration, std::stop_token stop) {
@@ -454,13 +625,15 @@ namespace {
         std::condition_variable_any cv;
         bool over = false;
         bool pressed = false;
+        Answer answer = Answer::None;
         std::atomic<bool> cancel {false};
 
-        void finish(bool stop_pressed) {
+        void finish(bool stop_pressed, Answer given = Answer::None) {
             {
                 std::scoped_lock lock(mutex);
                 over = true;
                 pressed = stop_pressed;
+                answer = given;
             }
             cv.notify_all();
         }
@@ -475,6 +648,17 @@ namespace {
                 cancel = true;
             }
             return pressed;
+        }
+
+        // The same, for a question: returns its answer.
+        Answer wait_answer(std::stop_token stop) {
+            std::unique_lock lock(mutex);
+            if (!cv.wait(lock, stop, [this] {
+                    return over;
+                })) {
+                cancel = true;
+            }
+            return answer;
         }
     };
 
@@ -544,6 +728,42 @@ namespace {
         a->last = now;
         gtk_window_move(GTK_WINDOW(a->window), static_cast<gint>(std::lround(a->mover.x)),
                         static_cast<gint>(std::lround(a->mover.y)));
+        return G_SOURCE_CONTINUE;
+    }
+
+    struct GtkAsk {
+        std::shared_ptr<Done> done;
+        GtkWidget* window = nullptr;
+        GtkWidget* left = nullptr;
+        gint x = 0;
+        gint y = 0;
+        gint64 start = 0;
+        gint64 end = 0;
+        gint64 shown = -1;
+        Answer answer = Answer::None;
+    };
+
+    gboolean ask_step(gpointer data) {
+        auto* a = static_cast<GtkAsk*>(data);
+        const gint64 now = g_get_monotonic_time();
+        if (a->answer != Answer::None || a->done->cancel || now >= a->end) {
+            gtk_widget_destroy(a->window);
+            a->done->finish(false, a->answer);
+            delete a;
+            return G_SOURCE_REMOVE;
+        }
+        if (const gint64 left = (a->end - now + 999'999) / 1'000'000; left != a->shown) {
+            a->shown = left;
+            gtk_label_set_text(GTK_LABEL(a->left), std::format("{} seconds left to answer", left).c_str());
+            // Above the others again, now and then.
+            gtk_window_set_keep_above(GTK_WINDOW(a->window), TRUE);
+            gtk_window_set_urgency_hint(GTK_WINDOW(a->window), TRUE);
+        }
+        // Shaking the first second, and again every five.
+        const double since = std::fmod(static_cast<double>(now - a->start) / 1e6, 5.0);
+        const double amplitude = since < 1 ? shake_pixels * (1 - since) : 0;
+        gtk_window_move(GTK_WINDOW(a->window), a->x + static_cast<gint>(std::lround(random(-amplitude, amplitude))),
+                        a->y + static_cast<gint>(std::lround(random(-amplitude, amplitude))));
         return G_SOURCE_CONTINUE;
     }
 
@@ -646,6 +866,66 @@ bool alert(std::string_view text, std::chrono::milliseconds wait, std::stop_toke
     return done->wait(stop);
 }
 
+Answer ask(std::string_view text, std::string_view yes, std::string_view no, std::chrono::milliseconds wait,
+           std::stop_token stop) {
+    auto done = std::make_shared<Done>();
+    if (!on_gtk([done, text = std::string(text), yes = std::string(yes), no = std::string(no), wait] {
+            auto* a = new GtkAsk;
+            a->done = done;
+            a->window = popup_window();
+            gtk_window_set_default_size(GTK_WINDOW(a->window), 400, 170);
+            GtkWidget* frame = gtk_event_box_new();
+            GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+            gtk_container_set_border_width(GTK_CONTAINER(box), 14);
+            GtkWidget* label = gtk_label_new(nullptr);
+            gchar* markup = g_markup_printf_escaped("<span size='x-large' weight='bold'>%s</span>", text.c_str());
+            gtk_label_set_markup(GTK_LABEL(label), markup);
+            g_free(markup);
+            gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+            gtk_label_set_justify(GTK_LABEL(label), GTK_JUSTIFY_CENTER);
+            gtk_box_pack_start(GTK_BOX(box), label, TRUE, TRUE, 0);
+            a->left = gtk_label_new("");
+            gtk_box_pack_start(GTK_BOX(box), a->left, FALSE, FALSE, 0);
+            GtkWidget* buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 24);
+            gtk_box_set_homogeneous(GTK_BOX(buttons), TRUE);
+            GtkWidget* yes_button = gtk_button_new_with_label(yes.c_str());
+            GtkWidget* no_button = gtk_button_new_with_label(no.c_str());
+            gtk_widget_set_size_request(yes_button, -1, 42);
+            gtk_box_pack_start(GTK_BOX(buttons), yes_button, TRUE, TRUE, 0);
+            gtk_box_pack_start(GTK_BOX(buttons), no_button, TRUE, TRUE, 0);
+            gtk_box_pack_start(GTK_BOX(box), buttons, FALSE, FALSE, 0);
+            gtk_container_add(GTK_CONTAINER(frame), box);
+            gtk_container_add(GTK_CONTAINER(a->window), frame);
+            GtkCssProvider* css = gtk_css_provider_new();
+            gtk_css_provider_load_from_data(css, "* { background-color: #fff3b0; color: #1e1e1e; }"
+                                                 "window { border: 4px solid #dc2626; }", -1, nullptr);
+            gtk_style_context_add_provider(gtk_widget_get_style_context(a->window), GTK_STYLE_PROVIDER(css),
+                                           GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+            gtk_style_context_add_provider(gtk_widget_get_style_context(frame), GTK_STYLE_PROVIDER(css),
+                                           GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+            g_object_unref(css);
+            g_signal_connect(yes_button, "clicked", G_CALLBACK(+[](GtkButton*, gpointer ask) {
+                                 static_cast<GtkAsk*>(ask)->answer = Answer::Yes;
+                             }),
+                             a);
+            g_signal_connect(no_button, "clicked", G_CALLBACK(+[](GtkButton*, gpointer ask) {
+                                 static_cast<GtkAsk*>(ask)->answer = Answer::No;
+                             }),
+                             a);
+            const GdkRectangle area = work_area();
+            a->x = area.x + std::max(0, (area.width - 400) / 2);
+            a->y = area.y + std::max(0, (area.height - 170) / 2);
+            gtk_window_move(GTK_WINDOW(a->window), a->x, a->y);
+            gtk_widget_show_all(a->window);
+            a->start = g_get_monotonic_time();
+            a->end = a->start + static_cast<gint64>(wait.count()) * 1000;
+            g_timeout_add(16, ask_step, a);
+        })) {
+        return Answer::None;
+    }
+    return done->wait_answer(stop);
+}
+
 void fly(const image::DecodedImage& picture, std::chrono::milliseconds duration, std::stop_token stop) {
     if (!picture.pixels || picture.width <= 0 || picture.height <= 0) {
         return;
@@ -717,6 +997,10 @@ void set_dispatcher(std::function<void(std::function<void()>)>) {
 
 bool alert(std::string_view, std::chrono::milliseconds, std::stop_token) {
     return false;
+}
+
+Answer ask(std::string_view, std::string_view, std::string_view, std::chrono::milliseconds, std::stop_token) {
+    return Answer::None;
 }
 
 void fly(const image::DecodedImage&, std::chrono::milliseconds, std::stop_token) {
