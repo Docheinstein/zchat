@@ -12,6 +12,7 @@ add_executable(zchat_tests
     "${PROJECT_SOURCE_DIR}/src/pokemon_state.cpp"
     "${PROJECT_SOURCE_DIR}/src/process.cpp"
     "${PROJECT_SOURCE_DIR}/src/text.cpp"
+    "${PROJECT_SOURCE_DIR}/src/world_place.cpp"
 )
 find_package(Threads REQUIRED)
 target_link_libraries(zchat_tests PRIVATE Threads::Threads)

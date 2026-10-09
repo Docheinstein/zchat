@@ -40,6 +40,7 @@ Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
     games_.push_back(make_blackjack(chat, terminal, *this));
     games_.push_back(make_roulette(chat, terminal, *this));
     games_.push_back(make_horses(chat, terminal, *this));
+    games_.push_back(make_world(chat, terminal, *this));
     // Kicks cost coins, which the ratings keep (made next).
     games_.push_back(make_kick(chat, terminal, std::move(kicked), [this](std::string_view item) {
         return ratings_->spend(item);
@@ -252,6 +253,29 @@ void Games::casino(std::string_view args) {
     } else if (!game->command(lowercase(rest))) {
         chat_.game_notice(
             std::format("Unknown command {} at {} (try /casino help)", text::sanitize(rest, 32), game->name()));
+    }
+}
+
+void Games::world(std::string_view args) {
+    while (!args.empty() && args.front() == ' ') {
+        args.remove_prefix(1);
+    }
+    // Said without our lock: saying calls the games' hooks, which take the chat's lock of them first, then ours (as
+    // the chat's thread does).
+    if (lowercase(args.substr(0, 4)) == "say ") {
+        if (const auto text = args.find_first_not_of(' ', 4); text != std::string_view::npos) {
+            chat_.say_general(args.substr(text));
+        }
+        return;
+    }
+    std::scoped_lock lock(mutex_);
+    Game* world = std::ranges::find(games_, "world", &Game::name)->get();
+    if (args.empty()) {
+        world->start();
+    } else if (!world->command(args)) {
+        chat_.notice(
+            std::format("Unknown command {} for /world: /world enters the world, /world who tells who is in it.",
+                        text::sanitize(args, 32)));
     }
 }
 

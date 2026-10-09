@@ -148,6 +148,11 @@ public:
     bool stake(long long amount, std::string_view what);
     void cash(long long amount);
 
+    // /world ARGS: without any, the world (its window opens, where there is one; a terminal tells who is in it);
+    // "who" who is in it; and what its window says: "at ..." where we are, "leave", and "say TEXT", said in #general
+    // (see world.cpp).
+    void world(std::string_view args);
+
 private:
     struct Score {
         std::string name;                             // colored, as last seen
@@ -191,6 +196,8 @@ std::unique_ptr<Ratings> make_ratings(Chat& chat, Screen& terminal, std::vector<
 std::unique_ptr<Game> make_blackjack(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_roulette(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_horses(Chat& chat, Screen& terminal, Games& games);
+// Not a game: the world (/world), a room to walk around in with everybody, which travels as Game packets too.
+std::unique_ptr<Game> make_world(Chat& chat, Screen& terminal, Games& games);
 // Not a game: the votes of /kick, which travel as Game packets too; spend pays for one (see Games::spend()).
 std::unique_ptr<Game> make_kick(Chat& chat, Screen& terminal, std::function<void()> kicked,
                                 std::function<bool(std::string_view)> spend);

@@ -63,6 +63,9 @@ public:
     // Sends a chat line to everybody.
     void say(std::string_view text);
 
+    // Says it in #general, whatever channel is shown (as what is said in the world, see world.cpp).
+    void say_general(std::string_view text);
+
     // Sends a picture drawn with characters to everybody: its rows, separated by '\n'.
     void draw(std::string_view art);
 
@@ -93,6 +96,9 @@ public:
 
     // An avatar downloaded (or ours), by hash in hex. Thread-safe.
     std::optional<std::string> avatar(std::string_view hash) const;
+
+    // The hash of the avatar of a peer in the chat (or ours), by sender id, in hex; empty for none. Thread-safe.
+    std::string avatar_of(std::uint64_t id) const;
 
     // Who we are for channels: an id of ours that stays the same (unlike the sender id, which changes with the
     // color), kept in the config; and the file where the channels we know are kept. Before start().
@@ -245,6 +251,8 @@ private:
     };
 
     void run(std::stop_token stop);
+    // Says a (sanitized) line in #general; from the games log, it may be a move of a game, which stays there.
+    void say_in_general(const std::string& clean, bool from_games_log);
     // from is the address the packet came from.
     void handle(const Packet& packet, std::uint32_t from);
     // With once, to each network once, see net::BroadcastSocket::broadcast().
