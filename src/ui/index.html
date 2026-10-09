@@ -174,6 +174,7 @@
   /* The Poké Ball of the Pokémon buttons: there is no emoji for it. */
   svg.pokeball { width: 1em; height: 1em; vertical-align: -.15em; }
   header button#casino-open.live { border-color: #3fb950; color: #3fb950; }
+  header button#wd-open.live { border-color: #3fb950; color: #3fb950; }
   /* The same for the Pokémon battle. */
   #pk-float {
     position: fixed; top: 54px; right: 20px; width: min(1200px, calc(100vw - 40px)); z-index: 18; display: none;
@@ -221,6 +222,23 @@
   }
   #fr-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
   #fr-float:focus-within { border-color: var(--accent); }
+  /* And for the world, whose room fills the window: as tall as it can be. */
+  #wd-float {
+    position: fixed; top: 54px; right: 20px; width: min(1000px, calc(100vw - 40px)); height: min(740px, calc(100vh - 74px));
+    z-index: 18; display: none; flex-direction: column; background: #14161b; border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: 0 10px 34px #000b; overflow: hidden;
+  }
+  #wd-float.open { display: flex; }
+  #wd-float-title {
+    display: flex; align-items: center; padding: 6px 10px; background: var(--panel); cursor: move; color: var(--muted);
+    font-size: 12px; user-select: none;
+  }
+  #wd-float-title button { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  #wd-float:focus-within { border-color: var(--accent); }
+  #wd-body { flex: 1; min-height: 0; }
+  /* The avatars the world draws: there, for GIFs to play, but out of sight. */
+  #wd-images { position: fixed; left: -200px; top: 0; width: 64px; height: 64px; overflow: hidden; pointer-events: none; }
+  #wd-images img { width: 64px; height: 64px; }
   #new-channel { display: none; margin: 4px 14px 8px; }
   #new-channel.open { display: block; }
   #new-channel input, #new-channel select {
@@ -422,6 +440,7 @@
 <style id="bm-style"></style>
 <style id="am-style"></style>
 <style id="fr-style"></style>
+<style id="wd-style"></style>
 </head>
 <body>
 <header>
@@ -433,6 +452,7 @@
     <button id="channel-delete" class="danger" title="Delete this channel, for everybody" hidden>Delete</button>
   </span>
   <span class="spacer"></span>
+  <button id="wd-open" title="Enter the world: a room to walk around in with everybody, where what you say shows over your head">🌍 Enter World</button>
   <button id="candor-open" title="Radical Candor: an idle game, ZURU style">🗣️ Candor</button>
   <button id="casino-open" title="The casino: blackjack, roulette and the horse race, for coins">🎰 Casino</button>
   <button id="pk-challenge-open" title="Challenge someone to a Pokémon battle"><svg class="pokeball" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8a7 7 0 0 1 14 0z" fill="#e5534b"/><path d="M1 8a7 7 0 0 0 14 0z" fill="#f4f4f4"/><circle cx="8" cy="8" r="7" fill="none" stroke="#15161a" stroke-width="1.2"/><path d="M1 8h14" stroke="#15161a" stroke-width="1.4"/><circle cx="8" cy="8" r="2.3" fill="#f4f4f4" stroke="#15161a" stroke-width="1.2"/></svg> Pokémon</button>
@@ -519,6 +539,9 @@
   <div class="am" id="am-body"></div></div>
 <div id="fr-float" tabindex="-1"><div id="fr-float-title">zchat · frag<button id="fr-float-close" title="Close">×</button></div>
   <div class="fr" id="fr-body"></div></div>
+<div id="wd-float" tabindex="-1"><div id="wd-float-title">zchat · world<button id="wd-float-close" title="Leave the world">×</button></div>
+  <div class="wd" id="wd-body"></div></div>
+<div id="wd-images" aria-hidden="true"></div>
 <div id="time-tip"></div>
 <div id="drop">Drop a picture or a file to send it</div>
 <div id="viewer"><img alt="picture"></div>
@@ -5577,6 +5600,858 @@ window.addEventListener("beforeunload", () => { if (candor.running) candorSave()
   document.addEventListener("mouseup", () => { dragging = false; });
 })();
 
+// --- The world (zchat.game("world", state)): a room everybody in the chat can walk around in together, like Habbo
+// Hotel, seen from above, in a window of its own: a real window when the web view allows one, or else one floating over
+// the chat. Each one is a crewmate of their name's color, with their avatar on the visor. WASD or the arrows walk, and
+// so does a click on the floor; Enter, a message and Enter again say it in #general, and it shows over our head for a
+// while, as what the others say does over theirs; a command typed there goes to the chat as typed (its answer is
+// there), over nobody's head. The squares on the floor do what the buttons at the top do (the casino, a Pokémon
+// challenge, the games): stand on one and press E or Space, or click it.
+// We walk here, right away, and tell zchat where we are as /world at ROOM X Y LEFT WALKING (in hundredths of a tile, see
+// world.cpp) at most 12 times a second, and /world leave once the window is closed. The state has everybody in our
+// room ({open, in, room, count, players: [{id, name, color, avatar, you, x, y, left, walking, say, said, ago}]}; open
+// asks for the window to open), and the others glide to where it puts them.
+const wdRooms = {
+  // # a wall, d the door in it, . the floor, r the rug, p a plant, s the sofa.
+  lobby: {
+    title: "Lobby",
+    map: [
+      "####################",
+      "#p................p#",
+      "#..................#",
+      "#..................#",
+      "#..................#",
+      "#.......rrrr......s#",
+      "d.......rrrr......s#",
+      "#.......rrrr......s#",
+      "#..................#",
+      "#..................#",
+      "#..................#",
+      "#p................p#",
+      "####################",
+    ],
+    // The squares, of 2 by 2 tiles from their top left corner.
+    pads: [
+      { x: 3, y: 2, kind: "casino" }, { x: 9, y: 2, kind: "pokemon" }, { x: 15, y: 2, kind: "candor" },
+      { x: 3, y: 9, kind: "bomber" }, { x: 9, y: 9, kind: "arena" }, { x: 15, y: 9, kind: "frag" },
+    ],
+    // Where we come in: by the door.
+    spawn: [1.7, 6.5],
+  },
+};
+// What each kind of square does: what the button of the main window with that id does; a Pokémon challenge is picked
+// in the world's window itself.
+const wdPadKinds = {
+  casino: { label: "Casino", icon: "🎰", color: "#f2c94c", button: "casino-open", action: "Open the casino" },
+  pokemon: { label: "Pokémon", icon: "◓", color: "#e5534b", action: "Challenge someone to a Pokémon battle" },
+  candor: { label: "Candor", icon: "🗣️", color: "#b07cff", button: "candor-open", action: "Play Radical Candor" },
+  bomber: { label: "Bomber", icon: "💣", color: "#ff8c42", button: "bm-open", action: "Play Bomber" },
+  arena: { label: "Arena", icon: "🎯", color: "#3fb950", button: "am-open", action: "Play Arena" },
+  frag: { label: "Frag", icon: "🔫", color: "#4d8dff", button: "fr-open", action: "Play Frag" },
+};
+// Tiles a second; how far our feet reach from where we are, against the walls; how big a crewmate is, in tiles.
+const wdSpeed = 4, wdFeet = 0.3, wdSize = 1.2;
+const wdStyle = `
+  .wd { display: flex; flex-direction: column; height: 100%; outline: none; background: #14161b; color: #d6d9df;
+    font: 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wd .bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #181b21;
+    border-bottom: 1px solid #262a33; }
+  .wd .bar .title { font-size: 16px; font-weight: 700; white-space: nowrap; }
+  .wd .bar .room { color: #7d8491; white-space: nowrap; }
+  .wd .bar .here { color: #3fb950; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: default; }
+  .wd .bar .keys { margin-left: auto; color: #7d8491; font-size: 12px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; min-width: 0; }
+  .wd kbd { background: #262a33; border-radius: 4px; padding: 1px 5px; font: inherit; color: #d6d9df; }
+  .wd .bar .close { background: none; border: 0; color: #7d8491; font-size: 20px; line-height: 1; cursor: pointer;
+    padding: 0 2px; }
+  .wd .bar .close:hover { color: #d6d9df; }
+  .wd .stage { flex: 1; min-height: 0; position: relative; display: grid; place-items: center; overflow: hidden; }
+  .wd canvas { display: block; border-radius: 8px; box-shadow: 0 6px 24px #000a; }
+  .wd .prompt { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); background: #111317e8;
+    border: 1px solid #262a33; border-radius: 18px; padding: 6px 14px; font-size: 14px; font-weight: 600;
+    white-space: nowrap; pointer-events: none; }
+  .wd .prompt[hidden], .wd .picker[hidden] { display: none; }
+  .wd .talk { padding: 8px 12px 12px; }
+  .wd .talk input { width: 100%; height: 36px; border-radius: 8px; border: 1px solid #262a33; background: #1e222a;
+    color: #d6d9df; padding: 0 12px; font: inherit; font-size: 14px; outline: none; }
+  .wd .talk input:focus { border-color: #6ea8ff; }
+  .wd .picker { position: absolute; inset: 0; display: grid; place-items: center; background: #0009; }
+  .wd .picker .box { width: 340px; max-width: calc(100% - 24px); max-height: calc(100% - 24px); overflow-y: auto;
+    background: #181b21; border: 1px solid #262a33; border-radius: 10px; padding: 14px; box-shadow: 0 8px 28px #000a;
+    display: flex; flex-direction: column; gap: 8px; }
+  .wd .picker .head { font-weight: 600; font-size: 14px; }
+  .wd .picker .note { color: #7d8491; font-size: 12px; }
+  .wd .picker .who { display: flex; flex-direction: column; gap: 4px; }
+  .wd .picker select, .wd .picker button { height: 32px; border-radius: 6px; border: 1px solid #262a33;
+    background: #1e222a; color: #d6d9df; font: inherit; padding: 0 10px; cursor: pointer; }
+  .wd .picker .who button { text-align: left; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wd .picker button:hover, .wd .picker select:hover { border-color: #6ea8ff; }
+`;
+document.getElementById("wd-style").textContent = wdStyle;
+const wdFloat = document.getElementById("wd-float");
+const wdOpenButton = document.getElementById("wd-open");
+let wdState = null, wdPopup = null, wdLoopToken = 0, wdLooping = false, wdLoopView = null, wdLast = 0;
+// Us: in the world or not, in which room, where (in tiles), which way we face, whether we walk, and what we said last.
+// Our name, color and avatar come in the state (wdSelf).
+const wdMe = { in: false, room: "lobby", x: 0, y: 0, left: false, walking: false, said: 0, say: "", sayAt: 0 };
+let wdSelf = null;
+// Where a click sends us (and the square to use there), the keys held, and what zchat was last told.
+let wdTarget = null, wdHeld = [], wdSent = "", wdSentAt = 0, wdSendTimer = 0;
+// The others in our room, by id: where they are drawn, where they go, and what they said last.
+const wdPeople = new Map();
+// The square we stand on, as the prompt shows it (undefined: not shown yet).
+let wdOn;
+function wdDoc() {
+  return wdPopup && !wdPopup.closed ? wdPopup.document : null;
+}
+function wdRoot() {
+  return wdDoc() ? wdDoc().getElementById("wd") : wdFloat.classList.contains("open") ? document.getElementById("wd-body") : null;
+}
+function wdRoom() {
+  return wdRooms[wdMe.room] || wdRooms.lobby;
+}
+function openWorld() {
+  if (!wdRoot()) {
+    let w = null;
+    try { w = window.open("", "zchat-world", "popup,width=1000,height=760"); } catch {}
+    if (w && w.document) {
+      w.document.open();
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>zchat · world</title><style>:root { color-scheme: dark; } * { box-sizing: border-box; } html, body { height: 100%; margin: 0; background: #14161b; }${wdStyle}</style></head><body><div class="wd" id="wd" tabindex="-1"></div></body></html>`);
+      w.document.close();
+      wdPopup = w;
+      wdListen(w.document, () => true);
+      w.addEventListener("blur", wdRelease);
+      // Closed: we are not in the world any more.
+      w.addEventListener("pagehide", () => { if (wdPopup === w) leaveWorld(); });
+    } else {
+      wdPopup = null;
+      wdFloat.classList.add("open");
+    }
+    wdBuild();
+  }
+  if (!wdMe.in) enterWorld();
+  wdFocus();
+  wdStartLoop();
+}
+function enterWorld() {
+  // By the door, somewhere free, not right on whoever came in last.
+  const room = wdRoom();
+  let [x, y] = room.spawn;
+  for (let i = 0; i < 20; i++) {
+    const at = [room.spawn[0] + Math.random() * 1.6, room.spawn[1] + (Math.random() - .5) * 1.8];
+    if (wdFree(room, ...at)) { [x, y] = at; break; }
+  }
+  Object.assign(wdMe, { in: true, x, y, left: false, walking: false });
+  wdTarget = null;
+  wdHeld = [];
+  wdSent = "";
+  wdPeople.clear();
+  wdSendPlace(true);
+  wdShowButton();
+}
+function leaveWorld() {
+  if (!wdMe.in) return;
+  wdMe.in = false;
+  wdHeld = [];
+  wdTarget = null;
+  clearTimeout(wdSendTimer);
+  wdSendTimer = 0;
+  window.zchatSend("/world leave");
+  wdShowButton();
+}
+function closeWorld() {
+  leaveWorld();
+  if (wdPopup && !wdPopup.closed) wdPopup.close();
+  wdPopup = null;
+  wdFloat.classList.remove("open");
+  input.focus();
+}
+// The window closed some other way (its own close button, the system's).
+setInterval(() => { if (wdMe.in && !wdRoot()) leaveWorld(); }, 500);
+function wdFocus() {
+  const root = wdRoot();
+  if (!root) return;
+  if (wdDoc()) {
+    try { wdPopup.focus(); } catch {}
+    root.focus();
+  } else {
+    wdFloat.focus();
+  }
+}
+function wdRelease() {
+  wdHeld = [];
+}
+
+// --- The window: a bar with who is here, the room, and the box to talk.
+function wdBuild() {
+  const root = wdRoot();
+  if (!root) return;
+  const doc = root.ownerDocument;
+  const el = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  root.textContent = "";
+  const bar = el("div", "bar");
+  bar.append(el("span", "title", "🌍 World"), el("span", "room", "· " + wdRoom().title), el("span", "here"));
+  const keys = el("span", "keys");
+  keys.innerHTML = "<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or a click: walk · <kbd>Enter</kbd>: talk · " +
+    "<kbd>E</kbd> on a square: open it" + (wdDoc() ? "" : " · click the room first, for the keys to come here");
+  bar.append(keys);
+  if (wdDoc()) {
+    const close = el("button", "close", "×");
+    close.title = "Leave the world";
+    close.onclick = closeWorld;
+    bar.append(close);
+  }
+  const stage = el("div", "stage");
+  const canvas = el("canvas");
+  wdCanvasMouse(canvas);
+  const prompt = el("div", "prompt");
+  prompt.hidden = true;
+  const picker = el("div", "picker");
+  picker.hidden = true;
+  stage.append(canvas, prompt, picker);
+  const talk = el("div", "talk");
+  const say = el("input");
+  say.placeholder = "Enter to talk: it shows over your head, and in #general (a /command goes to the chat)";
+  say.maxLength = 900;
+  say.autocomplete = "off";
+  say.spellcheck = false;
+  say.addEventListener("focus", wdRelease);
+  talk.append(say);
+  root.append(bar, stage, talk);
+  wdOn = undefined;
+  wdShowHere();
+  wdResize();
+}
+function wdShowHere() {
+  const root = wdRoot();
+  if (!root) return;
+  const here = root.querySelector(".bar .here"), names = [...wdPeople.values()].map(o => o.name);
+  const text = `👥 ${names.length + (wdMe.in ? 1 : 0)} here`;
+  if (here.textContent !== text) here.textContent = text;
+  here.title = names.length ? "With you: " + names.join(", ") : "Nobody else is here yet";
+}
+// The canvas as big as the window lets it be, in whole pixels a tile.
+function wdResize() {
+  const root = wdRoot(), canvas = root && root.querySelector("canvas");
+  if (!canvas) return;
+  const stage = root.querySelector(".stage"), map = wdRoom().map, w = map[0].length, h = map.length;
+  const room = [stage.clientWidth - 16, stage.clientHeight - 16];
+  if (room[0] <= 0 || room[1] <= 0) return;
+  const t = Math.max(12, Math.min(72, Math.floor(Math.min(room[0] / w, room[1] / h))));
+  const ratio = root.ownerDocument.defaultView.devicePixelRatio || 1;
+  if (canvas._tile === t && canvas._ratio === ratio) return;
+  canvas._tile = t;
+  canvas._ratio = ratio;
+  canvas.width = Math.round(w * t * ratio);
+  canvas.height = Math.round(h * t * ratio);
+  canvas.style.width = w * t + "px";
+  canvas.style.height = h * t + "px";
+}
+// What the button at the top of the main window says: how many are in the world.
+function wdShowButton() {
+  const s = wdState, others = s ? s.count - (s.in ? 1 : 0) : 0;
+  wdOpenButton.textContent = (wdMe.in ? "🌍 World" : "🌍 Enter World") + (others > 0 ? " · " + others : "");
+  wdOpenButton.classList.toggle("live", others > 0);
+  wdOpenButton.title = (wdMe.in ? "Show the world" : "Enter the world: a room to walk around in with everybody, where what you say shows over your head") +
+    (others > 0 ? ` (${others} in it)` : "");
+}
+
+// --- Walking: the keys held, or toward where a click sends us; the walls, the plants and the sofa are in the way.
+const wdKeys = { ArrowUp: "u", ArrowDown: "d", ArrowLeft: "l", ArrowRight: "r", w: "u", s: "d", a: "l", d: "r", W: "u", S: "d", A: "l", D: "r" };
+function wdSolid(room, x, y) {
+  const c = room.map[y] && room.map[y][x];
+  return !c || c === "#" || c === "d" || c === "p" || c === "s";
+}
+function wdFree(room, x, y) {
+  for (let ty = Math.floor(y - wdFeet); ty <= Math.floor(y + wdFeet); ty++) {
+    for (let tx = Math.floor(x - wdFeet); tx <= Math.floor(x + wdFeet); tx++) {
+      if (wdSolid(room, tx, ty)) return false;
+    }
+  }
+  return true;
+}
+function wdPadAt(x, y) {
+  return wdRoom().pads.find(p => x >= p.x && x < p.x + 2 && y >= p.y && y < p.y + 2) || null;
+}
+function wdWalk(dt) {
+  const room = wdRoom();
+  let dx = (wdHeld.includes("r") ? 1 : 0) - (wdHeld.includes("l") ? 1 : 0);
+  let dy = (wdHeld.includes("d") ? 1 : 0) - (wdHeld.includes("u") ? 1 : 0);
+  let reach = Infinity;
+  if (!dx && !dy && wdTarget) {
+    dx = wdTarget.x - wdMe.x;
+    dy = wdTarget.y - wdMe.y;
+    reach = Math.hypot(dx, dy);
+    if (reach < .02) {
+      const pad = wdTarget.pad;
+      wdTarget = null;
+      dx = dy = 0;
+      if (pad) wdUse(pad);
+    }
+  }
+  const len = Math.hypot(dx, dy);
+  let moved = false;
+  if (len > 0) {
+    const step = Math.min(wdSpeed * dt, reach), mx = dx / len * step, my = dy / len * step;
+    if (mx && wdFree(room, wdMe.x + mx, wdMe.y)) { wdMe.x += mx; moved = true; }
+    if (my && wdFree(room, wdMe.x, wdMe.y + my)) { wdMe.y += my; moved = true; }
+    if (dx / len < -.2) wdMe.left = true;
+    else if (dx / len > .2) wdMe.left = false;
+    // Against a wall: where a click sent us is out of reach.
+    if (!moved) wdTarget = null;
+  }
+  wdMe.walking = moved;
+  wdSendPlace(false);
+}
+// Tells zchat where we are when it changes, at most every 80 milliseconds.
+function wdSendPlace(now) {
+  if (!wdMe.in) return;
+  const line = `${wdMe.room} ${Math.round(wdMe.x * 100)} ${Math.round(wdMe.y * 100)} ${wdMe.left ? 1 : 0} ${wdMe.walking ? 1 : 0}`;
+  if (line === wdSent) return;
+  const at = performance.now();
+  if (!now && at - wdSentAt < 80) {
+    if (!wdSendTimer) wdSendTimer = setTimeout(() => { wdSendTimer = 0; wdSendPlace(false); }, 80 - (at - wdSentAt));
+    return;
+  }
+  wdSent = line;
+  wdSentAt = at;
+  window.zchatSend("/world at " + line);
+}
+// What is typed in the world: a command goes to the chat as typed, anything else is said in #general, over our head.
+function wdSay(line) {
+  const text = line.trim();
+  if (!text) return;
+  if (text.startsWith("/") && !text.startsWith("//")) {
+    followGameCommand(text);
+    window.zchatSend(text);
+    setTimeout(refreshSelf, 150);
+  } else {
+    window.zchatSend("/world say " + (text.startsWith("//") ? text.slice(1) : text));
+  }
+}
+function wdUse(pad) {
+  if (!pad) return;
+  const kind = wdPadKinds[pad.kind];
+  wdRelease();
+  if (kind.button) document.getElementById(kind.button).click();
+  else wdPokemon();
+}
+function wdListen(doc, active) {
+  doc.addEventListener("keydown", e => {
+    const root = wdRoot();
+    if (!root || !active()) return;
+    const say = root.querySelector(".talk input"), picker = root.querySelector(".picker");
+    if (e.target === say) {
+      if (e.key === "Enter" && !e.isComposing) {
+        const line = say.value;
+        say.value = "";
+        wdSay(line);
+        wdFocus();
+        e.preventDefault();
+      } else if (e.key === "Escape") {
+        say.value = "";
+        wdFocus();
+        e.preventDefault();
+      }
+      return;
+    }
+    if (!picker.hidden) {
+      if (e.key === "Escape") { picker.hidden = true; wdFocus(); e.preventDefault(); }
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey || !wdMe.in) return;
+    const k = wdKeys[e.key];
+    if (k) {
+      if (!wdHeld.includes(k)) wdHeld.push(k);
+      wdTarget = null;
+      e.preventDefault();
+    } else if (e.key === "Enter" || e.key === "/") {
+      say.focus();
+      if (e.key === "/") say.value = "/";
+      e.preventDefault();
+    } else if (e.key === "e" || e.key === "E" || e.key === " ") {
+      if (!e.repeat) wdUse(wdPadAt(wdMe.x, wdMe.y));
+      e.preventDefault();
+    }
+  });
+  doc.addEventListener("keyup", e => {
+    const k = wdKeys[e.key];
+    if (k) wdHeld = wdHeld.filter(h => h !== k);
+  });
+}
+// A click on the floor walks there; on a square, walks to it and opens it (right away when we are on it).
+function wdCanvasMouse(canvas) {
+  const at = e => {
+    const r = canvas.getBoundingClientRect();
+    return [(e.clientX - r.left) / canvas._tile, (e.clientY - r.top) / canvas._tile];
+  };
+  canvas.addEventListener("mousemove", e => {
+    if (!canvas._tile) return;
+    const [x, y] = at(e);
+    canvas.style.cursor = wdPadAt(x, y) ? "pointer" : "default";
+  });
+  canvas.addEventListener("mousedown", e => {
+    if (e.button !== 0 || !canvas._tile || !wdMe.in) return;
+    const [x, y] = at(e);
+    const pad = wdPadAt(x, y);
+    if (pad && pad === wdPadAt(wdMe.x, wdMe.y)) wdUse(pad);
+    else if (pad) wdTarget = { x: pad.x + 1, y: pad.y + 1, pad };
+    else if (wdFree(wdRoom(), x, y)) wdTarget = { x, y, pad: null };
+    e.preventDefault();
+    setTimeout(wdFocus, 0);
+  });
+}
+// The Pokémon square: who to challenge, and to which generation (as the Pokémon button of the main window asks),
+// those in the world first.
+async function wdPokemon() {
+  const root = wdRoot();
+  if (!root) return;
+  const doc = root.ownerDocument, picker = root.querySelector(".picker");
+  const el = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const people = (await mentions()).filter(([name]) => name !== "everyone");
+  const here = new Set([...wdPeople.values()].map(o => o.name));
+  people.sort((a, b) => here.has(b[0]) - here.has(a[0]));
+  const close = () => { picker.hidden = true; wdFocus(); };
+  picker.textContent = "";
+  const box = el("div", "box");
+  box.append(el("div", "head", "◓ Challenge to a Pokémon battle"));
+  const battle = document.getElementById("pk-open");
+  if (!battle.hidden) {
+    const show = el("button", "", "Show your battle");
+    show.onclick = () => { picker.hidden = true; battle.click(); };
+    box.append(show);
+  }
+  const gen = el("select");
+  gen.title = "Generation";
+  for (let g = 9; g >= 1; g--) {
+    const o = el("option", "", "Gen " + g);
+    o.value = String(g);
+    gen.append(o);
+  }
+  gen.value = String(pkChallengeGen());
+  const who = el("div", "who");
+  for (const [name, style] of people) {
+    const b = el("button", "", (here.has(name) ? "🌍 " : "") + name);
+    b.style.color = styleColor(style);
+    b.title = "Challenge " + name;
+    b.onclick = () => {
+      const g = parseInt(gen.value, 10) || 9;
+      try { localStorage.setItem("zchat-pokemon-gen", String(g)); } catch {}
+      window.zchatSend("/game pokemon challenge " + name + (g === 9 ? "" : " gen" + g));
+      close();
+    };
+    who.append(b);
+  }
+  const cancel = el("button", "", "Cancel");
+  cancel.onclick = close;
+  box.append(gen, people.length ? who : el("div", "note", "Nobody else is in the chat."), cancel);
+  picker.append(box);
+  picker.onmousedown = e => { if (e.target === picker) close(); };
+  picker.hidden = false;
+  (people.length ? who.firstChild : cancel).focus();
+}
+
+// --- The state: everybody in our room, and what they said.
+function worldGame(state) {
+  wdState = state;
+  wdShowButton();
+  if (state.open) openWorld();
+  const now = performance.now(), seen = new Set();
+  for (const p of state.players) {
+    if (p.you) {
+      wdSelf = p;
+      wdHeard(wdMe, p, now);
+      continue;
+    }
+    const x = p.x / 100, y = p.y / 100;
+    let o = wdPeople.get(p.id);
+    if (!o) {
+      o = { x, y, said: -1, seed: Math.random() * 6 };
+      wdPeople.set(p.id, o);
+    } else if (Math.hypot(x - o.x, y - o.y) > 3) {
+      // Far from where they were drawn: there at once, rather than gliding across the room.
+      o.x = x;
+      o.y = y;
+    }
+    Object.assign(o, { tx: x, ty: y, name: p.name, color: p.color, avatar: p.avatar, left: p.left, walking: p.walking });
+    wdHeard(o, p, now);
+    seen.add(p.id);
+  }
+  for (const id of [...wdPeople.keys()]) {
+    if (!seen.has(id)) wdPeople.delete(id);
+  }
+  wdShowHere();
+}
+// A new bubble, when somebody said something new.
+function wdHeard(o, p, now) {
+  if (p.said === o.said) return;
+  o.said = p.said;
+  o.say = p.say;
+  o.sayAt = now - p.ago;
+}
+function wdBubbleTime(text) {
+  return Math.min(14000, 5000 + 60 * text.length);
+}
+
+// --- Drawing: the room, the squares, everybody (those further up first), their names, then what they say.
+function wdStartLoop() {
+  const view = wdDoc() ? wdPopup : window;
+  if (wdLooping && wdLoopView === view) return;
+  wdLooping = true;
+  wdLoopView = view;
+  wdLast = performance.now();
+  const token = ++wdLoopToken;
+  view.requestAnimationFrame(() => wdLoop(token));
+}
+function wdLoop(token) {
+  if (token !== wdLoopToken) return;
+  if (!wdRoot()) { wdLooping = false; return; }
+  const now = performance.now(), dt = Math.min(.05, (now - wdLast) / 1000);
+  wdLast = now;
+  if (wdMe.in) wdWalk(dt);
+  const k = 1 - Math.exp(-dt * 12);
+  for (const o of wdPeople.values()) {
+    o.x += (o.tx - o.x) * k;
+    o.y += (o.ty - o.y) * k;
+  }
+  wdResize();
+  wdDraw(now);
+  wdPrompt();
+  wdLoopView.requestAnimationFrame(() => wdLoop(token));
+}
+// Standing on a square: what E opens.
+function wdPrompt() {
+  const root = wdRoot(), pad = wdMe.in ? wdPadAt(wdMe.x, wdMe.y) : null;
+  if (!root || pad === wdOn) return;
+  wdOn = pad;
+  const prompt = root.querySelector(".prompt");
+  prompt.hidden = !pad;
+  prompt.textContent = "";
+  if (!pad) return;
+  const kind = wdPadKinds[pad.kind], key = root.ownerDocument.createElement("kbd");
+  key.textContent = "E";
+  prompt.append(key, ` ${kind.icon} ${kind.action}`);
+}
+function wdRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
+  else ctx.rect(x, y, w, h);
+}
+// A color made lighter (f > 0) or darker (f < 0).
+function wdShade(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  return "rgb(" + [n >> 16 & 255, n >> 8 & 255, n & 255].map(v => Math.round(f < 0 ? v * (1 + f) : v + (255 - v) * f)).join(",") + ")";
+}
+// Where a character of the map is, as [x0, y0, x1, y1] in tiles (the ends past it); null when it is not there.
+function wdBounds(map, c) {
+  let b = null;
+  map.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch !== c) return;
+    b = b ? [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x + 1), Math.max(b[3], y + 1)] : [x, y, x + 1, y + 1];
+  }));
+  return b;
+}
+function wdDraw(now) {
+  const root = wdRoot(), canvas = root && root.querySelector("canvas");
+  if (!canvas || !canvas._tile) return;
+  const ctx = canvas.getContext("2d"), t = canvas._tile, room = wdRoom();
+  ctx.setTransform(canvas._ratio, 0, 0, canvas._ratio, 0, 0);
+  wdDrawRoom(ctx, room, t, now);
+  const self = wdSelf || { name: selfName, color: "#6ea8ff", avatar: selfAvatar };
+  const all = [...wdPeople.values()].map(o => ({ ...o, moving: o.walking || Math.hypot(o.tx - o.x, o.ty - o.y) > .03 }));
+  if (wdMe.in) {
+    all.push({ ...self, x: wdMe.x, y: wdMe.y, left: wdMe.left, moving: wdMe.walking, you: true, say: wdMe.say, sayAt: wdMe.sayAt, seed: 0 });
+  }
+  all.sort((a, b) => a.y - b.y);
+  for (const p of all) wdCrew(ctx, p, t, now);
+  for (const p of all) wdName(ctx, p, t);
+  const talking = all.filter(p => p.say && now - p.sayAt < wdBubbleTime(p.say)).sort((a, b) => a.sayAt - b.sayAt);
+  for (const p of talking) wdBubble(ctx, p, t, now, canvas.width / canvas._ratio);
+}
+function wdDrawRoom(ctx, room, t, now) {
+  const map = room.map, h = map.length, w = map[0].length;
+  // The floor: tiles of two shades, and the walls' shadow on it.
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      ctx.fillStyle = (x + y) % 2 ? "#d9cdb5" : "#d0c3a8";
+      ctx.fillRect(x * t, y * t, t, t);
+    }
+  }
+  ctx.fillStyle = "#00000026";
+  ctx.fillRect(t, t, (w - 2) * t, t * .22);
+  ctx.fillRect(t, t, t * .12, (h - 2) * t);
+  // The rug, with a mat by the door.
+  const rug = wdBounds(map, "r");
+  if (rug) {
+    const x = rug[0] * t + t * .15, y = rug[1] * t + t * .15, rw = (rug[2] - rug[0]) * t - t * .3, rh = (rug[3] - rug[1]) * t - t * .3;
+    ctx.fillStyle = "#00000022";
+    wdRect(ctx, x + 3, y + 4, rw, rh, t * .12); ctx.fill();
+    ctx.fillStyle = "#9b2f3c";
+    wdRect(ctx, x, y, rw, rh, t * .12); ctx.fill();
+    ctx.strokeStyle = "#e3b649"; ctx.lineWidth = Math.max(2, t * .07);
+    wdRect(ctx, x + t * .2, y + t * .2, rw - t * .4, rh - t * .4, t * .08); ctx.stroke();
+    const cx = x + rw / 2, cy = y + rh / 2;
+    for (const [s, color] of [[1, "#e3b649"], [.55, "#9b2f3c"]]) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - rh * .3 * s); ctx.lineTo(cx + rw * .22 * s, cy); ctx.lineTo(cx, cy + rh * .3 * s); ctx.lineTo(cx - rw * .22 * s, cy);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  const door = wdBounds(map, "d");
+  if (door) {
+    ctx.fillStyle = "#6b5a44";
+    wdRect(ctx, (door[0] + 1) * t + t * .08, door[1] * t + t * .12, t * .55, t * .76, t * .08); ctx.fill();
+  }
+  // The squares; the one we stand on lit up.
+  const on = wdMe.in ? wdPadAt(wdMe.x, wdMe.y) : null;
+  for (const pad of room.pads) wdDrawPad(ctx, pad, t, now, pad === on);
+  // The walls: the top one shows its face, with the name of the place on it; the door in the left one.
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const c = map[y][x], px = x * t, py = y * t;
+      if (c !== "#" && c !== "d") continue;
+      ctx.fillStyle = "#4f5f82";
+      ctx.fillRect(px, py, t, t);
+      if (y === 0 && x > 0 && x < w - 1) {
+        ctx.fillStyle = "#7d90b6"; ctx.fillRect(px, py + t * .28, t, t * .72);
+        ctx.fillStyle = "#6a7da3"; ctx.fillRect(px, py + t * .86, t, t * .14);
+      }
+      if (c === "d") {
+        ctx.fillStyle = "#7a4e2d"; ctx.fillRect(px + t * .25, py + t * .06, t * .55, t * .88);
+        ctx.fillStyle = "#94603a"; ctx.fillRect(px + t * .33, py + t * .14, t * .39, t * .72);
+        ctx.fillStyle = "#e3b649"; ctx.beginPath(); ctx.arc(px + t * .68, py + t * .5, t * .06, 0, 7); ctx.fill();
+      }
+    }
+  }
+  ctx.font = `800 ${Math.round(t * .42)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#e8edf7b0";
+  ctx.fillText("zchat · " + room.title, w * t / 2, t * .58);
+  // The furniture.
+  map.forEach((row, y) => [...row].forEach((c, x) => { if (c === "p") wdPlant(ctx, x, y, t); }));
+  const sofa = wdBounds(map, "s");
+  if (sofa) wdSofa(ctx, sofa, t);
+}
+function wdDrawPad(ctx, pad, t, now, on) {
+  const kind = wdPadKinds[pad.kind], x = pad.x * t + t * .12, y = pad.y * t + t * .12, s = 2 * t - t * .24;
+  const pulse = .5 + .5 * Math.sin(now / 400 + pad.x + pad.y);
+  ctx.save();
+  ctx.shadowColor = kind.color;
+  ctx.shadowBlur = on ? 24 : 6 + 8 * pulse;
+  ctx.fillStyle = kind.color + (on ? "66" : "38");
+  wdRect(ctx, x, y, s, s, t * .22); ctx.fill();
+  ctx.restore();
+  ctx.lineWidth = Math.max(2, t * .08); ctx.strokeStyle = kind.color;
+  wdRect(ctx, x, y, s, s, t * .22); ctx.stroke();
+  const cx = x + s / 2, cy = y + s * .42;
+  if (pad.kind === "pokemon") {
+    wdPokeball(ctx, cx, cy, t * .4);
+  } else {
+    ctx.font = `${Math.round(t * .78)}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#000";
+    ctx.fillText(kind.icon, cx, cy);
+  }
+  ctx.font = `700 ${Math.max(9, Math.round(t * .3))}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.strokeStyle = "#15161acc";
+  ctx.strokeText(kind.label, cx, y + s * .84);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(kind.label, cx, y + s * .84);
+}
+function wdPokeball(ctx, cx, cy, r) {
+  ctx.lineWidth = Math.max(1.5, r * .12); ctx.strokeStyle = "#15161a";
+  ctx.fillStyle = "#e5534b"; ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI, 0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#f4f4f4"; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.stroke();
+  ctx.fillStyle = "#f4f4f4"; ctx.beginPath(); ctx.arc(cx, cy, r * .32, 0, 7); ctx.fill(); ctx.stroke();
+}
+function wdPlant(ctx, x, y, t) {
+  const cx = (x + .5) * t, by = (y + .92) * t;
+  ctx.fillStyle = "#00000030"; ctx.beginPath(); ctx.ellipse(cx, by, t * .36, t * .1, 0, 0, 7); ctx.fill();
+  ctx.lineWidth = Math.max(1.5, t * .045); ctx.strokeStyle = "#15161a"; ctx.lineJoin = "round";
+  ctx.fillStyle = "#b5652e";
+  ctx.beginPath(); ctx.moveTo(cx - t * .26, by - t * .36); ctx.lineTo(cx + t * .26, by - t * .36);
+  ctx.lineTo(cx + t * .19, by); ctx.lineTo(cx - t * .19, by); ctx.closePath(); ctx.fill(); ctx.stroke();
+  for (const [dx, dy, r, color] of [[-.2, -.55, .22, "#2f8a3e"], [.2, -.58, .22, "#2f8a3e"], [0, -.78, .26, "#3ca34c"], [-.04, -.52, .2, "#4cb85c"]]) {
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(cx + dx * t, by + dy * t, r * t, 0, 7); ctx.fill(); ctx.stroke();
+  }
+}
+function wdSofa(ctx, [x0, y0, x1, y1], t) {
+  const x = x0 * t + t * .08, y = y0 * t + t * .08, w = (x1 - x0) * t - t * .16, h = (y1 - y0) * t - t * .16;
+  ctx.fillStyle = "#00000030"; wdRect(ctx, x - 3, y + 4, w, h, t * .16); ctx.fill();
+  ctx.lineWidth = Math.max(1.5, t * .045); ctx.strokeStyle = "#15161a";
+  ctx.fillStyle = "#3f6fb5"; wdRect(ctx, x, y, w, h, t * .16); ctx.fill(); ctx.stroke();
+  // The back against the wall, the arms, and the cushions.
+  ctx.fillStyle = "#2f5793"; wdRect(ctx, x + w - t * .3, y, t * .3, h, t * .12); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#355f9e";
+  wdRect(ctx, x, y, w, t * .26, t * .12); ctx.fill(); ctx.stroke();
+  wdRect(ctx, x, y + h - t * .26, w, t * .26, t * .12); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = "#2a4c80";
+  for (let i = 1; i < y1 - y0; i++) {
+    ctx.beginPath(); ctx.moveTo(x + t * .1, (y0 + i) * t); ctx.lineTo(x + w - t * .34, (y0 + i) * t); ctx.stroke();
+  }
+}
+// A crewmate, its feet where the player is: legs (one up when the other is down, as it walks), the backpack behind,
+// the body in their color, and the visor, toward where they face, with their avatar in it.
+function wdCrew(ctx, p, t, now) {
+  const s = t * wdSize, f = p.left ? -1 : 1, x = p.x * t, y = p.y * t;
+  const phase = p.moving ? now / 85 + (p.seed || 0) : 0, bob = p.moving ? Math.abs(Math.sin(phase)) * s * .05 : 0;
+  const color = /^#[0-9a-f]{6}$/i.test(p.color || "") ? p.color : "#8a8f99";
+  const dark = wdShade(color, -.38), light = wdShade(color, .25), ink = "#15161a", line = Math.max(1.5, s * .05);
+  ctx.fillStyle = "#0000003a";
+  ctx.beginPath(); ctx.ellipse(x, y, s * .4, s * .12, 0, 0, 7); ctx.fill();
+  if (p.you) {
+    ctx.strokeStyle = "#ffffffd0"; ctx.lineWidth = Math.max(1.5, s * .035);
+    ctx.beginPath(); ctx.ellipse(x, y, s * .48, s * .16, 0, 0, 7); ctx.stroke();
+  }
+  const feet = y - bob;
+  ctx.lineWidth = line; ctx.strokeStyle = ink; ctx.lineJoin = "round";
+  const back = x - f * s * .4;
+  wdRect(ctx, f > 0 ? back - s * .19 : back - s * .07, feet - s * .98, s * .26, s * .58, s * .09);
+  ctx.fillStyle = dark; ctx.fill(); ctx.stroke();
+  for (const side of [-1, 1]) {
+    const lift = p.moving ? Math.max(0, Math.sin(phase) * side) * s * .1 : 0;
+    wdRect(ctx, x + side * s * .2 - s * .15, feet - s * .36 - lift, s * .3, s * .36, [0, 0, s * .1, s * .1]);
+    ctx.fillStyle = side === -f ? dark : color; ctx.fill(); ctx.stroke();
+  }
+  const body = ctx.createLinearGradient(x - f * s * .4, 0, x + f * s * .4, 0);
+  body.addColorStop(0, dark); body.addColorStop(.45, color); body.addColorStop(1, light);
+  wdRect(ctx, x - s * .4, feet - s * 1.22, s * .8, s * 1.0, [s * .4, s * .4, s * .16, s * .16]);
+  ctx.fillStyle = body; ctx.fill(); ctx.stroke();
+  const vw = s * .62, vh = s * .46, vx = x + f * s * .13 - vw / 2, vy = feet - s * 1.07;
+  const img = wdAvatarImage(p.avatar);
+  ctx.save();
+  wdRect(ctx, vx, vy, vw, vh, vh / 2);
+  ctx.clip();
+  if (img) {
+    ctx.fillStyle = ink; ctx.fillRect(vx, vy, vw, vh);
+    const k = Math.max(vw / img.naturalWidth, vh / img.naturalHeight), iw = img.naturalWidth * k, ih = img.naturalHeight * k;
+    ctx.drawImage(img, vx + (vw - iw) / 2, vy + (vh - ih) / 2, iw, ih);
+  } else {
+    const glass = ctx.createLinearGradient(0, vy, 0, vy + vh);
+    glass.addColorStop(0, "#c4f1ff"); glass.addColorStop(.55, "#7fc8e6"); glass.addColorStop(1, "#3d7f9e");
+    ctx.fillStyle = glass; ctx.fillRect(vx, vy, vw, vh);
+  }
+  ctx.fillStyle = img ? "#ffffff38" : "#ffffffb8";
+  ctx.beginPath(); ctx.ellipse(vx + vw * (f > 0 ? .7 : .3), vy + vh * .28, vw * .15, vh * .11, 0, 0, 7); ctx.fill();
+  ctx.restore();
+  wdRect(ctx, vx, vy, vw, vh, vh / 2);
+  ctx.lineWidth = line; ctx.strokeStyle = ink; ctx.stroke();
+}
+function wdName(ctx, p, t) {
+  const name = [...(p.name || "")].length > 24 ? [...p.name].slice(0, 23).join("") + "…" : p.name || "";
+  ctx.font = `700 ${Math.max(10, Math.round(t * .28))}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.strokeStyle = "#15161acc";
+  ctx.strokeText(name, p.x * t, p.y * t + t * .18);
+  ctx.fillStyle = p.color || "#d6d9df";
+  ctx.fillText(name, p.x * t, p.y * t + t * .18);
+}
+// What somebody says, in a bubble over their head that fades away: on a few lines, the last one cut when it is long.
+const wdLines = new Map();
+function wdWrap(ctx, text, max, most) {
+  const key = ctx.font + "\n" + max + "\n" + text;
+  if (wdLines.has(key)) return wdLines.get(key);
+  const lines = [];
+  let line = "";
+  for (const word of text.split(" ")) {
+    let rest = word;
+    // A word too long for a line goes on several.
+    while (ctx.measureText(rest).width > max) {
+      const chars = [...rest];
+      let n = chars.length - 1;
+      while (n > 1 && ctx.measureText(chars.slice(0, n).join("")).width > max) n--;
+      if (line) { lines.push(line); line = ""; }
+      lines.push(chars.slice(0, n).join(""));
+      rest = chars.slice(n).join("");
+    }
+    const next = line ? line + " " + rest : rest;
+    if (line && ctx.measureText(next).width > max) { lines.push(line); line = rest; }
+    else line = next;
+  }
+  if (line) lines.push(line);
+  if (lines.length > most) {
+    lines.length = most;
+    let last = [...lines[most - 1]];
+    while (last.length > 1 && ctx.measureText(last.join("") + "…").width > max) last.pop();
+    lines[most - 1] = last.join("") + "…";
+  }
+  if (wdLines.size > 200) wdLines.clear();
+  wdLines.set(key, lines);
+  return lines;
+}
+function wdBubble(ctx, p, t, now, width) {
+  const s = t * wdSize, age = now - p.sayAt, size = Math.max(11, Math.round(t * .3));
+  ctx.font = `600 ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+  const lines = wdWrap(ctx, p.say, Math.max(150, t * 5), 4);
+  const lh = size * 1.25, pad = size * .6, tail = size * .55;
+  const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + pad * 2, h = lines.length * lh + pad * 1.2;
+  const x = p.x * t, head = p.y * t - s * 1.32;
+  const bx = Math.max(4, Math.min(width - w - 4, x - w / 2)), by = Math.max(4, head - h - tail);
+  const tx = Math.max(bx + 10, Math.min(bx + w - 10, x));
+  ctx.globalAlpha = Math.max(0, Math.min(1, (wdBubbleTime(p.say) - age) / 500, age / 120));
+  ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "#15161a"; ctx.lineWidth = 1.5; ctx.lineJoin = "round";
+  wdRect(ctx, bx, by, w, h, size * .6); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tx - 6, by + h - 1); ctx.lineTo(tx, by + h + tail); ctx.lineTo(tx + 6, by + h - 1); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(tx - 6, by + h); ctx.lineTo(tx, by + h + tail); ctx.lineTo(tx + 6, by + h); ctx.stroke();
+  ctx.fillStyle = "#15161a"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+  lines.forEach((l, i) => ctx.fillText(l, bx + pad, by + pad * .6 + i * lh));
+  ctx.globalAlpha = 1;
+}
+// The avatars, as pictures to draw on the visors: kept in a hidden box of the main window, where a GIF plays (and an
+// animation of frames goes on, see animate()).
+const wdImages = new Map();
+function wdAvatarImage(hash) {
+  if (!hash) return null;
+  let a = wdImages.get(hash);
+  if (!a) {
+    a = { img: null, loading: false, retry: 0 };
+    wdImages.set(hash, a);
+  }
+  if (!a.img && !a.loading && performance.now() >= a.retry) {
+    a.loading = true;
+    framesOf(hash).then(frames => {
+      a.loading = false;
+      if (!frames) { a.retry = performance.now() + 2000; return; }
+      const img = document.createElement("img");
+      img.alt = "";
+      document.getElementById("wd-images").append(img);
+      animate(img, frames);
+      a.img = img;
+    });
+  }
+  return a.img && a.img.complete && a.img.naturalWidth ? a.img : null;
+}
+
+wdOpenButton.onclick = () => openWorld();
+document.getElementById("wd-float-close").onclick = closeWorld;
+wdListen(document, () => wdFloat.classList.contains("open") && wdFloat.contains(document.activeElement));
+wdFloat.addEventListener("focusout", e => { if (!wdFloat.contains(e.relatedTarget)) wdRelease(); });
+wdFloat.addEventListener("mousedown", e => {
+  if (e.target.tagName !== "BUTTON" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") setTimeout(() => wdFloat.focus(), 0);
+});
+(() => {
+  const handle = document.getElementById("wd-float-title");
+  let dx = 0, dy = 0, dragging = false;
+  handle.addEventListener("mousedown", e => {
+    if (e.target.tagName === "BUTTON") return;
+    dragging = true;
+    const r = wdFloat.getBoundingClientRect();
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    wdFloat.style.left = Math.max(0, e.clientX - dx) + "px";
+    wdFloat.style.top = Math.max(0, e.clientY - dy) + "px";
+    wdFloat.style.right = "auto";
+  });
+  document.addEventListener("mouseup", () => { dragging = false; });
+})();
+
 // --- The games' windows: the C++ side calls zchat.game(game, state) with each game's state.
 zchat.game = (game, state) => {
   if (game === "dice") diceGame(state);
@@ -5584,6 +6459,7 @@ zchat.game = (game, state) => {
   else if (game === "bomber") bomberGame(state);
   else if (game === "arena") arenaGame(state);
   else if (game === "frag") fragGame(state);
+  else if (game === "world") worldGame(state);
   else if (game === "pokemon-challenge") pokemonChallenges(state);
   else if (game === "kick") kickVotes(state);
   else if (game === "spy") spyRequests(state);
@@ -5884,6 +6760,14 @@ function acceptMention(i) {
   input.setSelectionRange(pos, pos);
   closeMentions();
 }
+// A game's command typed (here, or in the world): its answer is in the games log, so that is shown. (The games' own
+// buttons do not move the chat.)
+function followGameCommand(line) {
+  if (/^\/(game|casino|coins|shop)(\s|$)/i.test(line.trim()) && currentChannel !== gamesLog &&
+      channelList.some(c => c[0] === gamesLog)) {
+    channelCommand("/join " + gamesLog);
+  }
+}
 
 input.addEventListener("keydown", e => {
   if (mentionsBox.style.display === "block") {
@@ -5908,12 +6792,7 @@ input.addEventListener("keydown", e => {
     if (line.trim() && sent[sent.length - 1] !== line) sent.push(line);
     sentPos = sent.length;
     draft = "";
-    // A game's command typed here: its answer is in the games log, so that is shown. (The games' own buttons do not
-    // move the chat.)
-    if (/^\/(game|casino|coins|shop)(\s|$)/i.test(line.trim()) && currentChannel !== gamesLog &&
-        channelList.some(c => c[0] === gamesLog)) {
-      channelCommand("/join " + gamesLog);
-    }
+    followGameCommand(line);
     window.zchatSend(quote + line);
     // A new name or color (/nick, /color) shows right away.
     setTimeout(refreshSelf, 150);
@@ -5943,7 +6822,7 @@ input.addEventListener("blur", () => setTimeout(closeMentions, 150));
 // floating bomber, arena and frag windows, whose keys play.
 document.addEventListener("keydown", e => {
   const el = document.activeElement;
-  if (bmFloat.contains(el) || amFloat.contains(el) || frFloat.contains(el)) return;
+  if (bmFloat.contains(el) || amFloat.contains(el) || frFloat.contains(el) || wdFloat.contains(el)) return;
   const field = el && el !== input && (el.matches("input, textarea, select") || el.isContentEditable);
   if (el !== input && !field && !e.ctrlKey && !e.metaKey && e.key.length === 1) input.focus();
 });

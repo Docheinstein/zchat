@@ -200,9 +200,18 @@ void Chat::say(std::string_view text) {
         deliver(channel, {Entry::Kind::Message, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)});
         return;
     }
+    say_in_general(clean, in_games_log());
+}
+
+void Chat::say_general(std::string_view text) {
+    say_in_general(text::sanitize(text, max_text_bytes), false);
+}
+
+void Chat::say_in_general(const std::string& clean, bool from_games_log) {
+    const std::string general(channel::general);
     send(PacketType::Message, clean);
     Entry entry {Entry::Kind::Message, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)};
-    if (in_games_log()) {
+    if (from_games_log) {
         // Said from the games log: shown there if it is a move of a game (a race's words), and else in #general.
         bool move = false;
         {
@@ -212,12 +221,12 @@ void Chat::say(std::string_view text) {
         if (move) {
             deliver(std::string(channel::games_log), std::move(entry));
         } else {
-            deliver(channel, std::move(entry));
+            deliver(general, std::move(entry));
             history::add({std::time(nullptr), id_, name(), clean});
             game_notice("Said in #general: the games log is for the games.");
         }
     } else {
-        deliver(channel, std::move(entry));
+        deliver(general, std::move(entry));
         history::add({std::time(nullptr), id_, name(), clean});
     }
     std::scoped_lock lock(hooks_mutex_);
@@ -593,6 +602,15 @@ void Chat::set_avatar(std::optional<std::string> picture) {
 std::string Chat::own_avatar_hash() const {
     std::scoped_lock lock(avatars_mutex_);
     return own_avatar_hash_ ? std::format("{:016x}", own_avatar_hash_) : std::string();
+}
+
+std::string Chat::avatar_of(std::uint64_t id) const {
+    if (id == id_) {
+        return own_avatar_hash();
+    }
+    std::scoped_lock lock(peers_mutex_);
+    const auto it = peers_.find(id);
+    return it != peers_.end() && it->second.avatar ? std::format("{:016x}", it->second.avatar) : std::string();
 }
 
 std::optional<std::string> Chat::avatar(std::string_view hash) const {

@@ -393,6 +393,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("               (/coins top: who has the most; /shop: the prices)");
     chat.notice("  /casino      bet your coins at blackjack, roulette and the horse race, with the whole chat");
     chat.notice("               (in its own window; /casino help: how to play in the chat)");
+    chat.notice("  /world       enter the world: a room to walk around in with everybody, where what you say");
+    chat.notice("               shows over your head (in the window: 🌍 Enter World; /world who: who is in it)");
     chat.notice("zchat:");
     chat.notice("  /update      get the latest zchat, build it and restart");
     chat.notice("  /help        show this help (/help game: the games)");
@@ -1315,6 +1317,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             games.coins("shop");
         } else if (input == "/casino" || input.starts_with("/casino ")) {
             games.casino(input.substr(std::min(input.size(), std::string_view("/casino ").size())));
+        } else if (input == "/world" || input.starts_with("/world ")) {
+            games.world(input.substr(std::min(input.size(), std::string_view("/world ").size())));
         } else if (input == "/ascii" || input.starts_with("/ascii ")) {
             send_ascii(chat, input.substr(std::min(input.size(), std::string_view("/ascii ").size())));
         } else if (input == "/addemoji" || input.starts_with("/addemoji ")) {

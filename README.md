@@ -103,6 +103,7 @@ While chatting:
 | `/coins top`       | who has the most coins (`/game top coins` works too). Who left is on it too |
 | `/shop`            | what coins buy, and how to win them (`/coins shop` works too) |
 | `/casino`          | the casino: blackjack, roulette and a horse race, for coins, at tables the whole chat shares (see below). In the window it opens the casino's own window (🎰 Casino at the top); `/casino help` lists the commands to play in the chat |
+| `/world`           | the world: a room to walk around in with everybody, where what each one says shows over their head (see below). In the window it opens the world's own window (🌍 Enter World at the top); in a terminal it tells who is in it, as `/world who` does |
 | `@NAME`            | tag someone in a message: they hear a sound (type `@` to pick from the list) |
 | `@everyone`        | tag all the people in the chat: they all hear a sound  |
 | `/game`            | list the games everyone in the chat can play           |
@@ -227,6 +228,27 @@ casino's window: a lobby, and each table, with chips to pick the bet and buttons
 | 🏇 Horse race | `/casino horses open` shows the six horses and their odds, `/casino horses bet N HORSE` (its number or name), then `go` | the winner's odds times the bet: about 9 in 10 of what is bet comes back, on average |
 
 The house wins in the long run, as in any casino: the casino is where coins go.
+
+### The world
+
+🌍 Enter World, at the top of the window (or `/world`), opens the world in a window of its own: a room, seen from
+above, that everybody in the chat can walk around in together, like Habbo Hotel. Each one is a crewmate of their
+name's color, as in Among Us, with their avatar on the visor (a GIF plays), and their name under their feet. The
+button also says how many are in it.
+
+| In the world          | What it does                                                                     |
+|-----------------------|----------------------------------------------------------------------------------|
+| WASD or the arrows    | walk (the walls, the plants and the sofa are in the way)                         |
+| a click on the floor  | walk there                                                                       |
+| Enter, text, Enter    | say it: in `#general`, whatever channel the chat shows, and over your head for a few seconds |
+| Enter, `/command`, Enter | a command, run as if typed in the chat (its answer is there): over nobody's head |
+| E or Space on a square, or a click on it | open it: 🎰 Casino, ◓ Pokémon (who to challenge, and the generation), 🗣️ Candor, 💣 Bomber, 🎯 Arena and 🔫 Frag do what their buttons at the top do |
+
+Whatever anybody in the world says in `#general` (from the world or from the chat) shows over their head, without its
+tags; a quote shows the reply. Closing the window leaves the world. For now there is one room, the lobby; the rooms
+are drawn by the window (`src/ui/index.html`), and zchat only tells who is where, so more can come.
+
+In a terminal there is no world to walk in: `/world` says who is in it, and in which room.
 
 `/ascii` sends a picture as colored ASCII art, at most 64 characters wide and 32 lines tall: brighter parts are drawn
 with more ink, in the color of the picture. They are shown as solid blocks of color, as dark or bright as the
@@ -404,6 +426,12 @@ The window is built too (`-DZCHAT_GUI=OFF` leaves it out, for the terminal versi
   snippet — see `src/capture.cpp`) and sends them as ordinary `IMAGE` packets, then a `spy done shot`. Nobody pays
   until that yes: on a shot the asker is charged 20 coins and the one who agreed gets 10; a refusal, no answer or a
   failed capture costs nobody anything. Older versions ignore it.
+* **The world** (`/world`) has no referee: each one walks in their own window, and tells the others where they
+  are as `GAME` packets (`world at ROOM X Y LEFT WALKING`, the place in hundredths of a tile) when it changes, at
+  most 12 times a second, and every second while they stay; `world leave` when they close the window. Whoever is not
+  heard from for 5 seconds, or left the chat, is out of it. The first place heard from a newcomer is answered with
+  ours right away, so they see everybody at once. What shows over heads is the `#general` messages themselves. Older
+  versions ignore it.
 * **Games** (`/game NAME`) have no server either: whoever starts a round is its referee, and sends everybody what
   happens in it as `GAME` packets, whose text starts with the game's name (`race go <round> <words>`). In the race
   the referee picks the words, and the first message with them that reaches it wins. One letter of each

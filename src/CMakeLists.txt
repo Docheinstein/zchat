@@ -42,6 +42,8 @@ target_sources(zchat PUBLIC
     text.cpp
     update.cpp
     wordle.cpp
+    world.cpp
+    world_place.cpp
 )
 
 target_include_directories(zchat PUBLIC .)
