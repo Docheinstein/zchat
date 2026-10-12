@@ -381,7 +381,12 @@ cmake --build build
 ```
 
 To be able to just type `zchat`, install it on your `PATH`, e.g. `cmake --install build --prefix ~/.local`
-(with `~/.local/bin` on your `PATH`).
+(with `~/.local/bin` on your `PATH`). On Linux this also puts zchat among the applications of the desktop, with its
+icon (`share/applications/zchat.desktop` and `share/icons`). The window does that by itself too, in `~/.local/share`,
+for the zchat that opens it (even one just built): GNOME shows the icon of a window only through its `.desktop` file.
+
+The icon is `extras/icons/zchat-icon.svg`; `zchat-icon.ico` (Windows: the `.exe` and the window) and
+`zchat-icon-256.png` (Linux: the window and the desktop) are made from it, and are what the build uses.
 
 On Windows, the same commands work from a Developer Command Prompt (the binary ends up in `build\Release\zchat.exe`
 or `build\zchat.exe` depending on the generator). MinGW builds are linked statically, so the `.exe` can be copied
