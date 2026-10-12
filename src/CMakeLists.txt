@@ -65,6 +65,23 @@ add_custom_target(zchat_commit
 add_dependencies(zchat zchat_commit)
 target_include_directories(zchat PRIVATE "${zchat_generated}")
 
+# The icon of zchat: extras/icons/zchat-icon.svg, and what is made from it there (the .ico for Windows, the PNGs).
+set(zchat_icons "${PROJECT_SOURCE_DIR}/extras/icons")
+if (WIN32)
+    # The icon of the .exe, and of the window: webview gives its window the icon IDI_APPLICATION of the .exe.
+    enable_language(RC)
+    set(zchat_rc "32512 ICON \"${zchat_icons}/zchat-icon.ico\"\n")
+    # Only rewritten when it changes, so zchat is not linked again for nothing.
+    set(zchat_rc_old "")
+    if (EXISTS "${zchat_generated}/zchat.rc")
+        file(READ "${zchat_generated}/zchat.rc" zchat_rc_old)
+    endif()
+    if (NOT zchat_rc_old STREQUAL zchat_rc)
+        file(WRITE "${zchat_generated}/zchat.rc" "${zchat_rc}")
+    endif()
+    target_sources(zchat PRIVATE "${zchat_generated}/zchat.rc")
+endif()
+
 # The sound /trill plays when given none, built into the executable; and its picture, when there is one.
 add_custom_command(
     OUTPUT "${zchat_generated}/trill_mp3.hpp"
@@ -166,6 +183,27 @@ if (ZCHAT_GUI)
     endif()
     add_library(zchat_webview STATIC webview_window.cpp)
     set_target_properties(zchat_webview PROPERTIES CXX_STANDARD 20)
+    # The icon of the window on Linux, built into the executable (on Windows, in zchat.rc).
+    if (UNIX AND NOT APPLE)
+        add_custom_command(
+            OUTPUT "${zchat_generated}/zchat_icon_png.hpp"
+            COMMAND "${CMAKE_COMMAND}" "-DINPUT=${zchat_icons}/zchat-icon-256.png"
+                    "-DOUTPUT=${zchat_generated}/zchat_icon_png.hpp" -DNAME=zchat_icon_png
+                    -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+            DEPENDS "${zchat_icons}/zchat-icon-256.png" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+            VERBATIM)
+        # And the .desktop file that shows it (see webview_window.cpp).
+        add_custom_command(
+            OUTPUT "${zchat_generated}/zchat_desktop.hpp"
+            COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PROJECT_SOURCE_DIR}/extras/zchat.desktop.in"
+                    "-DOUTPUT=${zchat_generated}/zchat_desktop.hpp" -DNAME=zchat_desktop
+                    -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+            DEPENDS "${PROJECT_SOURCE_DIR}/extras/zchat.desktop.in" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+            VERBATIM)
+        target_sources(zchat_webview PRIVATE "${zchat_generated}/zchat_icon_png.hpp"
+                                             "${zchat_generated}/zchat_desktop.hpp")
+        target_include_directories(zchat_webview PRIVATE "${zchat_generated}")
+    endif()
     # Public: the popups (see popup.hpp) use the GTK that webview brings on Linux.
     target_link_libraries(zchat_webview PUBLIC webview::core_static)
     target_link_libraries(zchat PRIVATE zchat_webview)
@@ -196,3 +234,14 @@ if (MINGW)
 endif()
 
 install(TARGETS zchat)
+if (ZCHAT_GUI AND UNIX AND NOT APPLE)
+    # zchat among the applications of the desktop, with its icon: it opens the window.
+    install(FILES "${zchat_icons}/zchat-icon.svg" DESTINATION share/icons/hicolor/scalable/apps RENAME zchat.svg)
+    install(FILES "${zchat_icons}/zchat-icon-256.png" DESTINATION share/icons/hicolor/256x256/apps RENAME zchat.png)
+    install(CODE "
+        set(ZCHAT_EXE \"\${CMAKE_INSTALL_PREFIX}/bin/zchat\")
+        set(desktop \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/share/applications/zchat.desktop\")
+        message(STATUS \"Installing: \${desktop}\")
+        configure_file(\"${PROJECT_SOURCE_DIR}/extras/zchat.desktop.in\" \"\${desktop}\" @ONLY)
+    ")
+endif()

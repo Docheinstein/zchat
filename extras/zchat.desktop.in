@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=zchat
+Comment=A tiny chat for everyone on the same local network
+Exec="@ZCHAT_EXE@"
+Icon=zchat
+Terminal=false
+Categories=Network;Chat;InstantMessaging;
+StartupWMClass=zchat
