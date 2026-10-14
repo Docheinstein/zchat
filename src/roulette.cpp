@@ -290,6 +290,7 @@ namespace {
                     std::format("🎡 {} opens the roulette: /casino roulette bet N WHAT to bet too, /casino "
                                 "to see it.",
                                 colored(sender)));
+                chat_.notify_event("🎡 Roulette", colored(sender), "opens the roulette: place your bets!", sender);
             } else if (sender != dealer_ || dealing_ || phase_ != 'b') {
                 return;
             }

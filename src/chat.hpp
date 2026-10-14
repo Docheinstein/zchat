@@ -183,6 +183,13 @@ public:
     void game_notice(std::string_view text);
     void game_print(std::string_view line);
 
+    // Says on the desktop something that happens besides messages, e.g. a game that starts (see Screen::notify()):
+    // where (e.g. the game), who or what (a name as colored_name() gives it, whose color the notification takes),
+    // and what. from is whom it is about, for their avatar (0 for nobody); command is what clicking it types (empty for
+    // just showing the window). Thread-safe.
+    void notify_event(std::string_view where, std::string_view title, std::string_view text, std::uint64_t from = 0,
+                      std::string command = {}) const;
+
     // Prints messages from the history (see history.hpp), each with the time it was sent at.
     void print_history(const std::vector<history::Entry>& entries);
 
@@ -291,6 +298,8 @@ private:
     void show(const Entry& entry, bool live);
     // Something for a channel: kept, and shown if it is the current one, or else told about once.
     void deliver(const std::string& channel, Entry entry);
+    // Says on the desktop what someone else said, drew or sent in a channel, live (see Screen::notify()).
+    void notify_entry(const std::string& channel, const Entry& entry, bool current) const;
     // A notice as it is printed, with the time.
     std::string notice_line(std::string_view text) const;
     // Whether the games log is being shown; and the channel what we say, draw and send goes to: the current one, or

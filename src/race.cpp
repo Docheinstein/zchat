@@ -173,6 +173,10 @@ namespace {
                     join(*round, sender, name, Stage::Ready, countdown + answer_time + patience);
                     announce_ready();
                     terminal_.bell();
+                    chat_.notify_event("⌨️ Typing race", chat_.colored_name(sender, name),
+                                       std::format("started a typing race: the words show up in {} seconds!",
+                                                   countdown.count()),
+                                       sender);
                 }
             } else if (event == "go") {
                 if (text.empty() || (stage_ != Stage::Idle && (*round != round_ || referee_))) {

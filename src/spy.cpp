@@ -473,6 +473,10 @@ namespace {
                                      "if you do not answer in {} seconds, they are shared anyway.",
                                      r.other_name, *seconds));
             terminal_.bell();
+            chat_.notify_event("👁 Spy", r.other_name,
+                               std::format("wants to see your screen(s)! Answer within {} seconds, or they are shared.",
+                                           *seconds),
+                               sender);
             requests_.push_back(std::move(r));
             publish();
         }

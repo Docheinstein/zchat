@@ -587,6 +587,10 @@ namespace {
             } else if (phase_ != Phase::Lobby) {
                 enter_lobby(round, sender, name);
                 terminal_.bell();
+                chat_.notify_event("💣 Bomber", chat_.colored_name(sender, name),
+                                   std::format("started a round of bomber: join within {} seconds to play!",
+                                               join_time.count()),
+                                   sender);
             }
             if (sender != referee_) {
                 return;
@@ -1054,6 +1058,7 @@ namespace {
                                                     "/game bomber bomb drops a bomb, /game bomber map shows it."
                                                   : "Arrows or WASD move, Space drops a bomb."));
                 terminal_.bell();
+                chat_.notify_event("💣 Bomber", "The round starts!", std::format("With {}.", roster_names()));
             } else if (was_lobby) {
                 chat_.game_notice(std::format("💣 The round of bomber starts, with {}: {} shows it.", roster_names(),
                                               terminal_mode_ ? "/game bomber map" : "the window"));

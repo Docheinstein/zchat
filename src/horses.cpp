@@ -360,6 +360,10 @@ namespace {
                                               "see it. Favourite: {} (x{}).",
                                               colored(sender), horse_name(favourite()),
                                               hs::odds_text(field_[favourite()].odds)));
+                chat_.notify_event("🏇 Horse race", colored(sender),
+                                   std::format("opens a horse race: place your bets! Favourite: {}.",
+                                               horse_name(favourite())),
+                                   sender);
             } else if (sender != dealer_ || dealing_ || phase_ != 'b') {
                 return;
             }

@@ -1908,6 +1908,10 @@ void Chat::deliver(const std::string& channel, Entry entry) {
             backlog.erase(std::ranges::find_if(backlog, is_picture));
         }
     }
+    // Not what the games say, nor the moves of games (a race's words).
+    if (entry.id != id_ && entry.kind != Entry::Kind::Line && channel != channel::games_log) {
+        notify_entry(channel, entry, current);
+    }
     if (current) {
         show(entry, true);
         return;
@@ -1935,6 +1939,41 @@ void Chat::deliver(const std::string& channel, Entry entry) {
     } else if (first_unread) {
         notice(std::format("New messages in #{}: /join {}", channel, channel));
     }
+}
+
+void Chat::notify_entry(const std::string& channel, const Entry& entry, bool current) const {
+    const bool direct = direct_partner(channel) != 0;
+    std::string text;
+    switch (entry.kind) {
+    case Entry::Kind::Message: {
+        const auto quote = markup::split_quote(*entry.data);
+        text = markup::render(quote ? quote->reply : std::string_view(*entry.data), false);
+        break;
+    }
+    case Entry::Kind::Art:
+        text = "🎨 sent a drawing";
+        break;
+    case Entry::Kind::Picture:
+        text = "🖼 sent a picture";
+        break;
+    case Entry::Kind::File:
+        text = std::format("📎 sent a file: {}", entry.file_name);
+        break;
+    case Entry::Kind::Trill:
+        text = std::format("🔊 trill! {}", entry.file_name);
+        break;
+    case Entry::Kind::Line:
+        return;
+    }
+    terminal_.notify({Screen::Notification::Kind::Message, direct ? "Private message" : "#" + channel,
+                      colored_name(entry.id, entry.name), text, avatar_of(entry.id),
+                      current ? std::string() : join_hint(channel)});
+}
+
+void Chat::notify_event(std::string_view where, std::string_view title, std::string_view text, std::uint64_t from,
+                        std::string command) const {
+    terminal_.notify({Screen::Notification::Kind::Event, std::string(where), std::string(title), std::string(text),
+                      from ? avatar_of(from) : std::string(), std::move(command)});
 }
 
 std::vector<std::string> Chat::peers() const {

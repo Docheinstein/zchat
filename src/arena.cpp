@@ -771,6 +771,10 @@ namespace {
             } else if (phase_ != Phase::Lobby) {
                 enter_lobby(round, sender, name);
                 terminal_.bell();
+                chat_.notify_event("🎯 Arena", chat_.colored_name(sender, name),
+                                   std::format("started a round of arena: join within {} seconds to play!",
+                                               join_time.count()),
+                                   sender);
             }
             if (sender != referee_) {
                 return;
@@ -1189,6 +1193,7 @@ namespace {
                                                                "map shows it."
                                                              : "WASD moves, the mouse aims and shoots."));
                 terminal_.bell();
+                chat_.notify_event("🎯 Arena", "The round starts!", std::format("With {}.", roster_names()));
             } else if (was_lobby) {
                 chat_.game_notice(std::format("🎯 The round of arena starts, with {}: {} shows it.", roster_names(),
                                               terminal_mode_ ? "/game arena map" : "the window"));

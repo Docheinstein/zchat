@@ -775,12 +775,16 @@ namespace {
             if (us < 0) {
                 notice(std::format("◓ A Pokémon battle starts ({}): {}! /game pokemon watch {} to watch it.",
                                               format_name(gen), vs, names[0]));
+                chat_.notify_event("◓ Pokémon", "A battle starts!", std::format("{} ({}).", vs, format_name(gen)),
+                                   referee);
                 return;
             }
             b.side = side_name(us);
             b.view.emplace(b.side);
             notice(std::format("◓ Your Pokémon battle starts ({}): {}! Good luck.", format_name(gen), vs));
             terminal_.bell();
+            chat_.notify_event("◓ Pokémon", "Your battle starts!", std::format("{} ({}). Good luck!", vs, format_name(gen)),
+                               ids[1 - us]);
             if (referee == chat_.id()) {
                 b.referee = std::make_unique<Referee>();
                 const auto now = clock::now();

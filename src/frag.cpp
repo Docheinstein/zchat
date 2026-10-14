@@ -801,6 +801,10 @@ namespace {
             } else if (phase_ != Phase::Lobby) {
                 enter_lobby(round, sender, name);
                 terminal_.bell();
+                chat_.notify_event("🔫 Frag", chat_.colored_name(sender, name),
+                                   std::format("started a round of frag: join within {} seconds to play!",
+                                               join_time.count()),
+                                   sender);
             }
             if (sender != referee_) {
                 return;
@@ -1227,6 +1231,7 @@ namespace {
                                                     "map shows it."
                                                   : "Click the view: WASD walks, the mouse turns and shoots."));
                 terminal_.bell();
+                chat_.notify_event("🔫 Frag", "The round starts!", std::format("With {}.", roster_names()));
             } else if (was_lobby) {
                 chat_.game_notice(std::format("🔫 The round of frag starts, with {}: {} shows it.", roster_names(),
                                               terminal_mode_ ? "/game frag map" : "the window"));
