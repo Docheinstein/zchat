@@ -49,6 +49,15 @@ any other kind of file. Files sent in the chat get a Download button. Hovering o
 (WebView2 on Windows, WebKit on macOS and Linux) showing `src/ui/index.html`, built into zchat, so it is ready for
 more to come: real images and emoji, more channels, avatars, fonts.
 
+While the window is not the one in front, what happens shows up in a little window in the bottom right corner of the
+screen, as Teams and Discord do: the messages (with who wrote them, their avatar and the channel), and the games and
+other events (a round of dice, bomber, arena or frag opened, a typing race, the casino's tables, a Pokémon battle, your
+turn at blackjack, a vote to kick, a request to spy). They stack up, go away by themselves after a few seconds (not
+while the mouse is on them), and a click brings zchat back, in the channel of the message. 🔔 at the top right turns
+them on and off, for messages or for the rest, or even while zchat is in front, and shows a test one. On Windows they
+are windows of their own; on Linux under Wayland, where a window cannot choose where it goes, they are drawn through
+Xwayland, and without it they are the desktop's own notifications.
+
 In the window the chat stays a chat: what the games say (rounds starting, rolls, boards, winners, Elo and coins, the
 answers to `/game`, `/casino`, `/coins` and `/shop`) goes to `#games-log`, right under `#general`, a channel of the
 window's own (🎮) that gets a dot when something new is in it. Typing one of those commands in the box shows it (the

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "image.hpp"
 #include "screen.hpp"
 
 #include <cstdint>
@@ -54,9 +55,13 @@ public:
     bool show_message(std::string_view line, std::optional<std::string_view> quote,
                       std::string_view reply_quote) override;
     void nudge() override;
+    void notify(const Notification& notification) override;
     void interrupt() override;
 
 private:
+    // The picture of an avatar, by hash (see set_avatars()), for a notification; null when there is none.
+    std::shared_ptr<const image::DecodedImage> avatar_picture(std::string_view hash) const;
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

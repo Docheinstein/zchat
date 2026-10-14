@@ -396,6 +396,12 @@ namespace {
                                          v.referee_name, v.target_name, *seconds));
             }
             terminal_.bell();
+            chat_.notify_event("🗳 Vote", v.referee_name,
+                               v.us ? std::format("wants you kicked out of the chat! The others vote for {} seconds.",
+                                                  *seconds)
+                                    : std::format("wants to kick {} out of the chat: vote within {} seconds!",
+                                                  v.target_name, *seconds),
+                               sender);
             votes_.push_back(std::move(v));
         }
 

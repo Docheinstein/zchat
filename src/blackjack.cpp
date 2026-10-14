@@ -534,6 +534,8 @@ namespace {
                     "/casino to see it.",
                     colored(dealer),
                     theirs == table_.seats.end() ? "" : std::format(" with a bet of {}", plural(theirs->bet, "coin"))));
+                chat_.notify_event("🃏 Blackjack", colored(dealer), "opens the blackjack table: sit down and bet!",
+                                   dealer);
             }
             if (table_.phase == 'b') {
                 for (const bj::Seat& s : table_.seats) {
@@ -563,6 +565,9 @@ namespace {
                              : ""));
                     if (hand) {
                         terminal_.bell();
+                        chat_.notify_event("🃏 Blackjack", "Your turn!",
+                                           std::format("{} · the dealer shows {}.", hands_text(*mine),
+                                                       casino::card_label(table_.dealer.front())));
                     }
                 }
             }

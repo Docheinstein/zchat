@@ -96,6 +96,25 @@
     padding: 12px; box-shadow: 0 8px 28px #000a;
   }
   #channel-panel.open { display: block; }
+  /* The settings of the desktop notifications. */
+  #notify-panel {
+    position: fixed; top: 50px; right: 12px; width: 300px; z-index: 22; display: none; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px; box-shadow: 0 8px 28px #000a;
+  }
+  #notify-panel.open { display: block; }
+  #notify-panel .title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  #notify-panel .hint { color: var(--muted); font-size: 12px; margin-bottom: 10px; line-height: 1.4; }
+  #notify-panel label { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
+  #notify-panel label.sub { padding-left: 22px; }
+  #notify-panel label.off { opacity: .45; cursor: default; }
+  #notify-panel input { accent-color: var(--accent); margin: 0; }
+  #notify-panel .row { display: flex; justify-content: flex-end; margin-top: 10px; }
+  #notify-panel .row button {
+    background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    height: 28px; padding: 0 10px; font: inherit; cursor: pointer;
+  }
+  #notify-panel .row button:hover { border-color: var(--accent); }
+  header button#notify-open.off { color: var(--muted); }
   #channel-panel .title { display: flex; align-items: center; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
   #channel-panel .title button { margin-left: auto; }
   #channel-panel h3 {
@@ -461,10 +480,20 @@
   <button id="bm-open" title="Bomber: start a round, or show the one on">💣 Bomber</button>
   <button id="am-open" title="Arena: start a round of the shooter, or show the one on">🎯 Arena</button>
   <button id="fr-open" title="Frag: start a round of the first-person shooter, or show the one on">🔫 Frag</button>
+  <button id="notify-open" title="Desktop notifications">🔔</button>
   <select id="font" title="Font"></select>
   <button id="smaller" title="Smaller text">A−</button>
   <button id="bigger" title="Bigger text">A+</button>
 </header>
+<div id="notify-panel">
+  <div class="title">Desktop notifications</div>
+  <div class="hint">Little windows in the corner of the screen, while zchat is not the window in front.</div>
+  <label><input type="checkbox" id="notify-on"> Show desktop notifications</label>
+  <label class="sub"><input type="checkbox" id="notify-messages"> Messages</label>
+  <label class="sub"><input type="checkbox" id="notify-events"> Games and other events</label>
+  <label class="sub"><input type="checkbox" id="notify-focused"> Even when zchat is in front</label>
+  <div class="row"><button id="notify-test">Show a test notification</button></div>
+</div>
 <aside>
   <div id="me" title="Change your name and color"><span class="avatar"></span>
     <div class="who"><div class="name"></div><div class="status">online<span class="coins" title="Your coins, won in the games: click for what they buy"></span></div></div></div>
@@ -570,8 +599,9 @@
   };
 }
 // The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
-// zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatChannels(), zchatChannelPeople(channel), zchatRewrite(line), zchatDrop(name, base64), zchatDroppedFile(), zchatSettings()
-// and zchatSaveSettings(size, font).
+// zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatChannels(), zchatChannelPeople(channel), zchatRewrite(line), zchatDrop(name, base64), zchatDroppedFile(), zchatSettings(),
+// zchatSaveSettings(size, font), zchatNotifySettings(), zchatSaveNotifySettings(on, messages, events, focused) and
+// zchatTestNotification().
 const log = document.getElementById("log");
 const input = document.getElementById("input");
 const mentionsBox = document.getElementById("mentions");
@@ -599,6 +629,34 @@ for (const [name] of fonts) {
 }
 fontSelect.value = settings.font || "Default";
 fontSelect.onchange = () => { settings.font = fontSelect.value; saveSettings(); applySettings(); };
+// --- Desktop notifications: whether, and of what (zchatNotifySettings / zchatSaveNotifySettings).
+const notifyPanel = document.getElementById("notify-panel");
+const notifyOpen = document.getElementById("notify-open");
+const notifyBoxes = ["notify-on", "notify-messages", "notify-events", "notify-focused"].map(id => document.getElementById(id));
+function showNotifySettings() {
+  const on = notifyBoxes[0].checked;
+  for (const box of notifyBoxes.slice(1)) {
+    box.disabled = !on;
+    box.parentElement.classList.toggle("off", !on);
+  }
+  notifyOpen.textContent = on ? "🔔" : "🔕";
+  notifyOpen.classList.toggle("off", !on);
+  notifyOpen.title = "Desktop notifications: " + (on ? "on" : "off");
+}
+for (const box of notifyBoxes) {
+  box.onchange = () => {
+    showNotifySettings();
+    try { window.zchatSaveNotifySettings(...notifyBoxes.map(b => b.checked ? "on" : "off")); } catch {}
+  };
+}
+notifyOpen.onclick = () => notifyPanel.classList.toggle("open");
+document.getElementById("notify-test").onclick = () => { try { window.zchatTestNotification(); } catch {} };
+document.addEventListener("mousedown", e => {
+  if (notifyPanel.classList.contains("open") && !notifyPanel.contains(e.target) && e.target !== notifyOpen) {
+    notifyPanel.classList.remove("open");
+  }
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") notifyPanel.classList.remove("open"); });
 document.getElementById("smaller").onclick = () => {
   settings.size = Math.max(9, (settings.size || 14) - 1); saveSettings(); applySettings();
 };
@@ -6868,6 +6926,11 @@ input.focus();
     if (+size) settings.size = +size;
     if (font) { settings.font = font; fontSelect.value = font; }
     applySettings();
+  } catch {}
+  try {
+    const notify = await window.zchatNotifySettings();
+    notifyBoxes.forEach((box, i) => { box.checked = notify[i] === "on"; });
+    showNotifySettings();
   } catch {}
   window.zchatReady();
   refreshPeople();

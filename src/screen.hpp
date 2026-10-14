@@ -144,6 +144,27 @@ public:
     // (see popup::nudge()). Takes about half a second. Thread-safe.
     virtual void nudge() {}
 
+    // A desktop notification (see notify()).
+    struct Notification {
+        // A message, or something else that happens (a game starts, a challenge…): the user chooses which they get.
+        enum class Kind { Message, Event };
+        Kind kind = Kind::Message;
+        // Where it comes from, e.g. "#general", a game; plain text.
+        std::string where;
+        // Who or what, and what they say, as printed: with ANSI styles, the color of the title being the
+        // notification's.
+        std::string title;
+        std::string text;
+        // The avatar of whom it is from, as in a Mention; empty for none.
+        std::string avatar = {};
+        // What clicking it types, as if the user did (e.g. "/join general"); empty for just showing the window.
+        std::string command = {};
+    };
+
+    // Says what happens on the desktop, where it can and the user wants it: a little window in a corner of the screen,
+    // as chat programs show, while the user looks elsewhere (see popup::toast()). Thread-safe.
+    virtual void notify(const Notification& /*notification*/) {}
+
     // Makes read_line() return nullopt right away, now and from then on. Thread-safe.
     virtual void interrupt() = 0;
 };

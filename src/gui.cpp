@@ -6,6 +6,7 @@
 #include "ui_html.hpp"
 #include "webview_window.hpp"
 
+#include <atomic>
 #include <cctype>
 #include <condition_variable>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <system_error>
@@ -176,6 +178,71 @@ namespace {
         return out.substr(0, 100);
     }
 
+    // A line as printed, without its ANSI escape sequences, on one line: for a notification.
+    std::string plain_text(std::string_view line) {
+        std::string out;
+        for (std::size_t i = 0; i < line.size(); ++i) {
+            if (line[i] == '\x1b' && i + 1 < line.size() && line[i + 1] == '[') {
+                i += 2;
+                while (i < line.size() && !(line[i] >= 0x40 && line[i] <= 0x7E)) {
+                    ++i;
+                }
+                continue;
+            }
+            const char c = line[i] == '\n' || line[i] == '\t' ? ' ' : line[i];
+            if (!(c == ' ' && (out.empty() || out.back() == ' '))) {
+                out += c;
+            }
+        }
+        while (!out.empty() && out.back() == ' ') {
+            out.pop_back();
+        }
+        return out;
+    }
+
+    // At most max bytes of text, cut between UTF-8 characters, with "…" when it is cut.
+    std::string shorten(std::string text, std::size_t max) {
+        if (text.size() <= max) {
+            return text;
+        }
+        std::size_t cut = max;
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) {
+            --cut;
+        }
+        text.resize(cut);
+        return text + "…";
+    }
+
+    // The first true color of a line as printed ("38;2;R;G;B"), as 0xRRGGBB: that of a name.
+    std::optional<std::uint32_t> first_color(std::string_view line) {
+        const auto at = line.find("38;2;");
+        if (at == std::string_view::npos) {
+            return std::nullopt;
+        }
+        std::uint32_t color = 0;
+        std::size_t i = at + 5;
+        for (int k = 0; k < 3; ++k) {
+            unsigned v = 0;
+            const std::size_t start = i;
+            while (i < line.size() && line[i] >= '0' && line[i] <= '9' && v <= 255) {
+                v = v * 10 + static_cast<unsigned>(line[i++] - '0');
+            }
+            if (i == start || v > 255) {
+                return std::nullopt;
+            }
+            color = color << 8 | v;
+            if (k < 2 && (i >= line.size() || line[i++] != ';')) {
+                return std::nullopt;
+            }
+        }
+        return color;
+    }
+
+    // The settings of the desktop notifications, in the config file: whether they are shown at all, for messages,
+    // for the rest, and even while the window is in front.
+    constexpr std::string_view notify_keys[] = {"notifications", "notify_messages", "notify_events", "notify_focused"};
+    constexpr bool notify_defaults[] = {true, true, true, false};
+
 } // namespace
 
 struct Gui::Impl {
@@ -197,6 +264,9 @@ struct Gui::Impl {
     std::function<std::vector<ChannelItem>()> channel_source;
     std::function<ChannelPeople(std::string_view)> people_source;
     std::function<std::optional<std::string>(std::string_view)> rewriter;
+
+    // The desktop notifications the user wants, as notify_keys says.
+    std::atomic<bool> notify_settings[std::size(notify_keys)];
 
     // Runs JavaScript in the page, from any thread.
     void eval(std::string js) {
@@ -389,6 +459,47 @@ Gui::Gui() {
         }
         return "null";
     });
+    // The settings of the desktop notifications: ["on" or "off", ...], as notify_keys says.
+    for (std::size_t i = 0; i < std::size(notify_keys); ++i) {
+        const auto value = config::get(notify_keys[i]);
+        impl_->notify_settings[i] = value ? *value == "on" : notify_defaults[i];
+    }
+    view.bind("zchatNotifySettings", [this](const std::string&) -> std::string {
+        std::string out = "[";
+        for (std::size_t i = 0; i < std::size(notify_keys); ++i) {
+            out += std::format("{}\"{}\"", i ? "," : "", impl_->notify_settings[i] ? "on" : "off");
+        }
+        return out + "]";
+    });
+    view.bind("zchatSaveNotifySettings", [this](const std::string& args) -> std::string {
+        const auto strings = json_strings(args);
+        for (std::size_t i = 0; i < std::min(strings.size(), std::size(notify_keys)); ++i) {
+            impl_->notify_settings[i] = strings[i] == "on";
+            config::set(notify_keys[i], strings[i] == "on" ? "on" : "off");
+        }
+        return "null";
+    });
+    // A notification to see what they look like, even with the window in front.
+    view.bind("zchatTestNotification", [this](const std::string&) -> std::string {
+        Mention self;
+        {
+            std::scoped_lock lock(impl_->mutex);
+            if (impl_->self_source) {
+                self = impl_->self_source();
+            }
+        }
+        popup::Toast toast;
+        toast.where = "zchat";
+        toast.title = self.name.empty() ? "zchat" : self.name;
+        toast.text = "This is how messages and games show up while you look elsewhere. Click to come back to zchat.";
+        toast.accent = first_color("\x1b[" + self.style + "m").value_or(toast.accent);
+        toast.picture = avatar_picture(self.avatar);
+        toast.clicked = [this] {
+            popup::raise(impl_->view.native_window());
+        };
+        popup::toast(std::move(toast));
+        return "null";
+    });
     view.set_html(std::string(reinterpret_cast<const char*>(ui_html), ui_html_size));
     // On Linux, the popups of trills are made on the thread of the window's loop (see popup.hpp).
     popup::set_dispatcher([this](std::function<void()> work) {
@@ -551,6 +662,56 @@ void Gui::nudge() {
     if (void* const window = impl_->view.native_window()) {
         popup::nudge(window);
     }
+}
+
+std::shared_ptr<const image::DecodedImage> Gui::avatar_picture(std::string_view hash) const {
+    if (hash.empty()) {
+        return nullptr;
+    }
+    std::function<std::optional<std::string>(std::string_view)> source;
+    {
+        std::scoped_lock lock(impl_->mutex);
+        source = impl_->avatar_source;
+    }
+    const auto text = source ? source(hash) : std::nullopt;
+    const auto picture = text ? image::parse_picture(*text) : std::nullopt;
+    if (!picture) {
+        return nullptr;
+    }
+    auto decoded = image::decode_image(picture->first);
+    return decoded ? std::make_shared<const image::DecodedImage>(std::move(*decoded)) : nullptr;
+}
+
+void Gui::notify(const Notification& notification) {
+    const bool wanted = notification.kind == Notification::Kind::Message ? impl_->notify_settings[1].load()
+                                                                         : impl_->notify_settings[2].load();
+    if (!impl_->notify_settings[0] || !wanted) {
+        return;
+    }
+    popup::Toast toast;
+    toast.where = notification.where;
+    toast.title = shorten(plain_text(notification.title), 80);
+    toast.text = shorten(plain_text(notification.text), 160);
+    toast.accent = first_color(notification.title).value_or(toast.accent);
+    toast.picture = avatar_picture(notification.avatar);
+    // Made on the window's thread, which knows whether it is in front.
+    impl_->view.dispatch([this, toast = std::move(toast), command = notification.command]() mutable {
+        void* const window = impl_->view.native_window();
+        if (!impl_->notify_settings[3] && popup::in_front(window)) {
+            return;
+        }
+        toast.clicked = [this, window, command] {
+            popup::raise(window);
+            if (!command.empty()) {
+                {
+                    std::scoped_lock lock(impl_->mutex);
+                    impl_->lines.push_back(command);
+                }
+                impl_->typed.notify_all();
+            }
+        };
+        popup::toast(std::move(toast));
+    });
 }
 
 void Gui::interrupt() {

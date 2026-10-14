@@ -105,6 +105,10 @@ namespace {
                 if (!on_ || (*round < round_ && players_.empty())) {
                     begin(*round, chat_.colored_name(sender, name));
                     terminal_.bell();
+                    chat_.notify_event("🎲 Dice", chat_.colored_name(sender, name),
+                                       std::format("started a round of dice: roll within {} seconds to play!",
+                                                   join_time.count()),
+                                       sender);
                 }
                 return;
             }

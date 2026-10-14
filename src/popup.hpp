@@ -3,8 +3,11 @@
 #include "image.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
+#include <memory>
 #include <stop_token>
+#include <string>
 #include <string_view>
 
 namespace zchat::popup {
@@ -39,5 +42,35 @@ void fly(const image::DecodedImage& picture, std::chrono::milliseconds duration,
 // Brings a window to the front (shown again if it is minimized) and shakes it, like MSN's nudge: an HWND on Windows,
 // a GtkWindow* on Linux. Takes about half a second.
 void nudge(void* window);
+
+// Whether a window (as for nudge()) is the one in front, that the user types in. On its thread.
+bool in_front(void* window);
+
+// Brings a window (as for nudge()) to the front, shown again if it is minimized, as after a click on a notification
+// about it. On its thread.
+void raise(void* window);
+
+// A desktop notification, as chat programs show them (see toast()).
+struct Toast {
+    // Small, above the rest: where it comes from (e.g. "#general", a game).
+    std::string where;
+    // Who or what, in bold, and what they say. Plain text.
+    std::string title;
+    std::string text;
+    // Its color, 0xRRGGBB: the stripe on its left, and the circle where there is no picture.
+    std::uint32_t accent = 0x6ea8ff;
+    // The picture of whom it is from (their avatar), shown in a circle; null for none (then the title's initial).
+    std::shared_ptr<const image::DecodedImage> picture;
+    // What clicking it does (besides closing it), on the thread it was shown on.
+    std::function<void()> clicked;
+};
+
+// Shows a notification: a little window in the bottom right corner of the screen, above the others, without taking
+// the focus, that goes away by itself after a few seconds (not while the mouse is on it), or when clicked. Several
+// stack up, the newest at the bottom.
+// On the thread of the zchat window (on Linux, that of GTK's loop; see set_dispatcher()), whose loop runs it. On
+// Linux under Wayland, where a window cannot choose where it goes, it is drawn through Xwayland; without it, the
+// notification is the desktop's own (without clicked).
+void toast(Toast toast);
 
 } // namespace zchat::popup
