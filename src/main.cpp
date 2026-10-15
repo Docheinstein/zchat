@@ -1,3 +1,4 @@
+#include "changelog.hpp"
 #include "channel.hpp"
 #include "chat.hpp"
 #include "config.hpp"
@@ -516,6 +517,65 @@ void dnd_command(zchat::Chat& chat, std::string_view arg) {
     chat.notice(std::format("{} Do Not Disturb: {}.", notify::dnd(s, now) ? "🔕" : "🔔", dnd_status(s)));
 }
 
+// /changelog [N|all]: what is new in zchat, the last N days of CHANGELOG.md (3 when not given).
+void print_changelog(zchat::Chat& chat, std::string_view arg) {
+    while (!arg.empty() && arg.front() == ' ') {
+        arg.remove_prefix(1);
+    }
+    const auto days = zchat::changelog::parse(zchat::changelog::text());
+    std::size_t count = 3;
+    if (arg == "all") {
+        count = days.size();
+    } else if (!arg.empty()) {
+        const auto [end, ec] = std::from_chars(arg.data(), arg.data() + arg.size(), count);
+        if (ec != std::errc {} || end != arg.data() + arg.size() || count == 0) {
+            chat.notice("Use /changelog for the last days, /changelog N for the last N, /changelog all for all.");
+            return;
+        }
+    }
+    if (days.empty()) {
+        chat.notice("This zchat has no changelog.");
+        return;
+    }
+    count = std::min(count, days.size());
+    chat.notice(count == days.size() ? std::string("📜 What is new in zchat, every day of it:")
+                : count == 1          ? std::string("📜 What is new in zchat, the last day:")
+                                      : std::format("📜 What is new in zchat, the last {} days:", count));
+    for (std::size_t i = 0; i < count; ++i) {
+        chat.notice(days[i].date);
+        for (const auto& item : days[i].items) {
+            chat.notice("  • " + zchat::changelog::plain(item));
+        }
+    }
+    if (count < days.size()) {
+        chat.notice("/changelog all for the rest (or 📜 at the top of the window).");
+    }
+}
+
+// Once per new day of the changelog, at startup: what is new since the changelog this zchat last showed.
+void announce_changelog(zchat::Chat& chat) {
+    const auto days = zchat::changelog::parse(zchat::changelog::text());
+    if (days.empty()) {
+        return;
+    }
+    const auto seen = zchat::config::get("changelog_seen").value_or("");
+    if (seen >= days.front().date) {
+        return;
+    }
+    constexpr std::size_t shown = 6;
+    auto news = zchat::changelog::news_since(days, seen, shown + 1);
+    if (news.empty()) {
+        return;
+    }
+    std::string line = "📜 New in zchat: ";
+    for (std::size_t i = 0; i < news.size() && i < shown; ++i) {
+        line += (i == 0 ? "" : ", ") + news[i];
+    }
+    line += news.size() > shown ? " and more" : "";
+    chat.notice(line + ". /changelog tells all about it.");
+    zchat::config::set("changelog_seen", days.front().date);
+}
+
 void print_help(zchat::Chat& chat) {
     chat.notice("People:");
     chat.notice("  /who         list the people in the chat");
@@ -584,6 +644,7 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /dnd [30m|1h|8h|...|off]  Do Not Disturb: nothing notifies (for a while, or until /dnd off)");
     chat.notice("zchat:");
     chat.notice("  /update      get the latest zchat, build it and restart");
+    chat.notice("  /changelog [N|all]  what is new in zchat, the last N days (in the window: 📜 at the top)");
     chat.notice("  /help        show this help (/help game: the games)");
     chat.notice("  /quit        leave the chat (or Ctrl+C, Ctrl+D)");
 }
@@ -1363,6 +1424,7 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
     chat.notice(std::format("Welcome to zchat! You are {}.", chat.colored_own_name()));
     chat.notice(
         std::format("Chatting on UDP port {}. Type a message and press Enter, /help for commands.", options.port));
+    announce_changelog(chat);
     terminal.set_prompt(terminal.colors() ? "\x1b[1m>\x1b[0m " : "> ", 2);
     terminal.set_mentions([&chat] {
         return chat.mentionable();
@@ -1524,6 +1586,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             notify_command(chat, terminal, input.substr(std::string_view("/notify").size()));
         } else if (input == "/dnd" || input.starts_with("/dnd ")) {
             dnd_command(chat, input.substr(std::string_view("/dnd").size()));
+        } else if (input == "/changelog" || input.starts_with("/changelog ")) {
+            print_changelog(chat, input.substr(std::string_view("/changelog").size()));
         } else if (input == "/update") {
             if (!updater.start()) {
                 chat.notice("An update is already in progress.");
