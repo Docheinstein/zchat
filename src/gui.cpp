@@ -5,6 +5,7 @@
 #include "json.hpp"
 #include "notify.hpp"
 #include "popup.hpp"
+#include "process.hpp"
 #include "ui_html.hpp"
 #include "webview_window.hpp"
 
@@ -20,9 +21,11 @@
 #include <mutex>
 #include <string>
 #include <system_error>
+#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 namespace zchat {
@@ -62,6 +65,47 @@ namespace {
             out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
             out += static_cast<char>(0x80 | (cp & 0x3F));
         }
+    }
+
+    // Opens a link of a message in the browser. Only web links (http and https), so a message cannot make zchat run
+    // or open anything else.
+    void open_url(const std::string& url) {
+        const auto starts = [&](std::string_view prefix) {
+            if (url.size() <= prefix.size()) {
+                return false;
+            }
+            for (std::size_t i = 0; i < prefix.size(); ++i) {
+                if (std::tolower(static_cast<unsigned char>(url[i])) != prefix[i]) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (!starts("http://") && !starts("https://")) {
+            return;
+        }
+        for (const char c : url) {
+            const auto u = static_cast<unsigned char>(c);
+            if (u <= ' ' || u == 0x7F || c == '"') {
+                return;
+            }
+        }
+#ifdef _WIN32
+        const int n = MultiByteToWideChar(CP_UTF8, 0, url.data(), static_cast<int>(url.size()), nullptr, 0);
+        std::wstring wide(static_cast<std::size_t>(n), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, url.data(), static_cast<int>(url.size()), wide.data(), n);
+        ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+        // xdg-open can wait for the browser it starts, so not on the window's thread.
+#ifdef __APPLE__
+        std::vector<std::string> args = {"open", url};
+#else
+        std::vector<std::string> args = {"xdg-open", url};
+#endif
+        std::thread([args = std::move(args)] {
+            process::run(args, std::stop_token());
+        }).detach();
+#endif
     }
 
     // The strings of a JSON array, as the arguments of a bound function come; anything else in it is skipped.
@@ -494,6 +538,14 @@ Gui::Gui() {
             popup::raise(impl_->view.native_window());
         };
         popup::toast(std::move(toast));
+        return "null";
+    });
+    // A link clicked in a message.
+    view.bind("zchatOpenUrl", [](const std::string& args) -> std::string {
+        const auto strings = json_strings(args);
+        if (!strings.empty()) {
+            open_url(strings.front());
+        }
         return "null";
     });
     view.set_html(std::string(reinterpret_cast<const char*>(ui_html), ui_html_size));
