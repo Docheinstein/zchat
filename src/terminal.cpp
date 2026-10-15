@@ -631,6 +631,28 @@ void Terminal::accept_mention_locked(const Mention& mention) {
     cursor_ = start + inserted.size();
 }
 
+std::vector<commands::Command> Terminal::command_matches_locked() const {
+    // The list needs cursor movements to be drawn below the input line, like the '@' one.
+    if (!command_open_ || !vt_) {
+        return {};
+    }
+    return commands::matching(std::string_view(buffer_).substr(0, cursor_));
+}
+
+void Terminal::accept_command_locked(const commands::Command& command, bool space) {
+    command_open_ = false;
+    const std::size_t end = std::min(buffer_.find(' '), buffer_.size());
+    std::string inserted(command.name);
+    if (space && end == buffer_.size()) {
+        inserted += ' ';
+    }
+    if (buffer_.size() - end + inserted.size() > max_text_bytes) {
+        return;
+    }
+    buffer_.replace(0, end, inserted);
+    cursor_ = std::min(buffer_.size(), command.name.size() + (space ? 1 : 0));
+}
+
 bool Terminal::on_char(char32_t cp, bool& quit) {
     std::scoped_lock lock(mutex_);
     // While the '@' list is shown, Up/Down move in it, Enter/Tab pick the name and Escape closes it.
@@ -653,6 +675,42 @@ bool Terminal::on_char(char32_t cp, bool& quit) {
             return false;
         case key_escape:
             mention_start_.reset();
+            redraw_locked();
+            return false;
+        default:
+            break;
+        }
+    }
+    // While the list of commands is shown, the same; Enter runs a command that needs nothing more, and completes
+    // the others, for the rest to be typed.
+    if (const auto matches = command_matches_locked(); !matches.empty()) {
+        const std::size_t n = matches.size();
+        const auto& chosen = matches[command_selected_ % n];
+        switch (cp) {
+        case key_up:
+            command_selected_ = (command_selected_ % n + n - 1) % n;
+            redraw_locked();
+            return false;
+        case key_down:
+            command_selected_ = (command_selected_ + 1) % n;
+            redraw_locked();
+            return false;
+        case '\t':
+            accept_command_locked(chosen, true);
+            redraw_locked();
+            return false;
+        case '\r':
+        case '\n': {
+            const bool run = commands::runs_alone(chosen);
+            accept_command_locked(chosen, !run);
+            if (run) {
+                return true;
+            }
+            redraw_locked();
+            return false;
+        }
+        case key_escape:
+            command_open_ = false;
             redraw_locked();
             return false;
         default:
@@ -735,6 +793,12 @@ bool Terminal::on_char(char32_t cp, bool& quit) {
         }
         break;
     }
+    // What is typed (not the cursor moving, nor a line from the history) opens the list of commands again.
+    if (cp != key_up && cp != key_down && cp != key_left && cp != key_right && cp != key_home && cp != key_end &&
+        cp != key_ctrl_a && cp != key_ctrl_e) {
+        command_open_ = true;
+        command_selected_ = 0;
+    }
     update_mention_locked(cp);
     redraw_locked();
     return false;
@@ -748,6 +812,7 @@ std::string Terminal::take_line() {
     view_start_ = 0;
     draft_.clear();
     mention_start_.reset();
+    command_open_ = false;
     // Blank lines and repeats of the previous line are not worth an extra Up press.
     if (line.find_first_not_of(' ') != std::string::npos && (history_.empty() || history_.back() != line)) {
         history_.push_back(line);
@@ -773,6 +838,7 @@ void Terminal::rewrite_locked() {
         buffer_ = std::move(*line);
         cursor_ = buffer_.size();
         mention_start_.reset();
+        command_open_ = false;
         redraw_locked();
     }
 }
@@ -788,6 +854,7 @@ void Terminal::recall_locked(int step) {
     buffer_ = history_pos_ == history_.size() ? draft_ : history_[history_pos_];
     cursor_ = buffer_.size();
     mention_start_.reset();
+    command_open_ = false;
 }
 
 std::string Terminal::clear_line_locked() {
@@ -820,18 +887,42 @@ void Terminal::redraw_locked() {
     out += prompt_;
     out += std::string_view(buffer_).substr(begin, end - begin);
     const std::size_t back = count_chars(std::string_view(buffer_).substr(cursor_, end - cursor_));
+    // The entries of the '@' list or of the list of commands, as shown, and the highlighted one.
+    const std::size_t entry_room = cols > 5 ? cols - 5 : 1;
+    std::vector<std::string> entries;
+    std::size_t selected = 0;
     if (const auto matches = mention_matches_locked(); !matches.empty()) {
-        // The '@' list goes below the input line, the highlighted name marked with '>'. At the bottom of the
-        // screen, the line feeds scroll it up to make room.
-        const std::size_t selected = mention_selected_ % matches.size();
-        const std::size_t rows = std::min(matches.size(), max_mention_rows);
+        selected = mention_selected_ % matches.size();
+        for (const Mention& m : matches) {
+            const std::string_view name = std::string_view(m.name).substr(0, char_offset(m.name, entry_room));
+            entries.push_back(m.style.empty() ? std::string(name) : std::format("\x1b[{}m{}\x1b[0m", m.style, name));
+        }
+    } else if (const auto commands = command_matches_locked(); !commands.empty()) {
+        selected = command_selected_ % commands.size();
+        for (const auto& c : commands) {
+            // The name, then what it takes and what it does, dimmed, as much as fits.
+            std::size_t left = entry_room;
+            const auto fit = [&left](std::string_view s) {
+                s = s.substr(0, char_offset(s, left));
+                left -= std::min(left, count_chars(s));
+                return s;
+            };
+            const std::string args = c.args.empty() ? std::string() : " " + std::string(c.args);
+            const std::string about = "  " + std::string(c.about);
+            std::string entry = std::format("\x1b[1m{}\x1b[0m", fit(c.name));
+            entry += fit(args);
+            entry += std::format("\x1b[2m{}\x1b[0m", fit(about));
+            entries.push_back(std::move(entry));
+        }
+    }
+    if (!entries.empty()) {
+        // The list goes below the input line, the highlighted entry marked with '>'. At the bottom of the screen,
+        // the line feeds scroll it up to make room.
+        const std::size_t rows = std::min(entries.size(), max_mention_rows);
         const std::size_t first = selected >= rows ? selected - rows + 1 : 0;
-        const std::size_t name_room = cols > 5 ? cols - 5 : 1;
         for (std::size_t i = first; i < first + rows; ++i) {
-            const Mention& m = matches[i];
-            const std::string_view name = std::string_view(m.name).substr(0, char_offset(m.name, name_room));
             out += i == selected ? "\r\n \x1b[1m>\x1b[0m " : "\r\n   ";
-            out += m.style.empty() ? std::string(name) : std::format("\x1b[{}m{}\x1b[0m", m.style, name);
+            out += entries[i];
         }
         out += std::format("\x1b[{}A\r", rows);
         const std::size_t column = prompt_width_ + cursor - view_start_;

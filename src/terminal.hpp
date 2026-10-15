@@ -1,5 +1,6 @@
 #pragma once
 
+#include "commands.hpp"
 #include "screen.hpp"
 
 #include <atomic>
@@ -54,6 +55,10 @@ private:
     void update_mention_locked(char32_t typed);
     // Replaces the '@' and what was typed after it with the chosen name.
     void accept_mention_locked(const Mention& mention);
+    // The commands matching what was typed of one at the start of the line, when their list is open.
+    std::vector<commands::Command> command_matches_locked() const;
+    // Replaces what was typed of the command with the chosen one, and a space after it when more is typed.
+    void accept_command_locked(const commands::Command& command, bool space);
 
     std::optional<std::string> read_line_plain();
     std::optional<std::string> read_line_interactive();
@@ -97,6 +102,10 @@ private:
     // Byte offset in buffer_ of the '@' the list is open for, and the highlighted entry of the list.
     std::optional<std::size_t> mention_start_;
     std::size_t mention_selected_ = 0;
+    // Whether the list of commands is open: typing at the start of the line opens it (as long as what is typed
+    // matches some); Escape, Up/Down through the history and choosing one close it.
+    bool command_open_ = false;
+    std::size_t command_selected_ = 0;
 };
 
 } // namespace zchat

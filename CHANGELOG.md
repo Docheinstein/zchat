@@ -9,6 +9,9 @@ the first words in bold are what zchat shows when it says what is new.
 
 ## 2026-10-15
 
+* **Commands are suggested as you type them**: a `/` at the start of the line lists the commands, with what they
+  take and what they do, narrowed down letter by letter (in a terminal too). Up/Down choose, Tab completes, Enter
+  runs one that needs nothing more (or completes it, for the rest to be typed), Escape closes the list.
 * **Messages you missed come to you**: what was said while you were away, in `#general`, your channels and your
   private chats, comes from whoever has it as soon as you are back (📥), even if who said it is gone: every zchat
   keeps the last 30 days of what it can see, and they compare what they have. Messages from before show again when

@@ -1,6 +1,7 @@
 #include "gui.hpp"
 
 #include "changelog.hpp"
+#include "commands.hpp"
 #include "config.hpp"
 #include "image.hpp"
 #include "json.hpp"
@@ -377,6 +378,16 @@ Gui::Gui() {
         for (const auto& m : people) {
             out += out.size() > 1 ? "," : "";
             out += "[" + json_string(m.name) + "," + json_string(m.style) + "," + json_string(m.avatar) + "]";
+        }
+        return out + "]";
+    });
+    // The commands suggested while one is typed (see commands::all()): [name, args, about, runs alone].
+    view.bind("zchatCommands", [](const std::string&) -> std::string {
+        std::string out = "[";
+        for (const auto& c : commands::all()) {
+            out += out.size() > 1 ? "," : "";
+            out += std::format("[{},{},{},{}]", json_string(c.name), json_string(c.args), json_string(c.about),
+                               commands::runs_alone(c) ? "true" : "false");
         }
         return out + "]";
     });

@@ -15,6 +15,7 @@ target_sources(zchat PUBLIC
     cipher.cpp
     coins.cpp
     color.cpp
+    commands.cpp
     config.cpp
     dice.cpp
     elo.cpp
