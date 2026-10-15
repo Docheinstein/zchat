@@ -502,6 +502,12 @@
   }
   #mentions div { padding: 4px 12px; cursor: pointer; }
   #mentions div.selected { background: #2a3140; }
+  #mentions { max-width: calc(100% - 28px); }
+  #mentions div.command { white-space: nowrap; gap: 0; }
+  #mentions .command .name { font-weight: 600; }
+  #mentions .command .args { color: var(--muted); margin-left: 6px; }
+  #mentions .command .args:empty { display: none; }
+  #mentions .command .about { color: var(--muted); margin-left: 14px; overflow: hidden; text-overflow: ellipsis; }
   #drop {
     position: fixed; inset: 0; display: none; place-items: center; background: #0b0d10cc;
     border: 3px dashed var(--accent); font-size: 20px; color: var(--accent); z-index: 10;
@@ -657,7 +663,7 @@
   };
 }
 // The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
-// zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatChannels(), zchatChannelPeople(channel), zchatRewrite(line), zchatDrop(name, base64), zchatDroppedFile(), zchatSettings(),
+// zchatReady(), zchatSend(line), zchatMentions(), zchatCommands(), zchatSelf(), zchatAvatar(hash), zchatChannels(), zchatChannelPeople(channel), zchatRewrite(line), zchatDrop(name, base64), zchatDroppedFile(), zchatSettings(),
 // zchatSaveSettings(size, font), zchatFocus(focused), zchatNotifySettings(), zchatSaveNotifySettings(json) and
 // zchatTestNotification().
 const log = document.getElementById("log");
@@ -6830,15 +6836,30 @@ function stopQuote() {
 }
 quoting.querySelector("button").onclick = () => { stopQuote(); input.focus(); };
 
-// --- Input: Enter sends, Up/Down go through what was sent, '@' opens the list of people. Escape stops quoting.
+// --- Input: Enter sends, Up/Down go through what was sent, '@' opens the list of people, '/' at the start of the line
+// the list of commands. Escape stops quoting.
 const sent = [];
 let sentPos = 0, draft = "";
-let list = [], selected = 0, atStart = -1;
+// What the list shows: "people" or "commands".
+let list = [], selected = 0, atStart = -1, picking = "";
 
-function closeMentions() { mentionsBox.style.display = "none"; atStart = -1; list = []; }
+// The commands, from zchatCommands(): [name, args, about, runs alone]; they do not change, so asked for once.
+let commandList = null;
+async function allCommands() {
+  if (!commandList) {
+    try { commandList = await window.zchatCommands(); } catch { return []; }
+  }
+  return commandList;
+}
+function closeMentions() { mentionsBox.style.display = "none"; atStart = -1; list = []; picking = ""; }
 async function updateMentions() {
   const caret = input.selectionStart;
   const before = input.value.slice(0, caret);
+  // What is typed of a command, at the start of the line ("//" starts a message with a slash).
+  if (/^\/[^\s/]*$/.test(before)) {
+    await updateCommands(before.toLowerCase());
+    return;
+  }
   const at = before.lastIndexOf("@");
   if (at < 0 || (at > 0 && /\w/.test(before[at - 1])) || /\s/.test(before.slice(at + 1))) {
     closeMentions();
@@ -6848,6 +6869,7 @@ async function updateMentions() {
   const people = await mentions();
   list = people.filter(([name]) => name.toLowerCase().startsWith(typed));
   if (!list.length) { closeMentions(); return; }
+  picking = "people";
   atStart = at;
   selected = Math.min(selected, list.length - 1);
   mentionsBox.textContent = "";
@@ -6865,12 +6887,47 @@ async function updateMentions() {
     mentionsBox.appendChild(d);
   });
   mentionsBox.style.display = "block";
+  mentionsBox.querySelector(".selected")?.scrollIntoView({ block: "nearest" });
 }
 function acceptMention(i) {
   const [name] = list[i];
   const caret = input.selectionStart;
   input.value = input.value.slice(0, atStart) + "@" + name + " " + input.value.slice(caret);
   const pos = atStart + name.length + 2;
+  input.setSelectionRange(pos, pos);
+  closeMentions();
+}
+// The commands starting with what is typed: the name, what it takes and what it does.
+async function updateCommands(typed) {
+  list = (await allCommands()).filter(([name]) => name.startsWith(typed));
+  if (!list.length) { closeMentions(); return; }
+  picking = "commands";
+  selected = Math.min(selected, list.length - 1);
+  mentionsBox.textContent = "";
+  list.forEach(([name, args, about], i) => {
+    const d = document.createElement("div");
+    d.className = "command" + (i === selected ? " selected" : "");
+    const parts = [["name", name], ["args", args], ["about", about]].map(([cls, text]) => {
+      const s = document.createElement("span");
+      s.className = cls;
+      s.textContent = text;
+      return s;
+    });
+    d.append(...parts);
+    d.onmousedown = e => { e.preventDefault(); acceptCommand(i, true); };
+    mentionsBox.appendChild(d);
+  });
+  mentionsBox.style.display = "block";
+  mentionsBox.querySelector(".selected")?.scrollIntoView({ block: "nearest" });
+}
+// Puts the chosen command in place of what was typed of it, and a space after it when more is to be typed.
+function acceptCommand(i, space) {
+  const [name] = list[i];
+  const value = input.value;
+  const end = value.search(/\s/) < 0 ? value.length : value.search(/\s/);
+  const rest = value.slice(end);
+  input.value = name + (space && !rest ? " " : "") + rest;
+  const pos = Math.min(input.value.length, name.length + (space ? 1 : 0));
   input.setSelectionRange(pos, pos);
   closeMentions();
 }
@@ -6891,7 +6948,14 @@ input.addEventListener("keydown", e => {
       e.preventDefault();
       return;
     }
-    if (e.key === "Tab" || e.key === "Enter") { acceptMention(selected); e.preventDefault(); return; }
+    if (picking === "commands" && e.key === "Enter" && list[selected][3]) {
+      // A command that needs nothing more: Enter runs it, sent below.
+      acceptCommand(selected, false);
+    } else if (e.key === "Tab" || e.key === "Enter") {
+      if (picking === "commands") acceptCommand(selected, true); else acceptMention(selected);
+      e.preventDefault();
+      return;
+    }
     if (e.key === "Escape") { closeMentions(); e.preventDefault(); return; }
   }
   if (e.key === "Escape" && replyQuote) {

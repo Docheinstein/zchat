@@ -8,6 +8,7 @@ add_executable(zchat_tests
     "${PROJECT_SOURCE_DIR}/src/channel.cpp"
     "${PROJECT_SOURCE_DIR}/src/coins.cpp"
     "${PROJECT_SOURCE_DIR}/src/color.cpp"
+    "${PROJECT_SOURCE_DIR}/src/commands.cpp"
     "${PROJECT_SOURCE_DIR}/src/config.cpp"
     "${PROJECT_SOURCE_DIR}/src/elo.cpp"
     "${PROJECT_SOURCE_DIR}/src/markup.cpp"
