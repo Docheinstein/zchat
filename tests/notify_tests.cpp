@@ -159,6 +159,7 @@ TEST(notify_config_round_trip) {
     s.volume = 35;
     s.suppress_everyone = true;
     s.dnd_until = dnd_forever;
+    s.taskbar = false;
     std::map<std::string, std::string, std::less<>> file;
     for (const auto& [k, v] : to_config(s)) {
         file[k] = v;
@@ -174,6 +175,7 @@ TEST(notify_config_round_trip) {
     CHECK_EQ(back.volume, 35);
     CHECK(back.suppress_everyone);
     CHECK(back.dnd_until == dnd_forever);
+    CHECK(!back.taskbar);
     // Nonsense is ignored.
     file["notify_sound_name"] = "../../evil";
     file["notify_volume"] = "999";

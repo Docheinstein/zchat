@@ -16,6 +16,7 @@
 #include <thread>
 #include <windows.h>
 
+#include <shobjidl.h>
 #include <windowsx.h>
 #define ZCHAT_POPUPS_WIN32 1
 #elif defined(__linux__) && defined(ZCHAT_GUI)
@@ -708,6 +709,110 @@ void flash(void* window) {
     // In the taskbar, until the window is looked at again.
     FLASHWINFO info {sizeof info, hwnd, FLASHW_TRAY | FLASHW_TIMERNOFG, 0, 0};
     FlashWindowEx(&info);
+}
+
+namespace {
+
+    // The badge: a red circle with the number in white, as big as a small icon (16 pixels at 96 DPI), with soft edges.
+    HICON badge_icon(int count) {
+        const int size = GetSystemMetrics(SM_CXSMICON);
+        const std::wstring text = count > 99 ? L"99+" : std::to_wstring(count);
+        BITMAPINFO info {};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = size;
+        info.bmiHeader.biHeight = -size;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        HDC dc = CreateCompatibleDC(nullptr);
+        // The number, white on black: how much of each pixel it covers.
+        void* shape_bits = nullptr;
+        HBITMAP shape = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &shape_bits, nullptr, 0);
+        void* color_bits = nullptr;
+        HBITMAP color = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &color_bits, nullptr, 0);
+        if (!shape || !color) {
+            DeleteObject(shape);
+            DeleteObject(color);
+            DeleteDC(dc);
+            return nullptr;
+        }
+        const HGDIOBJ old_bitmap = SelectObject(dc, shape);
+        const int height = size * (text.size() == 1 ? 80 : text.size() == 2 ? 64 : 46) / 100;
+        HFONT font = CreateFontW(-height, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                 CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        const HGDIOBJ old_font = SelectObject(dc, font);
+        SetTextColor(dc, RGB(255, 255, 255));
+        SetBkMode(dc, TRANSPARENT);
+        RECT r {0, 0, size, size};
+        DrawTextW(dc, text.c_str(), -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        GdiFlush();
+        SelectObject(dc, old_font);
+        SelectObject(dc, old_bitmap);
+        DeleteObject(font);
+        // The circle, and the number over it in white.
+        const auto* in = static_cast<const std::uint32_t*>(shape_bits);
+        auto* out = static_cast<std::uint32_t*>(color_bits);
+        const double center = (size - 1) / 2.0;
+        const double radius = size / 2.0;
+        constexpr double red[3] = {0xe5, 0x34, 0x4b};
+        for (int y = 0; y < size; ++y) {
+            for (int x = 0; x < size; ++x) {
+                const std::size_t i = static_cast<std::size_t>(y * size + x);
+                const double cover = std::clamp(radius - std::hypot(x - center, y - center), 0.0, 1.0);
+                const double ink = (in[i] & 0xFF) / 255.0;
+                std::uint32_t pixel = static_cast<std::uint32_t>(cover * 255 + 0.5) << 24;
+                for (int c = 0; c < 3; ++c) {
+                    pixel |= static_cast<std::uint32_t>(red[c] + (255 - red[c]) * ink + 0.5) << (16 - 8 * c);
+                }
+                out[i] = pixel;
+            }
+        }
+        // (All of it is drawn by the alpha of the color: the mask is empty.)
+        std::vector<unsigned char> zeros(static_cast<std::size_t>((size + 15) / 16 * 2 * size), 0);
+        HBITMAP mask = CreateBitmap(size, size, 1, 1, zeros.data());
+        ICONINFO icon_info {TRUE, 0, 0, mask, color};
+        HICON icon = CreateIconIndirect(&icon_info);
+        DeleteObject(mask);
+        DeleteObject(color);
+        DeleteObject(shape);
+        DeleteDC(dc);
+        return icon;
+    }
+
+} // namespace
+
+void badge(void* window, int count) {
+    const auto hwnd = static_cast<HWND>(window);
+    if (!hwnd || !IsWindow(hwnd)) {
+        return;
+    }
+    // Made once, on the window's thread (whose COM the web view started).
+    static ITaskbarList3* const taskbar = [] {
+        ITaskbarList3* list = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&list)))) {
+            return static_cast<ITaskbarList3*>(nullptr);
+        }
+        if (FAILED(list->HrInit())) {
+            list->Release();
+            return static_cast<ITaskbarList3*>(nullptr);
+        }
+        return list;
+    }();
+    if (!taskbar) {
+        return;
+    }
+    if (count <= 0) {
+        taskbar->SetOverlayIcon(hwnd, nullptr, L"");
+        return;
+    }
+    HICON icon = badge_icon(count);
+    if (!icon) {
+        return;
+    }
+    // (The taskbar keeps a copy.)
+    const std::wstring description = std::to_wstring(count) + (count == 1 ? L" new message" : L" new messages");
+    taskbar->SetOverlayIcon(hwnd, icon, description.c_str());
+    DestroyIcon(icon);
 }
 
 void nudge(void* window) {
@@ -1449,6 +1554,25 @@ void flash(void* window) {
     });
 }
 
+void badge(void* /*window*/, int count) {
+    // The Unity launcher API, which the docks and panels of most desktops read: by the .desktop file of zchat (see
+    // webview_window.cpp).
+    on_gtk([count] {
+        GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr);
+        if (!bus) {
+            return;
+        }
+        GVariantBuilder properties;
+        g_variant_builder_init(&properties, G_VARIANT_TYPE("a{sv}"));
+        g_variant_builder_add(&properties, "{sv}", "count", g_variant_new_int64(count));
+        g_variant_builder_add(&properties, "{sv}", "count-visible", g_variant_new_boolean(count > 0));
+        g_dbus_connection_emit_signal(bus, nullptr, "/com/zchat/launcher", "com.canonical.Unity.LauncherEntry",
+                                      "Update",
+                                      g_variant_new("(sa{sv})", "application://zchat.desktop", &properties), nullptr);
+        g_object_unref(bus);
+    });
+}
+
 void nudge(void* window) {
     if (!window) {
         return;
@@ -1853,6 +1977,9 @@ void toast(Toast) {
 }
 
 void flash(void*) {
+}
+
+void badge(void*, int) {
 }
 #endif
 

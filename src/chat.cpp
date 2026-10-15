@@ -2083,6 +2083,7 @@ void Chat::notify_entry(const std::string& channel, const Entry& entry, bool cur
     n.flash = decision.flash;
     n.counts = decision.counts;
     n.badge = settings.badge;
+    n.taskbar = settings.taskbar;
     terminal_.notify(n);
 }
 

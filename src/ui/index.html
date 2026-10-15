@@ -7575,6 +7575,8 @@ function renderNotifyPanel() {
   notifyPanel.append(el("h3", { textContent: "Window" }));
   notifyPanel.append(toggleRow("Flash in the taskbar", "Until you look at zchat", s.flash, v => saveNotify({ flash: v })));
   notifyPanel.append(toggleRow("Unread count in the title", "Like (3) zchat", s.badge, v => saveNotify({ badge: v })));
+  notifyPanel.append(toggleRow("Unread count on the taskbar icon", "A number on zchat's icon until you look at it",
+    s.taskbar, v => saveNotify({ taskbar: v })));
 
   // The channels'.
   notifyPanel.append(el("h3", { textContent: "Channels and private chats" }));

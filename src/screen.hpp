@@ -190,6 +190,8 @@ public:
         bool flash = false;
         bool counts = false;
         bool badge = false;
+        // ... and on the window's button in the taskbar.
+        bool taskbar = false;
     };
 
     // Tells about something as notification says, where it can. Thread-safe.
