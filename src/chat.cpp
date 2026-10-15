@@ -5,6 +5,7 @@
 #include "file.hpp"
 #include "image.hpp"
 #include "markup.hpp"
+#include "notify.hpp"
 #include "popup.hpp"
 #include "sound.hpp"
 #include "text.hpp"
@@ -1572,7 +1573,7 @@ std::optional<std::string> Chat::quote_last(std::string_view person) const {
     return std::nullopt;
 }
 
-std::string Chat::mark_mentions(std::string_view text, bool& tags_us) const {
+std::string Chat::mark_mentions(std::string_view text, bool& tags_us, bool* by_name) const {
     struct Person {
         std::string name;
         Color color;
@@ -1626,6 +1627,9 @@ std::string Chat::mark_mentions(std::string_view text, bool& tags_us) const {
                                c.b, text.substr(at, end - at), person->us ? "</u>" : "");
         }
         tags_us = tags_us || person->us;
+        if (by_name && person->us && !person->everyone) {
+            *by_name = true;
+        }
         done = end;
         at = end - 1;
     }
@@ -1761,6 +1765,10 @@ bool Chat::receive_trill(std::uint64_t id, std::string_view name, std::string_vi
     if (id == id_) {
         return true;
     }
+    if (const auto settings = notify::current(); settings.dnd_trills && notify::dnd(settings, std::time(nullptr))) {
+        notice(std::format("🔕 {} trilled you: not played, as you are in Do Not Disturb.", colored_name(id, name)));
+        return true;
+    }
     auto shared = std::make_shared<const file::Trill>(std::move(*trill));
     // (With too many transfers and trills at once, this one is missed.)
     start_transfer([this, id, who = std::string(name), shared](std::stop_token stop) {
@@ -1859,10 +1867,8 @@ void Chat::show(const Entry& entry, bool live) {
     const std::optional<std::time_t> when = live ? std::nullopt : std::optional<std::time_t>(entry.time);
     switch (entry.kind) {
     case Entry::Kind::Message:
-        // Tags ring the bell when they are heard, not when shown again.
-        if (print_message(entry.id, entry.name, *entry.data, when) && live && entry.id != id_) {
-            terminal_.bell();
-        }
+        // (Tags are told about when they arrive, by deliver(), not when shown again.)
+        print_message(entry.id, entry.name, *entry.data, when);
         break;
     case Entry::Kind::Art:
         print_art(entry.id, entry.name, *entry.data, when);
@@ -1908,41 +1914,53 @@ void Chat::deliver(const std::string& channel, Entry entry) {
             backlog.erase(std::ranges::find_if(backlog, is_picture));
         }
     }
-    // Not what the games say, nor the moves of games (a race's words).
-    if (entry.id != id_ && entry.kind != Entry::Kind::Line && channel != channel::games_log) {
-        notify_entry(channel, entry, current);
+    bool tags_us = false;
+    bool by_name = false;
+    if (entry.kind == Entry::Kind::Message && entry.id != id_) {
+        const auto quote = markup::split_quote(*entry.data);
+        mark_mentions(quote ? quote->reply : std::string_view(*entry.data), tags_us, &by_name);
+        by_name = by_name || (quote && quotes_us(*quote));
+        tags_us = tags_us || by_name;
     }
     if (current) {
         show(entry, true);
+        notify_entry(channel, entry, true, tags_us, tags_us && !by_name);
         return;
     }
     // Elsewhere: said once until it is visited, and tags always. The games log only gets its dot in the list.
     if (games_apart_ && channel == channel::games_log) {
         return;
     }
-    bool tags_us = false;
-    if (entry.kind == Entry::Kind::Message && entry.id != id_) {
-        const auto quote = markup::split_quote(*entry.data);
-        mark_mentions(quote ? quote->reply : std::string_view(*entry.data), tags_us);
-        tags_us = tags_us || (quote && quotes_us(*quote));
-    }
-    // A private message rings like a tag.
+    notify_entry(channel, entry, false, tags_us, tags_us && !by_name);
+    // The channels muted say nothing in the chat either, but their dot in the list.
+    const bool muted = notify::level_of(notify::current(), channel, direct_partner(channel) != 0) ==
+                       notify::Level::Nothing;
     if (direct_partner(channel) && entry.id != id_) {
-        terminal_.bell();
         if (first_unread || tags_us) {
             notice(std::format("{} sent you a private message: {}", colored_name(entry.id, entry.name),
                                join_hint(channel)));
         }
     } else if (tags_us) {
-        terminal_.bell();
         notice(std::format("{} tagged you in #{}: /join {}", colored_name(entry.id, entry.name), channel, channel));
-    } else if (first_unread) {
+    } else if (first_unread && !muted) {
         notice(std::format("New messages in #{}: /join {}", channel, channel));
     }
 }
 
-void Chat::notify_entry(const std::string& channel, const Entry& entry, bool current) const {
+void Chat::notify_entry(const std::string& channel, const Entry& entry, bool current, bool tags_us,
+                        bool only_everyone) const {
+    // Not ours, what the games say, nor the moves of games (a race's words).
+    if (entry.id == id_ || entry.kind == Entry::Kind::Line || channel == channel::games_log) {
+        return;
+    }
+    const notify::Settings settings = notify::current();
     const bool direct = direct_partner(channel) != 0;
+    const notify::Decision decision =
+        notify::decide(settings, {channel, direct, tags_us, only_everyone, false, current, terminal_.focused()},
+                       std::time(nullptr));
+    if (!decision.sound && !decision.flash && !decision.counts && !decision.desktop) {
+        return;
+    }
     std::string text;
     switch (entry.kind) {
     case Entry::Kind::Message: {
@@ -1965,15 +1983,33 @@ void Chat::notify_entry(const std::string& channel, const Entry& entry, bool cur
     case Entry::Kind::Line:
         return;
     }
-    terminal_.notify({Screen::Notification::Kind::Message, direct ? "Private message" : "#" + channel,
-                      colored_name(entry.id, entry.name), text, avatar_of(entry.id),
-                      current ? std::string() : join_hint(channel)});
+    auto shown = notify::text(settings, colored_name(entry.id, entry.name),
+                              direct ? "Private message" : "#" + channel, direct, text);
+    Screen::Notification n {Screen::Notification::Kind::Message, std::move(shown.where), std::move(shown.title),
+                            std::move(shown.text), shown.who ? avatar_of(entry.id) : std::string(),
+                            current ? std::string() : join_hint(channel)};
+    n.desktop = decision.desktop;
+    n.sound = decision.sound;
+    n.sound_name = settings.sound_name;
+    n.volume = settings.volume;
+    n.flash = decision.flash;
+    n.counts = decision.counts;
+    n.badge = settings.badge;
+    terminal_.notify(n);
 }
 
 void Chat::notify_event(std::string_view where, std::string_view title, std::string_view text, std::uint64_t from,
                         std::string command) const {
-    terminal_.notify({Screen::Notification::Kind::Event, std::string(where), std::string(title), std::string(text),
-                      from ? avatar_of(from) : std::string(), std::move(command)});
+    const notify::Decision decision =
+        notify::decide_event(notify::current(), terminal_.focused(), std::time(nullptr));
+    if (!decision.desktop && !decision.flash) {
+        return;
+    }
+    Screen::Notification n {Screen::Notification::Kind::Event, std::string(where), std::string(title),
+                            std::string(text), from ? avatar_of(from) : std::string(), std::move(command)};
+    n.desktop = decision.desktop;
+    n.flash = decision.flash;
+    terminal_.notify(n);
 }
 
 std::vector<std::string> Chat::peers() const {

@@ -26,6 +26,7 @@ target_sources(zchat PUBLIC
     markup.cpp
     names.cpp
     net.cpp
+    notify.cpp
     paint.cpp
     popup.cpp
     pokemon.cpp
@@ -216,7 +217,8 @@ if (TARGET zchat_webview)
 endif()
 foreach(target IN LISTS zchat_targets)
     if (MSVC)
-        target_compile_options(${target} PRIVATE /W4 /utf-8)
+        # /MP: the sources of a target compiled in parallel, which Visual Studio's projects do not do otherwise.
+        target_compile_options(${target} PRIVATE /W4 /utf-8 /MP)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra)
     endif()

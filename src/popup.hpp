@@ -73,4 +73,8 @@ struct Toast {
 // notification is the desktop's own (without clicked).
 void toast(Toast toast);
 
+// Flashes a window's button in the taskbar until it is looked at again, if it is not in front: an HWND on Windows, a
+// GtkWindow* on Linux. Thread-safe.
+void flash(void* window);
+
 } // namespace zchat::popup

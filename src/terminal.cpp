@@ -43,6 +43,9 @@ namespace {
     constexpr char32_t key_home = 0x110004;
     constexpr char32_t key_end = 0x110005;
     constexpr char32_t key_forward_delete = 0x110006; // the Delete key
+    // The terminal got or lost the focus (see focused()).
+    constexpr char32_t key_focus_in = 0x110007;
+    constexpr char32_t key_focus_out = 0x110008;
 
     // How many sent lines Up/Down can go back to.
     constexpr std::size_t max_history = 100;
@@ -198,6 +201,42 @@ void Terminal::nudge() {
     }
 }
 
+namespace {
+
+    // The window the console is shown in: its own, or the one of the terminal that owns it (Windows Terminal's, for
+    // the hidden one it gives a console); null when it is not known.
+    HWND shown_console_window() {
+        const HWND console = GetConsoleWindow();
+        if (!console) {
+            return nullptr;
+        }
+        if (IsWindowVisible(console)) {
+            return console;
+        }
+        const HWND owner = GetAncestor(console, GA_ROOTOWNER);
+        return owner && owner != console && IsWindowVisible(owner) ? owner : nullptr;
+    }
+
+} // namespace
+
+std::optional<bool> Terminal::focused() const {
+    if (const HWND window = shown_console_window()) {
+        return GetForegroundWindow() == window;
+    }
+    // As the console tells, when it does.
+    const int focus = focus_;
+    return focus < 0 ? std::nullopt : std::optional<bool>(focus == 1);
+}
+
+void Terminal::notify(const Notification& notification) {
+    if (notification.sound) {
+        bell();
+    }
+    if (notification.flash) {
+        popup::flash(shown_console_window());
+    }
+}
+
 std::optional<std::string> Terminal::read_line_interactive() {
     auto& p = *platform_;
     while (true) {
@@ -217,6 +256,10 @@ std::optional<std::string> Terminal::read_line_interactive() {
         DWORD count = 0;
         if (!ReadConsoleInputW(p.in, &record, 1, &count)) {
             return std::nullopt;
+        }
+        if (count == 1 && record.EventType == FOCUS_EVENT) {
+            focus_ = record.Event.FocusEvent.bSetFocus ? 1 : 0;
+            continue;
         }
         if (count == 0 || record.EventType != KEY_EVENT) {
             if (count == 1 && record.EventType == WINDOW_BUFFER_SIZE_EVENT) {
@@ -300,6 +343,8 @@ Terminal::Terminal() :
         if (pipe2(platform_->wake, O_CLOEXEC) != 0) {
             platform_->wake[0] = platform_->wake[1] = -1;
         }
+        // The terminal tells when it gets and loses the focus, where it can ("ESC [ I" and "ESC [ O").
+        write("\x1b[?1004h");
     }
 }
 
@@ -307,7 +352,7 @@ Terminal::~Terminal() {
     if (interactive_) {
         {
             std::scoped_lock lock(mutex_);
-            write(clear_line_locked());
+            write(clear_line_locked() + "\x1b[?1004l");
         }
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &platform_->original);
     }
@@ -342,6 +387,17 @@ std::size_t Terminal::width() const {
 void Terminal::bell() {
     std::scoped_lock lock(mutex_);
     write("\a");
+}
+
+std::optional<bool> Terminal::focused() const {
+    const int focus = focus_;
+    return focus < 0 ? std::nullopt : std::optional<bool>(focus == 1);
+}
+
+void Terminal::notify(const Notification& notification) {
+    if (notification.sound) {
+        bell();
+    }
 }
 
 namespace {
@@ -403,6 +459,10 @@ namespace {
                 return key_home;
             case 'F':
                 return key_end;
+            case 'I':
+                return key_focus_in;
+            case 'O':
+                return key_focus_out;
             default:
                 return 0;
             }
@@ -440,6 +500,10 @@ std::optional<std::string> Terminal::read_line_interactive() {
         char32_t cp = static_cast<char32_t>(c);
         if (c == 0x1B) {
             cp = read_escape_sequence(wake_fd);
+            if (cp == key_focus_in || cp == key_focus_out) {
+                focus_ = cp == key_focus_in ? 1 : 0;
+                continue;
+            }
             if (cp == 0) {
                 continue;
             }

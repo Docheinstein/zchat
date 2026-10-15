@@ -40,6 +40,8 @@ public:
 #ifdef _WIN32
     void nudge() override;
 #endif
+    void notify(const Notification& notification) override;
+    std::optional<bool> focused() const override;
     // Without a terminal (plain line-by-line input) it cannot stop a read in progress, only the following ones.
     void interrupt() override;
 
@@ -72,6 +74,8 @@ private:
     bool interactive_ = false;
     bool vt_ = false;
     std::atomic<bool> interrupted_ {false};
+    // Whether the terminal has the focus, as it tells (see focused()): -1 until it does.
+    std::atomic<int> focus_ {-1};
 
     std::mutex mutex_;
     std::string prompt_;
