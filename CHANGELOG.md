@@ -11,6 +11,12 @@ the first words in bold are what zchat shows when it says what is new.
 
 * **Links are clickable**: `http://`, `https://` and `www.` links in messages are underlined and open in your
   browser with a click, no more retyping them letter by letter. Only web links open.
+* **Longer games pay more coins**, so that an hour of any game pays about the same: a round's coins are multiplied
+  by about how many minutes it takes, ×2 in Bomber, ×3 in Arena and Frag, ×5 in Wordle and ×8 in Pokémon (race and
+  dice ×1).
+* **Updates no longer hang**: the old zchat's window closes before the new one starts (Windows took it for a hung
+  window and killed it); started from Explorer, the new one opens no console for a moment; and an old executable
+  still in use no longer blocks the next update.
 * **Notifications set as in Discord**: 🔔 at the top right, or `/notify` and `/dnd` (in a terminal too): all
   messages, only @mentions and private messages, or nothing, for all channels or each one (right-click a channel to
   mute it). Pick the sound (six of them, and their volume), the taskbar flashing, the unread count in the title,
