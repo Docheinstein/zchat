@@ -8,6 +8,8 @@ target_sources(zchat PUBLIC
     capture.cpp
     casino.cpp
     candor.cpp
+    changelog.cpp
+    changelog_text.cpp
     channel.cpp
     chat.cpp
     cipher.cpp
@@ -102,6 +104,15 @@ if (EXISTS "${zchat_trill_picture}")
     target_sources(zchat PRIVATE "${zchat_generated}/trill_picture.hpp")
     target_compile_definitions(zchat PRIVATE ZCHAT_TRILL_PICTURE=1)
 endif()
+
+# The changelog, built into the executable, for /changelog and 📜 in the window (see changelog.hpp).
+add_custom_command(
+    OUTPUT "${zchat_generated}/changelog_md.hpp"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PROJECT_SOURCE_DIR}/CHANGELOG.md"
+            "-DOUTPUT=${zchat_generated}/changelog_md.hpp" -DNAME=changelog_md -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS "${PROJECT_SOURCE_DIR}/CHANGELOG.md" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    VERBATIM)
+target_sources(zchat PRIVATE "${zchat_generated}/changelog_md.hpp")
 
 # The words /game wordle accepts as guesses, built into the executable.
 set(zchat_words "${PROJECT_SOURCE_DIR}/third_party/enable/words5.txt")

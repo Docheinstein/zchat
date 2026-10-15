@@ -443,6 +443,27 @@
   #notify-panel .dnd-state.active { color: #ff8a80; }
   #notify-panel input[type=range] { flex: 1; accent-color: var(--accent); }
   #notify-panel .volume { width: 38px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  /* The changelog (📜): what is new in zchat, a day at a time, in a panel under the button like the notifications'. */
+  #changelog-panel {
+    position: fixed; top: 50px; right: 12px; width: 460px; max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 66px); overflow-y: auto; z-index: 25; display: none; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px 16px; box-shadow: 0 8px 28px #000a;
+  }
+  #changelog-panel.open { display: block; }
+  #changelog-panel .title { display: flex; align-items: center; font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+  #changelog-panel .title button {
+    margin-left: auto; width: 26px; height: 26px; padding: 0; background: var(--input); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; font: inherit; cursor: pointer;
+  }
+  #changelog-panel .title button:hover { border-color: var(--accent); }
+  #changelog-panel h3 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--muted);
+    margin: 16px 0 6px;
+  }
+  #changelog-panel ul { margin: 0; padding-left: 18px; }
+  #changelog-panel li { margin: 4px 0; line-height: 1.4; }
+  #changelog-panel code { color: #ffd166; }
+  #changelog-panel .note { color: var(--muted); font-size: 11px; padding: 2px 0 4px; }
   #notify-panel .channel-row .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* A switch: a checkbox drawn as one. */
   .switch { position: relative; flex: none; width: 34px; height: 20px; }
@@ -519,6 +540,7 @@
   <button id="bm-open" title="Bomber: start a round, or show the one on">💣 Bomber</button>
   <button id="am-open" title="Arena: start a round of the shooter, or show the one on">🎯 Arena</button>
   <button id="fr-open" title="Frag: start a round of the first-person shooter, or show the one on">🔫 Frag</button>
+  <button id="changelog-open" title="What is new in zchat">📜</button>
   <button id="notify-open" title="Notifications and Do Not Disturb">🔔</button>
   <select id="font" title="Font"></select>
   <button id="smaller" title="Smaller text">A−</button>
@@ -584,6 +606,7 @@
 </div>
 <div id="channel-panel"></div>
 <div id="notify-panel" role="dialog" aria-label="Notifications"></div>
+<div id="changelog-panel" role="dialog" aria-label="What is new in zchat"></div>
 <div id="notify-menu" role="menu"></div>
 <div id="spy-requests"></div>
 <div id="dice-float"><div id="dice-float-title">zchat · dice<button id="dice-float-close" title="Close">×</button></div>
@@ -7198,6 +7221,47 @@ document.addEventListener("mousedown", e => {
   }
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") { closeNotifyMenu(); closeNotifyPanel(); } });
+
+// --- The changelog (📜): CHANGELOG.md as zchat has it built in (zchatChangelog), a day at a time, newest first.
+const changelogButton = document.getElementById("changelog-open");
+const changelogPanel = document.getElementById("changelog-panel");
+// An item's **bold** and `code`, as elements: the rest stays text.
+function changelogItem(markdown) {
+  const li = el("li");
+  for (const part of markdown.split(/(\*\*[^*]+\*\*|`[^`]+`)/)) {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) li.append(el("strong", { textContent: part.slice(2, -2) }));
+    else if (part.startsWith("`") && part.endsWith("`") && part.length > 2) li.append(el("code", { textContent: part.slice(1, -1) }));
+    else li.append(part);
+  }
+  return li;
+}
+async function openChangelog() {
+  let days = [];
+  try { days = await window.zchatChangelog(); } catch {}
+  changelogPanel.textContent = "";
+  const close = el("button", { textContent: "×", title: "Close" });
+  close.onclick = () => changelogPanel.classList.remove("open");
+  changelogPanel.append(el("div", { className: "title" }, "📜 What is new in zchat", close));
+  if (!days.length) changelogPanel.append(el("div", { className: "note", textContent: "This zchat has no changelog." }));
+  for (const day of days) {
+    const when = new Date(day.date + "T12:00:00");
+    changelogPanel.append(el("h3", { textContent: isNaN(when) ? day.date :
+      when.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "long", year: "numeric" }) }));
+    changelogPanel.append(el("ul", {}, ...day.items.map(changelogItem)));
+  }
+  closeNotifyPanel();
+  changelogPanel.classList.add("open");
+  changelogPanel.scrollTop = 0;
+}
+changelogButton.onclick = () => {
+  if (changelogPanel.classList.contains("open")) changelogPanel.classList.remove("open");
+  else openChangelog();
+};
+document.addEventListener("mousedown", e => {
+  if (changelogPanel.classList.contains("open") && !changelogPanel.contains(e.target) &&
+      !changelogButton.contains(e.target)) changelogPanel.classList.remove("open");
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") changelogPanel.classList.remove("open"); });
 
 input.focus();
 (async () => {

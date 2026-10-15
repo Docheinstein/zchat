@@ -137,6 +137,7 @@ While chatting:
 | `/game leaderboard` | the Elo leaderboard of all the games together (`/game top` works too); `/game leaderboard NAME` is a game's own, like `/game leaderboard race`, and `/game leaderboard all` shows each of them. Who left is on them too |
 | `/game elo [NAME]` | somebody's Elo ratings, in all games and in each, with where they are on the leaderboards; yours without a name |
 | `/update`          | get the latest zchat from git, build it and restart (see below) |
+| `/changelog [N\|all]` | what is new in zchat: the last N days of [CHANGELOG.md](CHANGELOG.md) (3 when not given), or all of it; in the window, 📜 at the top shows it all. After an update, zchat says once what is new since you last looked |
 | `/help`            | list commands, by topic; the games' own are under `/game` |
 | `/quit`, Ctrl+C, Ctrl+D | leave                                             |
 | `//text`           | send a message that starts with `/`                    |
@@ -352,8 +353,8 @@ branch, fast-forwards to the new commits, rebuilds, replaces the zchat you are r
 folder, or the installed copy) and restarts it with the same options. The others see you leave and come back.
 
 Before building, it lists what's new since the zchat you are running: the subjects of the new commits, newest
-first. There is no separate changelog, so commit subjects are written for the people chatting, e.g.
-`Added @everyone: tags all the people in the chat`.
+first. Commit subjects are written for the people chatting, e.g. `Added @everyone: tags all the people in the chat`;
+[CHANGELOG.md](CHANGELOG.md) collects the changes by day, and zchat shows it (`/changelog`, 📜 in the window).
 
 It needs git, CMake and the compiler used for the first build. It changes nothing when the clone has local
 commits or uncommitted changes, or when the build fails: the build errors are shown and the running zchat is
