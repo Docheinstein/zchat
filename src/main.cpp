@@ -1591,23 +1591,27 @@ int main(int argc, char** argv) {
             FreeConsole();
         }
 #endif
-        zchat::Gui gui;
-        gui.set_info(options->port);
-        // The chat runs on its own thread; the window needs the main one (macOS requires it).
-        std::jthread session([&] {
-            try {
-                exit_code = run(*options, gui, restart);
-                gui.close();
-            } catch (const std::exception& e) {
-                // Left open, so the reason can be read.
-                gui.print(std::format("zchat: {}", e.what()));
-                exit_code = 1;
-            }
-        });
-        gui.run();
-        gui.interrupt();
-        session.join();
-        return restart ? zchat::update::restart(argv) : exit_code;
+        {
+            zchat::Gui gui;
+            gui.set_info(options->port);
+            // The chat runs on its own thread; the window needs the main one (macOS requires it).
+            std::jthread session([&] {
+                try {
+                    exit_code = run(*options, gui, restart);
+                    gui.close();
+                } catch (const std::exception& e) {
+                    // Left open, so the reason can be read.
+                    gui.print(std::format("zchat: {}", e.what()));
+                    exit_code = 1;
+                }
+            });
+            gui.run();
+            gui.interrupt();
+            session.join();
+        }
+        // Only once the window is gone: a window left open while nothing runs its loop is taken by Windows for a
+        // hung one, and closed as such. And the new zchat is not waited for: it has a window of its own.
+        return restart ? zchat::update::restart(argv, false) : exit_code;
     }
 #endif
     try {

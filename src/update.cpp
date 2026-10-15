@@ -78,6 +78,22 @@ namespace {
         return path;
     }
 
+    // Where the running executable is moved to make room for the new one: NAME.old, or NAME.old-N when that one is
+    // still in use (by a zchat waiting for the one it updated to, in a terminal), as a running executable cannot be
+    // deleted nor replaced on Windows. clean_up() deletes them all.
+    fs::path free_old_path(const fs::path& running) {
+        std::error_code ec;
+        fs::path old = with_suffix(running, ".old");
+        for (int n = 2; n < 100; ++n) {
+            fs::remove(old, ec);
+            if (!fs::exists(old, ec)) {
+                return old;
+            }
+            old = with_suffix(running, std::format(".old-{}", n));
+        }
+        return old;
+    }
+
     // The last non-blank lines of a program's output, safe to print.
     std::vector<std::string> last_lines(std::string_view output, std::size_t count) {
         std::vector<std::string> lines;
@@ -373,13 +389,12 @@ void Updater::run(std::stop_token stop) {
     notice_("Building the new zchat...");
     const fs::path running = executable();
     const fs::path built = utf8_path(ZCHAT_BUILT_EXE);
-    const fs::path old = with_suffix(running, ".old");
+    const fs::path old = free_old_path(running);
     const std::string config = ZCHAT_BUILD_CONFIG;
     // When zchat runs straight from the build folder, the build must write where the running executable is:
     // Windows does not allow that, so move it out of the way first (a running executable can be renamed).
     const bool in_place = fs::equivalent(running, built, ec);
     if (in_place) {
-        fs::remove(old, ec);
         fs::rename(running, old, ec);
         if (ec) {
             notice_(std::format("Cannot update: cannot rename {}: {}", utf8(running), ec.message()));
@@ -422,7 +437,6 @@ void Updater::run(std::stop_token stop) {
         fs::copy_file(built, fresh, fs::copy_options::overwrite_existing, ec);
         if (!ec) {
 #ifdef _WIN32
-            fs::remove(old, ec);
             fs::rename(running, old, ec);
 #endif
             if (!ec) {
@@ -446,13 +460,22 @@ void Updater::run(std::stop_token stop) {
 
 void clean_up() {
     const fs::path& running = executable();
-    if (!running.empty()) {
-        std::error_code ec;
-        fs::remove(with_suffix(running, ".old"), ec);
+    if (running.empty()) {
+        return;
+    }
+    // NAME.old and NAME.old-N (see free_old_path()); those still running stay, for the next time.
+    const std::u8string old = with_suffix(running.filename(), ".old").u8string();
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(running.parent_path(), ec)) {
+        const std::u8string name = entry.path().filename().u8string();
+        if (name == old || (name.starts_with(old + u8"-") && name.size() > old.size() + 1)) {
+            std::error_code ignored;
+            fs::remove(entry.path(), ignored);
+        }
     }
 }
 
-int restart(char** argv) {
+int restart(char** argv, bool wait) {
     const fs::path& exe = executable();
     std::fflush(stdout);
 #ifdef _WIN32
@@ -461,11 +484,18 @@ int restart(char** argv) {
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION pi {};
     std::wstring command = GetCommandLineW();
-    if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &pi)) {
+    // Without a console (a window started from Explorer, which let its own go), none for the new one either: it
+    // would open one, for a moment.
+    const DWORD flags = GetConsoleWindow() ? 0 : DETACHED_PROCESS;
+    if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, TRUE, flags, nullptr, nullptr, &startup, &pi)) {
         std::fprintf(stderr, "zchat: cannot restart %s (error %lu)\n", utf8(exe).c_str(), GetLastError());
         return 1;
     }
     CloseHandle(pi.hThread);
+    if (!wait) {
+        CloseHandle(pi.hProcess);
+        return 0;
+    }
     // Windows has no exec: stay around until the new zchat ends, or the shell would take the console back.
     SetConsoleCtrlHandler(ignore_interrupts, TRUE);
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -474,6 +504,7 @@ int restart(char** argv) {
     CloseHandle(pi.hProcess);
     return static_cast<int>(code);
 #else
+    (void)wait;
     execv(exe.c_str(), argv);
     std::fprintf(stderr, "zchat: cannot restart %s: %s\n", exe.c_str(), std::strerror(errno));
     return 1;
