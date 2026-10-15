@@ -9,6 +9,8 @@ the first words in bold are what zchat shows when it says what is new.
 
 ## 2026-10-15
 
+* **Messages from before look as they did**: when the window opens, the messages shown from before have their
+  reactions (who reacted, a click to react), Quote buttons, pictures and files again, instead of plain text.
 * **Unread messages on the taskbar icon**: while you look elsewhere, a red circle on zchat's button in the taskbar
   counts the new messages, until you look at zchat again. On Windows, and on Linux in the docks and panels that show
   counts (Ubuntu Dock, Dash to Dock, KDE). 🔔 → Window turns it off, or `/notify taskbar off`.
