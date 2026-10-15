@@ -305,6 +305,9 @@
     line-height: 1.35;
   }
   #log .line { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* A link in a message: opened in the browser (zchatOpenUrl). */
+  #log a.link { color: var(--accent); text-decoration: underline; cursor: pointer; }
+  #log a.link:hover { text-decoration-thickness: 2px; }
   /* A message: hovering on it shows a button to reply quoting it; one quoting another shows the quote above it. */
   #log .message { position: relative; border-radius: 4px; }
   #log .message:hover { background: #ffffff0a; }
@@ -673,6 +676,28 @@ applySettings();
 function rgb(parts, i) { return `rgb(${parts[i]},${parts[i + 1]},${parts[i + 2]})`; }
 const basic = ["#000", "#c33", "#3a3", "#cc3", "#36c", "#c3c", "#3cc", "#ccc"];
 const bright = ["#7d8491", "#f66", "#6d6", "#ee6", "#69f", "#f6f", "#6ee", "#fff"];
+// Text with its web links (http://, https:// or www.) made clickable: they open in the browser. Punctuation right
+// after a link ("see https://x.org.") is not part of it, nor is a ")" closing one opened before the link.
+const linkPattern = /\b(?:https?:\/\/|www\.)[^\s<>"]+/gi;
+function appendLinked(into, text) {
+  let at = 0;
+  for (const m of text.matchAll(linkPattern)) {
+    let url = m[0];
+    while (/[.,;:!?'\]}>]$/.test(url) ||
+           (url.endsWith(")") && url.split("(").length < url.split(")").length)) url = url.slice(0, -1);
+    if (/^(?:https?:\/\/|www\.)$/i.test(url)) continue;
+    if (m.index > at) into.append(text.slice(at, m.index));
+    const a = document.createElement("a");
+    a.className = "link";
+    a.textContent = url;
+    a.href = /^www\./i.test(url) ? "https://" + url : url;
+    a.title = a.href;
+    a.onclick = a.onauxclick = e => { e.preventDefault(); try { window.zchatOpenUrl(a.href); } catch {} };
+    into.append(a);
+    at = m.index + url.length;
+  }
+  if (at < text.length) into.append(text.slice(at));
+}
 function ansiToNodes(text, into) {
   let st = {};
   const parts = text.split(/\x1b\[([0-9;]*)m/);
@@ -702,7 +727,7 @@ function ansiToNodes(text, into) {
     }
     if (!parts[i]) continue;
     const span = document.createElement("span");
-    span.textContent = parts[i];
+    appendLinked(span, parts[i]);
     if (st.fg) span.style.color = st.fg;
     if (st.bg) span.style.background = st.bg;
     if (st.bold) span.style.fontWeight = "bold";
