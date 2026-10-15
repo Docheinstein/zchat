@@ -2,6 +2,8 @@
 
 #include "config.hpp"
 #include "image.hpp"
+#include "json.hpp"
+#include "notify.hpp"
 #include "popup.hpp"
 #include "ui_html.hpp"
 #include "webview_window.hpp"
@@ -238,11 +240,6 @@ namespace {
         return color;
     }
 
-    // The settings of the desktop notifications, in the config file: whether they are shown at all, for messages,
-    // for the rest, and even while the window is in front.
-    constexpr std::string_view notify_keys[] = {"notifications", "notify_messages", "notify_events", "notify_focused"};
-    constexpr bool notify_defaults[] = {true, true, true, false};
-
 } // namespace
 
 struct Gui::Impl {
@@ -257,6 +254,8 @@ struct Gui::Impl {
     bool ready = false;
     std::vector<std::string> waiting;
     std::string info = "{}";
+    // Whether the window has the focus, as the page tells: -1 until it does.
+    std::atomic<int> focus {-1};
 
     std::function<std::vector<Mention>()> mention_source;
     std::function<Mention()> self_source;
@@ -265,8 +264,6 @@ struct Gui::Impl {
     std::function<ChannelPeople(std::string_view)> people_source;
     std::function<std::optional<std::string>(std::string_view)> rewriter;
 
-    // The desktop notifications the user wants, as notify_keys says.
-    std::atomic<bool> notify_settings[std::size(notify_keys)];
 
     // Runs JavaScript in the page, from any thread.
     void eval(std::string js) {
@@ -459,25 +456,24 @@ Gui::Gui() {
         }
         return "null";
     });
-    // The settings of the desktop notifications: ["on" or "off", ...], as notify_keys says.
-    for (std::size_t i = 0; i < std::size(notify_keys); ++i) {
-        const auto value = config::get(notify_keys[i]);
-        impl_->notify_settings[i] = value ? *value == "on" : notify_defaults[i];
-    }
-    view.bind("zchatNotifySettings", [this](const std::string&) -> std::string {
-        std::string out = "[";
-        for (std::size_t i = 0; i < std::size(notify_keys); ++i) {
-            out += std::format("{}\"{}\"", i ? "," : "", impl_->notify_settings[i] ? "on" : "off");
-        }
-        return out + "]";
-    });
-    view.bind("zchatSaveNotifySettings", [this](const std::string& args) -> std::string {
-        const auto strings = json_strings(args);
-        for (std::size_t i = 0; i < std::min(strings.size(), std::size(notify_keys)); ++i) {
-            impl_->notify_settings[i] = strings[i] == "on";
-            config::set(notify_keys[i], strings[i] == "on" ? "on" : "off");
+    // The page tells when the window gets and loses the focus, for the notifications (see notify::decide()).
+    view.bind("zchatFocus", [this](const std::string& args) -> std::string {
+        const auto parsed = json::parse(args);
+        if (parsed && (*parsed)[0].is_bool()) {
+            impl_->focus = (*parsed)[0].boolean ? 1 : 0;
         }
         return "null";
+    });
+    // The notification settings (🔔), as notify::to_json() writes them; saving them gives them back as saved.
+    view.bind("zchatNotifySettings", [](const std::string&) -> std::string {
+        return notify::to_json(notify::current());
+    });
+    view.bind("zchatSaveNotifySettings", [](const std::string& args) -> std::string {
+        const auto strings = json_strings(args);
+        if (!strings.empty()) {
+            notify::set(notify::from_json(strings.front(), notify::current()));
+        }
+        return notify::to_json(notify::current());
     });
     // A notification to see what they look like, even with the window in front.
     view.bind("zchatTestNotification", [this](const std::string&) -> std::string {
@@ -682,24 +678,31 @@ std::shared_ptr<const image::DecodedImage> Gui::avatar_picture(std::string_view 
     return decoded ? std::make_shared<const image::DecodedImage>(std::move(*decoded)) : nullptr;
 }
 
-void Gui::notify(const Notification& notification) {
-    const bool wanted = notification.kind == Notification::Kind::Message ? impl_->notify_settings[1].load()
-                                                                         : impl_->notify_settings[2].load();
-    if (!impl_->notify_settings[0] || !wanted) {
+void Gui::notify(const Notification& n) {
+    // The sound and the unread count: the page's.
+    if (n.sound || n.counts) {
+        std::scoped_lock lock(impl_->mutex);
+        if (impl_->ready) {
+            impl_->eval(std::format(
+                R"(zchat.notify({{"sound":{},"soundName":{},"volume":{},"counts":{},"badge":{}}}))", n.sound,
+                json_string(n.sound_name), n.volume, n.counts, n.badge));
+        }
+    }
+    if (n.flash) {
+        popup::flash(impl_->view.native_window());
+    }
+    if (!n.desktop) {
         return;
     }
     popup::Toast toast;
-    toast.where = notification.where;
-    toast.title = shorten(plain_text(notification.title), 80);
-    toast.text = shorten(plain_text(notification.text), 160);
-    toast.accent = first_color(notification.title).value_or(toast.accent);
-    toast.picture = avatar_picture(notification.avatar);
-    // Made on the window's thread, which knows whether it is in front.
-    impl_->view.dispatch([this, toast = std::move(toast), command = notification.command]() mutable {
+    toast.where = n.where;
+    toast.title = shorten(plain_text(n.title), 80);
+    toast.text = shorten(plain_text(n.text), 160);
+    toast.accent = first_color(n.title).value_or(toast.accent);
+    toast.picture = avatar_picture(n.avatar);
+    // Made on the window's thread, whose loop runs it.
+    impl_->view.dispatch([this, toast = std::move(toast), command = n.command]() mutable {
         void* const window = impl_->view.native_window();
-        if (!impl_->notify_settings[3] && popup::in_front(window)) {
-            return;
-        }
         toast.clicked = [this, window, command] {
             popup::raise(window);
             if (!command.empty()) {
@@ -712,6 +715,11 @@ void Gui::notify(const Notification& notification) {
         };
         popup::toast(std::move(toast));
     });
+}
+
+std::optional<bool> Gui::focused() const {
+    const int focus = impl_->focus;
+    return focus < 0 ? std::nullopt : std::optional<bool>(focus == 1);
 }
 
 void Gui::interrupt() {

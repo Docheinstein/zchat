@@ -144,9 +144,9 @@ public:
     // (see popup::nudge()). Takes about half a second. Thread-safe.
     virtual void nudge() {}
 
-    // A desktop notification (see notify()).
+    // Something to tell the user about, as the notification settings decide (see notify::decide()): a message
+    // somebody sent, or something else that happens (a game starts, a challenge…).
     struct Notification {
-        // A message, or something else that happens (a game starts, a challenge…): the user chooses which they get.
         enum class Kind { Message, Event };
         Kind kind = Kind::Message;
         // Where it comes from, e.g. "#general", a game; plain text.
@@ -159,11 +159,29 @@ public:
         std::string avatar = {};
         // What clicking it types, as if the user did (e.g. "/join general"); empty for just showing the window.
         std::string command = {};
+        // How: a little window in a corner of the screen, as chat programs show (see popup::toast()); a sound (where
+        // the screen can choose it: sound_name, at volume, 0 to 100, else its bell); flashing in the taskbar; and
+        // counted among the unread ones, where the screen shows how many (the window's title, if badge).
+        bool desktop = false;
+        bool sound = false;
+        std::string sound_name = {};
+        int volume = 100;
+        bool flash = false;
+        bool counts = false;
+        bool badge = false;
     };
 
-    // Says what happens on the desktop, where it can and the user wants it: a little window in a corner of the screen,
-    // as chat programs show, while the user looks elsewhere (see popup::toast()). Thread-safe.
-    virtual void notify(const Notification& /*notification*/) {}
+    // Tells about something as notification says, where it can. Thread-safe.
+    virtual void notify(const Notification& notification) {
+        if (notification.sound) {
+            bell();
+        }
+    }
+
+    // Whether zchat is in front, being looked at: nullopt where it cannot be told. Thread-safe.
+    virtual std::optional<bool> focused() const {
+        return std::nullopt;
+    }
 
     // Makes read_line() return nullopt right away, now and from then on. Thread-safe.
     virtual void interrupt() = 0;

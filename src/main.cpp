@@ -11,6 +11,7 @@
 #include "markup.hpp"
 #include "names.hpp"
 #include "net.hpp"
+#include "notify.hpp"
 #include "sound.hpp"
 #include "terminal.hpp"
 #include "text.hpp"
@@ -339,6 +340,182 @@ void channel_command(zchat::Chat& chat, std::string_view command, std::string_vi
     }
 }
 
+// The words of a command's arguments, split at spaces.
+std::vector<std::string_view> split_words(std::string_view text) {
+    std::vector<std::string_view> words;
+    for (std::size_t at = 0; at < text.size();) {
+        const std::size_t end = std::min(text.find(' ', at), text.size());
+        if (end > at) {
+            words.push_back(text.substr(at, end - at));
+        }
+        at = end + 1;
+    }
+    return words;
+}
+
+bool same_name(std::string_view a, std::string_view b) {
+    return std::ranges::equal(a, b, [](char x, char y) {
+        return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+    });
+}
+// Do Not Disturb as it is said: "off", "on until 14:30", "on until you turn it off".
+std::string dnd_status(const zchat::notify::Settings& settings) {
+    const std::time_t now = std::time(nullptr);
+    if (!zchat::notify::dnd(settings, now)) {
+        return "off";
+    }
+    if (settings.dnd_until == zchat::notify::dnd_forever) {
+        return "on, until /dnd off";
+    }
+    std::tm tm {};
+#ifdef _WIN32
+    localtime_s(&tm, &settings.dnd_until);
+#else
+    localtime_r(&settings.dnd_until, &tm);
+#endif
+    char when[32];
+    std::strftime(when, sizeof when, settings.dnd_until - now < 24 * 60 * 60 ? "%H:%M" : "%Y-%m-%d %H:%M", &tm);
+    return std::format("on, until {}", when);
+}
+
+void print_notify(zchat::Chat& chat) {
+    using namespace zchat;
+    const notify::Settings s = notify::current();
+    const auto on = [](bool b) {
+        return b ? "on" : "off";
+    };
+    chat.notice(std::format("Do Not Disturb: {}{}", dnd_status(s),
+                            s.dnd_trills ? " (trills are not played in it)" : " (trills still play in it)"));
+    chat.notice(std::format("Notify for: {} (private chats: all)", notify::name(s.level)));
+    chat.notice(std::format("Desktop notifications: {} (messages: {}, games and other events: {}){}, preview: {}",
+                            on(s.desktop), on(s.messages), on(s.events),
+                            s.when_focused ? ", also when zchat is in front" : "", notify::name(s.preview)));
+    chat.notice(std::format("Sound: {} ({}, {}%), taskbar flashing: {}, unread count in the title: {}", on(s.sound),
+                            s.sound_name, s.volume, on(s.flash), on(s.badge)));
+    chat.notice(std::format("@everyone: {}", s.suppress_everyone ? "does not notify" : "notifies"));
+    const auto channels = chat.channels();
+    for (const auto& [name, level] : s.channels) {
+        const auto it = std::ranges::find(channels, name, &Chat::ChannelInfo::name);
+        const std::string label = it != channels.end() && it->direct ? "@" + it->with.name : "#" + name;
+        chat.notice(std::format("  {}: {}", label, notify::name(level)));
+    }
+    chat.notice("/help lists the /notify commands.");
+}
+
+// /notify [...]: see print_help().
+void notify_command(zchat::Chat& chat, zchat::Screen& screen, std::string_view arg) {
+    using namespace zchat;
+    const auto words = split_words(arg);
+    if (words.empty()) {
+        print_notify(chat);
+        return;
+    }
+    notify::Settings s = notify::current();
+    const std::string_view first = words[0];
+    if (words.size() == 1 && first == "test") {
+        Screen::Notification test {Screen::Notification::Kind::Event, "zchat", chat.colored_own_name(),
+                                   "This is how messages and games show up while you look elsewhere.",
+                                   chat.own_avatar_hash()};
+        test.desktop = s.desktop;
+        test.sound = s.sound;
+        test.sound_name = s.sound_name;
+        test.volume = s.volume;
+        screen.notify(test);
+        chat.notice(s.desktop ? "Sent a test notification (the window shows them; a terminal only plays its sound)."
+                              : "Notifications are off: /notify desktop on turns them on.");
+        return;
+    }
+    if (words.size() == 1) {
+        if (const auto level = notify::parse_level(first); level && level != notify::Level::Default) {
+            s.level = *level;
+            notify::set(s);
+            chat.notice(std::format("Notifying for: {}.", notify::name(*level)));
+            return;
+        }
+    }
+    if (words.size() == 2 && (first.starts_with('#') || first.starts_with('@') || first == "here")) {
+        const auto level = notify::parse_level(words[1]);
+        if (!level) {
+            chat.notice("Use all, mentions, nothing or default.");
+            return;
+        }
+        std::string channel;
+        if (first == "here") {
+            channel = chat.current_channel();
+        } else if (first.starts_with('#')) {
+            channel = channel::clean_name(first);
+        } else {
+            for (const auto& c : chat.channels()) {
+                if (c.direct && same_name(c.with.name, first.substr(1))) {
+                    channel = c.name;
+                }
+            }
+        }
+        if (channel.empty()) {
+            chat.notice(std::format("No such channel or private chat: {}", text::sanitize(first, 40)));
+            return;
+        }
+        s.channels[channel] = *level;
+        notify::set(s);
+        chat.notice(std::format("{}: {}.", first == "here" ? "Here" : std::string(first), notify::name(*level)));
+        return;
+    }
+    if (words.size() == 2 && first == "preview") {
+        const auto preview = notify::parse_preview(words[1]);
+        if (!preview) {
+            chat.notice("Use /notify preview full, name or hidden.");
+            return;
+        }
+        s.preview = *preview;
+        notify::set(s);
+        chat.notice(std::format("Preview: {}.", notify::name(*preview)));
+        return;
+    }
+    if (words.size() == 2 && (words[1] == "on" || words[1] == "off")) {
+        const bool value = words[1] == "on";
+        bool* setting = first == "desktop"    ? &s.desktop
+                        : first == "messages" ? &s.messages
+                        : first == "events"   ? &s.events
+                        : first == "sound"    ? &s.sound
+                        : first == "flash"    ? &s.flash
+                        : first == "focused"  ? &s.when_focused
+                        : first == "badge"    ? &s.badge
+                        : first == "trills"   ? &s.dnd_trills
+                        : first == "everyone" ? &s.suppress_everyone
+                                              : nullptr;
+        if (setting) {
+            // "everyone on" is @everyone notifying, which is not suppressing it.
+            *setting = first == "everyone" ? !value : value;
+            notify::set(s);
+            chat.notice(std::format("/notify {} {}: done.", first, words[1]));
+            return;
+        }
+    }
+    chat.notice("Unknown /notify setting: /help lists them.");
+}
+
+// /dnd [DURATION|on|off]: Do Not Disturb, alone it switches it.
+void dnd_command(zchat::Chat& chat, std::string_view arg) {
+    using namespace zchat;
+    while (!arg.empty() && arg.front() == ' ') {
+        arg.remove_prefix(1);
+    }
+    notify::Settings s = notify::current();
+    const std::time_t now = std::time(nullptr);
+    if (arg == "off" || (arg.empty() && notify::dnd(s, now))) {
+        s.dnd_until = 0;
+    } else if (arg.empty() || arg == "on") {
+        s.dnd_until = notify::dnd_forever;
+    } else if (const auto duration = notify::parse_duration(arg)) {
+        s.dnd_until = now + *duration;
+    } else {
+        chat.notice("Use /dnd alone to switch it, /dnd off, or for how long: /dnd 30m, /dnd 1h, /dnd 8h, /dnd 1d.");
+        return;
+    }
+    notify::set(s);
+    chat.notice(std::format("{} Do Not Disturb: {}.", notify::dnd(s, now) ? "🔕" : "🔔", dnd_status(s)));
+}
+
 void print_help(zchat::Chat& chat) {
     chat.notice("People:");
     chat.notice("  /who         list the people in the chat");
@@ -395,6 +572,16 @@ void print_help(zchat::Chat& chat) {
     chat.notice("               (in its own window; /casino help: how to play in the chat)");
     chat.notice("  /world       enter the world: a room to walk around in with everybody, where what you say");
     chat.notice("               shows over your head (in the window: 🌍 Enter World; /world who: who is in it)");
+    chat.notice("Notifications:");
+    chat.notice("  /notify      show the notification settings (in the window: 🔔 at the top)");
+    chat.notice("  /notify all|mentions|nothing  which messages notify: all, only tags and private ones, or none");
+    chat.notice("  /notify #CHANNEL|@NAME|here all|mentions|nothing|default  the same, for one channel or private chat");
+    chat.notice("  /notify desktop|messages|events|sound|flash|focused|everyone|trills on|off  desktop");
+    chat.notice("               notifications (for messages, for games and other events), sound, taskbar flashing,");
+    chat.notice("               notifying while zchat is in front, @everyone, trills in Do Not Disturb");
+    chat.notice("  /notify preview full|name|hidden  what desktop notifications show of a message");
+    chat.notice("  /notify test  try a notification");
+    chat.notice("  /dnd [30m|1h|8h|...|off]  Do Not Disturb: nothing notifies (for a while, or until /dnd off)");
     chat.notice("zchat:");
     chat.notice("  /update      get the latest zchat, build it and restart");
     chat.notice("  /help        show this help (/help game: the games)");
@@ -1333,6 +1520,10 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
                 arg.remove_prefix(1);
             }
             games.command(arg);
+        } else if (input == "/notify" || input.starts_with("/notify ")) {
+            notify_command(chat, terminal, input.substr(std::string_view("/notify").size()));
+        } else if (input == "/dnd" || input.starts_with("/dnd ")) {
+            dnd_command(chat, input.substr(std::string_view("/dnd").size()));
         } else if (input == "/update") {
             if (!updater.start()) {
                 chat.notice("An update is already in progress.");

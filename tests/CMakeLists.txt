@@ -7,8 +7,10 @@ add_executable(zchat_tests
     "${PROJECT_SOURCE_DIR}/src/channel.cpp"
     "${PROJECT_SOURCE_DIR}/src/coins.cpp"
     "${PROJECT_SOURCE_DIR}/src/color.cpp"
+    "${PROJECT_SOURCE_DIR}/src/config.cpp"
     "${PROJECT_SOURCE_DIR}/src/elo.cpp"
     "${PROJECT_SOURCE_DIR}/src/markup.cpp"
+    "${PROJECT_SOURCE_DIR}/src/notify.cpp"
     "${PROJECT_SOURCE_DIR}/src/pokemon_state.cpp"
     "${PROJECT_SOURCE_DIR}/src/process.cpp"
     "${PROJECT_SOURCE_DIR}/src/text.cpp"
@@ -22,12 +24,15 @@ target_include_directories(zchat_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CM
 target_compile_definitions(zchat_tests PRIVATE ZCHAT_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/pokemon")
 
 if (MSVC)
-    target_compile_options(zchat_tests PRIVATE /W4 /utf-8)
+    # /MP: the sources compiled in parallel, which Visual Studio's projects do not do otherwise.
+    target_compile_options(zchat_tests PRIVATE /W4 /utf-8 /MP)
 else()
     target_compile_options(zchat_tests PRIVATE -Wall -Wextra)
 endif()
 if (WIN32)
     target_compile_definitions(zchat_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0601)
+    # config.cpp finds the config folder through the shell.
+    target_link_libraries(zchat_tests PRIVATE shell32 ole32)
 endif()
 
 add_test(NAME zchat_tests COMMAND zchat_tests)

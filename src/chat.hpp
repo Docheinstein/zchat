@@ -183,7 +183,8 @@ public:
     void game_notice(std::string_view text);
     void game_print(std::string_view line);
 
-    // Says on the desktop something that happens besides messages, e.g. a game that starts (see Screen::notify()):
+    // Says on the desktop something that happens besides messages, e.g. a game that starts, as the notification
+    // settings say (see notify::decide_event() and Screen::notify()):
     // where (e.g. the game), who or what (a name as colored_name() gives it, whose color the notification takes),
     // and what. from is whom it is about, for their avatar (0 for nobody); command is what clicking it types (empty for
     // just showing the window). Thread-safe.
@@ -268,8 +269,8 @@ private:
     bool print_message(std::uint64_t id, std::string_view name, std::string_view text,
                        std::optional<std::time_t> when = std::nullopt) const;
     // Turns the "@Name" tags of the people in the chat into markup showing them bold in their color, ours also
-    // underlined. Sets tags_us when we are tagged.
-    std::string mark_mentions(std::string_view text, bool& tags_us) const;
+    // underlined. Sets tags_us when we are tagged, and by_name (if given) when by our name, not only by @everyone.
+    std::string mark_mentions(std::string_view text, bool& tags_us, bool* by_name = nullptr) const;
     // Whether a quote is of something we said.
     bool quotes_us(const markup::Quote& quote) const;
     // A name in the color of whoever in the chat has it, or plain when nobody does.
@@ -298,8 +299,10 @@ private:
     void show(const Entry& entry, bool live);
     // Something for a channel: kept, and shown if it is the current one, or else told about once.
     void deliver(const std::string& channel, Entry entry);
-    // Says on the desktop what someone else said, drew or sent in a channel, live (see Screen::notify()).
-    void notify_entry(const std::string& channel, const Entry& entry, bool current) const;
+    // Tells about what someone else said, drew or sent in a channel, live, as the notification settings say (see
+    // notify::decide() and Screen::notify()). tags_us and only_everyone: whether it tags us, and only by @everyone.
+    void notify_entry(const std::string& channel, const Entry& entry, bool current, bool tags_us,
+                      bool only_everyone) const;
     // A notice as it is printed, with the time.
     std::string notice_line(std::string_view text) const;
     // Whether the games log is being shown; and the channel what we say, draw and send goes to: the current one, or

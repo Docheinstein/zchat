@@ -126,4 +126,24 @@ bool remove(std::string_view key) {
     return save(path, values);
 }
 
+std::vector<std::pair<std::string, std::string>> all() {
+    const auto values = load();
+    return {values.begin(), values.end()};
+}
+
+bool update(const std::vector<std::pair<std::string, std::string>>& values, const std::vector<std::string>& removed) {
+    const auto path = file();
+    if (path.empty()) {
+        return false;
+    }
+    auto current = load();
+    for (const auto& key : removed) {
+        current.erase(key);
+    }
+    for (const auto& [key, value] : values) {
+        current[key] = value;
+    }
+    return save(path, current);
+}
+
 } // namespace zchat::config

@@ -53,10 +53,17 @@ While the window is not the one in front, what happens shows up in a little wind
 screen, as Teams and Discord do: the messages (with who wrote them, their avatar and the channel), and the games and
 other events (a round of dice, bomber, arena or frag opened, a typing race, the casino's tables, a Pokémon battle, your
 turn at blackjack, a vote to kick, a request to spy). They stack up, go away by themselves after a few seconds (not
-while the mouse is on them), and a click brings zchat back, in the channel of the message. 🔔 at the top right turns
-them on and off, for messages or for the rest, or even while zchat is in front, and shows a test one. On Windows they
-are windows of their own; on Linux under Wayland, where a window cannot choose where it goes, they are drawn through
-Xwayland, and without it they are the desktop's own notifications.
+while the mouse is on them), and a click brings zchat back, in the channel of the message. On Windows they are windows
+of their own; on Linux under Wayland, where a window cannot choose where it goes, they are drawn through Xwayland, and
+without it they are the desktop's own notifications.
+
+🔔 at the top right (or `/notify` and `/dnd`, also in a terminal) sets what notifies and how, as in Discord: all the
+messages, only the @mentions and private messages (the default), or nothing, for all the channels and for each one
+(right-click a channel to mute it); a sound (six to choose from, and its volume), the taskbar flashing and the number of
+unread messages in the title; what the notifications show of a message (all of it, only who sent it, or nothing); and
+whether @everyone counts. **Do Not Disturb** keeps everything quiet for 15 minutes, an hour, 8 hours, a day or until it
+is turned off: 🔕 at the top and a red dot by your name say it is on, and trills sent to you meanwhile only show in the
+chat. Nothing notifies about the channel you are looking at.
 
 In the window the chat stays a chat: what the games say (rounds starting, rolls, boards, winners, Elo and coins, the
 answers to `/game`, `/casino`, `/coins` and `/shop`) goes to `#games-log`, right under `#general`, a channel of the

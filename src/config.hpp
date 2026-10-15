@@ -4,6 +4,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace zchat::config {
 
@@ -23,5 +25,12 @@ bool set(std::string_view key, std::string_view value);
 
 // Deletes a value from the config file, keeping the other keys. Returns false when the file cannot be written.
 bool remove(std::string_view key);
+
+// All the values of the config file, by key.
+std::vector<std::pair<std::string, std::string>> all();
+
+// Stores several values and deletes several keys at once, writing the file once. Returns false when the file cannot be
+// written.
+bool update(const std::vector<std::pair<std::string, std::string>>& values, const std::vector<std::string>& removed);
 
 } // namespace zchat::config

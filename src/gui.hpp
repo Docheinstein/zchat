@@ -56,6 +56,7 @@ public:
                       std::string_view reply_quote) override;
     void nudge() override;
     void notify(const Notification& notification) override;
+    std::optional<bool> focused() const override;
     void interrupt() override;
 
 private:

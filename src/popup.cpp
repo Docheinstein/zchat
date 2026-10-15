@@ -700,6 +700,16 @@ void fly(const image::DecodedImage& picture, std::chrono::milliseconds duration,
     ReleaseDC(nullptr, screen);
 }
 
+void flash(void* window) {
+    const auto hwnd = static_cast<HWND>(window);
+    if (!hwnd || !IsWindow(hwnd)) {
+        return;
+    }
+    // In the taskbar, until the window is looked at again.
+    FLASHWINFO info {sizeof info, hwnd, FLASHW_TRAY | FLASHW_TIMERNOFG, 0, 0};
+    FlashWindowEx(&info);
+}
+
 void nudge(void* window) {
     using namespace std::chrono_literals;
     const auto hwnd = static_cast<HWND>(window);
@@ -1427,6 +1437,18 @@ void fly(const image::DecodedImage& picture, std::chrono::milliseconds duration,
     done->wait(stop);
 }
 
+void flash(void* window) {
+    if (!window) {
+        return;
+    }
+    // Until the window is looked at again: GTK takes the hint away once it has the focus.
+    on_gtk([window] {
+        if (!gtk_window_is_active(GTK_WINDOW(window))) {
+            gtk_window_set_urgency_hint(GTK_WINDOW(window), TRUE);
+        }
+    });
+}
+
 void nudge(void* window) {
     if (!window) {
         return;
@@ -1828,6 +1850,9 @@ void raise(void*) {
 }
 
 void toast(Toast) {
+}
+
+void flash(void*) {
 }
 #endif
 

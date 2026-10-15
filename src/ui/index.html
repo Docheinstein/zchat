@@ -96,25 +96,6 @@
     padding: 12px; box-shadow: 0 8px 28px #000a;
   }
   #channel-panel.open { display: block; }
-  /* The settings of the desktop notifications. */
-  #notify-panel {
-    position: fixed; top: 50px; right: 12px; width: 300px; z-index: 22; display: none; background: var(--panel);
-    border: 1px solid var(--border); border-radius: 10px; padding: 12px; box-shadow: 0 8px 28px #000a;
-  }
-  #notify-panel.open { display: block; }
-  #notify-panel .title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
-  #notify-panel .hint { color: var(--muted); font-size: 12px; margin-bottom: 10px; line-height: 1.4; }
-  #notify-panel label { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
-  #notify-panel label.sub { padding-left: 22px; }
-  #notify-panel label.off { opacity: .45; cursor: default; }
-  #notify-panel input { accent-color: var(--accent); margin: 0; }
-  #notify-panel .row { display: flex; justify-content: flex-end; margin-top: 10px; }
-  #notify-panel .row button {
-    background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
-    height: 28px; padding: 0 10px; font: inherit; cursor: pointer;
-  }
-  #notify-panel .row button:hover { border-color: var(--accent); }
-  header button#notify-open.off { color: var(--muted); }
   #channel-panel .title { display: flex; align-items: center; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
   #channel-panel .title button { margin-left: auto; }
   #channel-panel h3 {
@@ -431,6 +412,64 @@
     height: 30px; padding: 0 12px; font: inherit; cursor: pointer;
   }
   #profile button:hover { border-color: var(--accent); }
+  /* Notifications (🔔): their settings, in a panel under the button; Do Not Disturb turns it and our status red. */
+  header button.dnd { border-color: #e5534b; color: #ff8a80; }
+  #me.dnd .status::before { background: #e5534b; }
+  #notify-panel {
+    position: fixed; top: 50px; right: 12px; width: 390px; max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 66px); overflow-y: auto; z-index: 25; display: none; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px 16px; box-shadow: 0 8px 28px #000a;
+  }
+  #notify-panel.open { display: block; }
+  #notify-panel .title { display: flex; align-items: center; font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+  #notify-panel .title button { margin-left: auto; width: 26px; padding: 0; }
+  #notify-panel h3 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--muted);
+    margin: 16px 0 6px;
+  }
+  #notify-panel .row { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  #notify-panel .row .label { flex: 1; min-width: 0; }
+  #notify-panel .hint { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  #notify-panel .note { color: var(--muted); font-size: 11px; padding: 2px 0 4px; }
+  #notify-panel button, #notify-panel select, #notify-menu button {
+    background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    height: 26px; padding: 0 10px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  #notify-panel button:hover, #notify-panel select:hover { border-color: var(--accent); }
+  #notify-panel button.on { background: var(--accent); border-color: var(--accent); color: #0b0d10; font-weight: 600; }
+  #notify-panel button.off { border-color: #e5534b; color: #ff8a80; }
+  #notify-panel .choices { display: flex; flex-wrap: wrap; gap: 6px; }
+  #notify-panel .dnd-state { font-weight: 600; }
+  #notify-panel .dnd-state.active { color: #ff8a80; }
+  #notify-panel input[type=range] { flex: 1; accent-color: var(--accent); }
+  #notify-panel .volume { width: 38px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #notify-panel .channel-row .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* A switch: a checkbox drawn as one. */
+  .switch { position: relative; flex: none; width: 34px; height: 20px; }
+  .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .switch span {
+    position: absolute; inset: 0; border-radius: 10px; background: #343a46; cursor: pointer; transition: background .15s;
+  }
+  .switch span::before {
+    content: ""; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; border-radius: 50%;
+    background: #fff; transition: transform .15s;
+  }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::before { transform: translateX(14px); }
+  .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* A channel's notifications, by right-clicking it in the list; and the bell of the muted ones there. */
+  #notify-menu {
+    position: fixed; z-index: 30; display: none; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px; box-shadow: 0 8px 28px #000a; min-width: 200px;
+  }
+  #notify-menu.open { display: block; }
+  #notify-menu .head { color: var(--muted); font-size: 11px; padding: 2px 6px 6px; }
+  #notify-menu button {
+    display: block; width: 100%; text-align: left; border: none; background: none; height: 28px; border-radius: 5px;
+  }
+  #notify-menu button:hover { background: #232833; }
+  #notify-menu button.on::after { content: "✓"; float: right; color: var(--accent); }
+  #channels .muted, #direct .muted { font-size: 11px; opacity: .75; }
   #profile button.primary { background: var(--accent); border-color: var(--accent); color: #0b0d10; font-weight: 600; }
   #mentions {
     position: absolute; left: 14px; bottom: 58px; min-width: 220px; max-height: 240px; overflow-y: auto;
@@ -480,23 +519,14 @@
   <button id="bm-open" title="Bomber: start a round, or show the one on">💣 Bomber</button>
   <button id="am-open" title="Arena: start a round of the shooter, or show the one on">🎯 Arena</button>
   <button id="fr-open" title="Frag: start a round of the first-person shooter, or show the one on">🔫 Frag</button>
-  <button id="notify-open" title="Desktop notifications">🔔</button>
+  <button id="notify-open" title="Notifications and Do Not Disturb">🔔</button>
   <select id="font" title="Font"></select>
   <button id="smaller" title="Smaller text">A−</button>
   <button id="bigger" title="Bigger text">A+</button>
 </header>
-<div id="notify-panel">
-  <div class="title">Desktop notifications</div>
-  <div class="hint">Little windows in the corner of the screen, while zchat is not the window in front.</div>
-  <label><input type="checkbox" id="notify-on"> Show desktop notifications</label>
-  <label class="sub"><input type="checkbox" id="notify-messages"> Messages</label>
-  <label class="sub"><input type="checkbox" id="notify-events"> Games and other events</label>
-  <label class="sub"><input type="checkbox" id="notify-focused"> Even when zchat is in front</label>
-  <div class="row"><button id="notify-test">Show a test notification</button></div>
-</div>
 <aside>
   <div id="me" title="Change your name and color"><span class="avatar"></span>
-    <div class="who"><div class="name"></div><div class="status">online<span class="coins" title="Your coins, won in the games: click for what they buy"></span></div></div></div>
+    <div class="who"><div class="name"></div><div class="status"><span class="state">online</span><span class="coins" title="Your coins, won in the games: click for what they buy"></span></div></div></div>
   <h2>Channels <button class="add" id="add-channel" title="New channel">+</button></h2>
   <div id="new-channel">
     <input type="text" id="new-channel-name" placeholder="name" maxlength="32" autocomplete="off" spellcheck="false">
@@ -553,6 +583,8 @@
   </div>
 </div>
 <div id="channel-panel"></div>
+<div id="notify-panel" role="dialog" aria-label="Notifications"></div>
+<div id="notify-menu" role="menu"></div>
 <div id="spy-requests"></div>
 <div id="dice-float"><div id="dice-float-title">zchat · dice<button id="dice-float-close" title="Close">×</button></div>
   <div class="dice" id="dice-body"></div></div>
@@ -600,7 +632,7 @@
 }
 // The C++ side calls zchat.print(), zchat.bell() and zchat.info(); it is called through the functions it binds:
 // zchatReady(), zchatSend(line), zchatMentions(), zchatSelf(), zchatAvatar(hash), zchatChannels(), zchatChannelPeople(channel), zchatRewrite(line), zchatDrop(name, base64), zchatDroppedFile(), zchatSettings(),
-// zchatSaveSettings(size, font), zchatNotifySettings(), zchatSaveNotifySettings(on, messages, events, focused) and
+// zchatSaveSettings(size, font), zchatFocus(focused), zchatNotifySettings(), zchatSaveNotifySettings(json) and
 // zchatTestNotification().
 const log = document.getElementById("log");
 const input = document.getElementById("input");
@@ -629,34 +661,6 @@ for (const [name] of fonts) {
 }
 fontSelect.value = settings.font || "Default";
 fontSelect.onchange = () => { settings.font = fontSelect.value; saveSettings(); applySettings(); };
-// --- Desktop notifications: whether, and of what (zchatNotifySettings / zchatSaveNotifySettings).
-const notifyPanel = document.getElementById("notify-panel");
-const notifyOpen = document.getElementById("notify-open");
-const notifyBoxes = ["notify-on", "notify-messages", "notify-events", "notify-focused"].map(id => document.getElementById(id));
-function showNotifySettings() {
-  const on = notifyBoxes[0].checked;
-  for (const box of notifyBoxes.slice(1)) {
-    box.disabled = !on;
-    box.parentElement.classList.toggle("off", !on);
-  }
-  notifyOpen.textContent = on ? "🔔" : "🔕";
-  notifyOpen.classList.toggle("off", !on);
-  notifyOpen.title = "Desktop notifications: " + (on ? "on" : "off");
-}
-for (const box of notifyBoxes) {
-  box.onchange = () => {
-    showNotifySettings();
-    try { window.zchatSaveNotifySettings(...notifyBoxes.map(b => b.checked ? "on" : "off")); } catch {}
-  };
-}
-notifyOpen.onclick = () => notifyPanel.classList.toggle("open");
-document.getElementById("notify-test").onclick = () => { try { window.zchatTestNotification(); } catch {} };
-document.addEventListener("mousedown", e => {
-  if (notifyPanel.classList.contains("open") && !notifyPanel.contains(e.target) && e.target !== notifyOpen) {
-    notifyPanel.classList.remove("open");
-  }
-});
-document.addEventListener("keydown", e => { if (e.key === "Escape") notifyPanel.classList.remove("open"); });
 document.getElementById("smaller").onclick = () => {
   settings.size = Math.max(9, (settings.size || 14) - 1); saveSettings(); applySettings();
 };
@@ -898,6 +902,8 @@ async function refreshChannels() {
     const label = document.createElement("span");
     label.textContent = "# " + name;
     item.append(label);
+    if (!log) addMutedBell(item, name, false);
+    if (!log) item.oncontextmenu = e => openNotifyMenu(e, name, "#" + name, false);
     if (log) {
       const icon = document.createElement("span");
       icon.className = "lock";
@@ -954,6 +960,8 @@ function showDirect(chats) {
     label.textContent = who;
     label.style.color = styleColor(style);
     item.append(avatar, label);
+    addMutedBell(item, name, true);
+    item.oncontextmenu = e => openNotifyMenu(e, name, who, true);
     if (unread && !current) {
       const dot = document.createElement("span");
       dot.className = "dot";
@@ -6919,6 +6927,278 @@ window.addEventListener("drop", e => {
   reader.readAsDataURL(file);
 });
 
+// --- Notifications (see notify.hpp): their settings (zchatNotifySettings / zchatSaveNotifySettings), which the
+// C++ side decides with; the sound of a new message (zchat.notify()), the unread count in the title, and Do Not
+// Disturb. The window tells zchat when it has the focus (zchatFocus), as nothing notifies what is looked at.
+const notifyButton = document.getElementById("notify-open");
+const notifyPanel = document.getElementById("notify-panel");
+const notifyMenu = document.getElementById("notify-menu");
+let notifySettings = null, unreadCount = 0, audio = null;
+const levelNames = { all: "All messages", mentions: "Only @mentions", nothing: "Nothing" };
+const soundNames = { ding: "Ding", chime: "Chime", pop: "Pop", blip: "Blip", bell: "Bell", knock: "Knock" };
+
+async function loadNotify() {
+  try { notifySettings = await window.zchatNotifySettings(); } catch {}
+  showNotifyState();
+  channelsShown = "";
+  refreshChannels();
+}
+async function saveNotify(change) {
+  if (!notifySettings) return;
+  Object.assign(notifySettings, change);
+  try { notifySettings = await window.zchatSaveNotifySettings(JSON.stringify(notifySettings)); } catch {}
+  showNotifyState();
+  if (notifyPanel.classList.contains("open")) renderNotifyPanel();
+  channelsShown = "";
+  refreshChannels();
+}
+function dndOn() {
+  const until = notifySettings ? notifySettings.dnd_until : 0;
+  return until === -1 || (until > 0 && Date.now() / 1000 < until);
+}
+function dndText() {
+  if (!dndOn()) return "Off";
+  if (notifySettings.dnd_until === -1) return "On, until you turn it off";
+  const when = new Date(notifySettings.dnd_until * 1000);
+  const sameDay = when.toDateString() === new Date().toDateString();
+  return "On, until " + (sameDay ? "" : when.toLocaleDateString(undefined, { weekday: "short" }) + " ") +
+    when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+function showNotifyState() {
+  const dnd = dndOn();
+  notifyButton.textContent = dnd ? "🔕" : "🔔";
+  notifyButton.classList.toggle("dnd", dnd);
+  notifyButton.title = dnd ? "Do Not Disturb: " + dndText().toLowerCase() : "Notifications and Do Not Disturb";
+  const me = document.getElementById("me");
+  me.classList.toggle("dnd", dnd);
+  me.querySelector(".state").textContent = dnd ? "do not disturb" : "online";
+}
+// Do Not Disturb ends by itself.
+setInterval(() => { const was = notifyButton.classList.contains("dnd"); showNotifyState();
+  if (was !== dndOn() && notifyPanel.classList.contains("open")) renderNotifyPanel(); }, 15000);
+
+function channelLevel(name) {
+  return (notifySettings && notifySettings.channels[name]) || "default";
+}
+function addMutedBell(item, name, direct) {
+  if (channelLevel(name) !== "nothing") return;
+  const bell = document.createElement("span");
+  bell.className = "muted";
+  bell.textContent = "🔕";
+  bell.title = direct ? "Muted: nothing notifies" : "Muted: nothing notifies, not even tags";
+  item.append(bell);
+}
+function setChannelLevel(name, level) {
+  if (!notifySettings) return;
+  const channels = { ...notifySettings.channels };
+  if (level === "default") delete channels[name]; else channels[name] = level;
+  saveNotify({ channels });
+}
+
+// The sounds, made here: no files needed.
+function playSound(name, volume) {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === "suspended") audio.resume();
+    const t = audio.currentTime, out = audio.createGain();
+    out.gain.value = Math.max(0, Math.min(100, volume)) / 100;
+    out.connect(audio.destination);
+    const tone = (freq, start, length, type = "sine", level = 0.35, to = 0) => {
+      const osc = audio.createOscillator(), gain = audio.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t + start);
+      if (to) osc.frequency.exponentialRampToValueAtTime(to, t + start + length);
+      gain.gain.setValueAtTime(0.0001, t + start);
+      gain.gain.exponentialRampToValueAtTime(level, t + start + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + start + length);
+      osc.connect(gain).connect(out);
+      osc.start(t + start);
+      osc.stop(t + start + length + 0.02);
+    };
+    switch (name) {
+      case "chime": tone(659, 0, 0.35, "triangle"); tone(988, 0.12, 0.5, "triangle"); break;
+      case "pop": tone(380, 0, 0.09, "sine", 0.5, 900); break;
+      case "blip": tone(1200, 0, 0.06, "square", 0.12); tone(1600, 0.07, 0.06, "square", 0.12); break;
+      case "bell": tone(880, 0, 0.6, "sine", 0.3); tone(1760, 0, 0.35, "sine", 0.08); tone(2640, 0, 0.2, "sine", 0.04); break;
+      case "knock": tone(170, 0, 0.09, "sine", 0.7, 90); tone(170, 0.16, 0.09, "sine", 0.7, 90); break;
+      default: tone(1046, 0, 0.45, "sine", 0.3); tone(2093, 0, 0.2, "sine", 0.06); break;
+    }
+  } catch {}
+}
+
+function showTitle() {
+  document.title = unreadCount ? `(${unreadCount}) zchat` : "zchat";
+}
+Object.assign(window.zchat, {
+  // A new message, as notify::decide() says: its sound, and one more unread in the title while we look elsewhere.
+  notify(n) {
+    if (n.sound) playSound(n.soundName, n.volume);
+    if (n.counts && n.badge && !document.hasFocus()) { unreadCount++; showTitle(); }
+  },
+});
+function reportFocus() {
+  const focused = document.hasFocus() && document.visibilityState === "visible";
+  try { window.zchatFocus(focused); } catch {}
+  if (focused && unreadCount) { unreadCount = 0; showTitle(); }
+}
+window.addEventListener("focus", reportFocus);
+window.addEventListener("blur", () => setTimeout(reportFocus, 0));
+document.addEventListener("visibilitychange", reportFocus);
+
+// The panel: built again on every change, from notifySettings.
+function el(tag, props = {}, ...children) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...children);
+  return e;
+}
+function toggleRow(label, hint, checked, onChange) {
+  const box = el("input", { type: "checkbox", checked });
+  box.onchange = () => onChange(box.checked);
+  return el("label", { className: "row" },
+    el("span", { className: "label" }, label, hint ? el("span", { className: "hint" }, hint) : ""),
+    el("span", { className: "switch" }, box, el("span")));
+}
+function choices(options, value, onPick) {
+  const box = el("div", { className: "choices" });
+  for (const [key, text] of options) {
+    const b = el("button", { className: key === value ? "on" : "", textContent: text });
+    b.onclick = () => onPick(key);
+    box.append(b);
+  }
+  return box;
+}
+function renderNotifyPanel() {
+  const s = notifySettings;
+  notifyPanel.textContent = "";
+  if (!s) { notifyPanel.append(el("div", { className: "note", textContent: "Not available." })); return; }
+  const close = el("button", { textContent: "×", title: "Close" });
+  close.onclick = closeNotifyPanel;
+  notifyPanel.append(el("div", { className: "title" }, "Notifications", close));
+
+  // Do Not Disturb.
+  const dnd = dndOn();
+  notifyPanel.append(el("h3", { textContent: "Do Not Disturb" }));
+  const state = el("span", { className: "dnd-state" + (dnd ? " active" : ""), textContent: dndText() });
+  const row = el("div", { className: "row" }, el("span", { className: "label" }, state,
+    el("span", { className: "hint", textContent: "No sounds, no notifications, no flashing: they still count as unread." })));
+  if (dnd) {
+    const off = el("button", { className: "off", textContent: "Turn off" });
+    off.onclick = () => saveNotify({ dnd_until: 0 });
+    row.append(off);
+  }
+  notifyPanel.append(row);
+  const now = () => Math.floor(Date.now() / 1000);
+  notifyPanel.append(choices([["15", "15 minutes"], ["60", "1 hour"], ["480", "8 hours"], ["1440", "24 hours"],
+    ["forever", "Until I turn it off"]], "", key => saveNotify({ dnd_until: key === "forever" ? -1 : now() + key * 60 })));
+  notifyPanel.append(toggleRow("Hold trills too", "Trills only show in the chat while Do Not Disturb is on",
+    s.dnd_trills, v => saveNotify({ dnd_trills: v })));
+
+  // Which messages.
+  notifyPanel.append(el("h3", { textContent: "Notify me about" }));
+  notifyPanel.append(choices(Object.entries(levelNames), s.level, level => saveNotify({ level })));
+  notifyPanel.append(el("div", { className: "note",
+    textContent: "Private messages always notify, unless their chat is set otherwise below. Nothing notifies about the channel you are looking at." }));
+  notifyPanel.append(toggleRow("Suppress @everyone", "Tags of everybody do not notify you", s.suppress_everyone,
+    v => saveNotify({ suppress_everyone: v })));
+
+  // Desktop notifications.
+  notifyPanel.append(el("h3", { textContent: "Desktop notifications" }));
+  notifyPanel.append(toggleRow("Enable desktop notifications", "Little windows in the corner of the screen; a click brings zchat back",
+    s.desktop, v => saveNotify({ desktop: v })));
+  notifyPanel.append(toggleRow("For messages", "As \u201cNotify me about\u201d says", s.messages, v => saveNotify({ messages: v })));
+  notifyPanel.append(toggleRow("For games and other events", "A round that opens, your turn, a vote, a spy request",
+    s.events, v => saveNotify({ events: v })));
+  notifyPanel.append(toggleRow("Also while zchat is in front", "For the channels other than the one shown, and events",
+    s.when_focused, v => saveNotify({ when_focused: v })));
+  const preview = el("select");
+  for (const [key, text] of [["full", "Name and message"], ["name", "Name only"], ["hidden", "Nothing (“New message”)"]]) {
+    preview.append(el("option", { value: key, textContent: text }));
+  }
+  preview.value = s.preview;
+  preview.onchange = () => saveNotify({ preview: preview.value });
+  const test = el("button", { textContent: "Test", title: "Show a test notification now, with its sound" });
+  test.onclick = () => { try { window.zchatTestNotification(); } catch {} if (s.sound) playSound(s.sound_name, s.volume); };
+  notifyPanel.append(el("div", { className: "row" }, el("span", { className: "label", textContent: "Preview" }), preview, test));
+
+  // Sound.
+  notifyPanel.append(el("h3", { textContent: "Sound" }));
+  notifyPanel.append(toggleRow("Play a sound", "", s.sound, v => saveNotify({ sound: v })));
+  const sound = el("select");
+  for (const [key, text] of Object.entries(soundNames)) sound.append(el("option", { value: key, textContent: text }));
+  sound.value = s.sound_name;
+  sound.onchange = () => { playSound(sound.value, s.volume); saveNotify({ sound_name: sound.value }); };
+  const play = el("button", { textContent: "▶", title: "Play it" });
+  play.onclick = () => playSound(sound.value, s.volume);
+  notifyPanel.append(el("div", { className: "row" }, el("span", { className: "label", textContent: "Sound" }), sound, play));
+  const volume = el("input", { type: "range", min: 0, max: 100, value: s.volume });
+  const shown = el("span", { className: "volume", textContent: s.volume + "%" });
+  volume.oninput = () => { shown.textContent = volume.value + "%"; };
+  volume.onchange = () => { playSound(sound.value, +volume.value); saveNotify({ volume: +volume.value }); };
+  notifyPanel.append(el("div", { className: "row" }, el("span", { textContent: "Volume" }), volume, shown));
+
+  // The window.
+  notifyPanel.append(el("h3", { textContent: "Window" }));
+  notifyPanel.append(toggleRow("Flash in the taskbar", "Until you look at zchat", s.flash, v => saveNotify({ flash: v })));
+  notifyPanel.append(toggleRow("Unread count in the title", "Like (3) zchat", s.badge, v => saveNotify({ badge: v })));
+
+  // The channels'.
+  notifyPanel.append(el("h3", { textContent: "Channels and private chats" }));
+  const chats = channelList.filter(c => c[0] !== gamesLog);
+  for (const [name, , , , , , direct, with_] of chats) {
+    const select = el("select");
+    select.append(el("option", { value: "default", textContent: "Default (" + (direct ? "all" : levelNames[s.level].toLowerCase()) + ")" }));
+    for (const [key, text] of Object.entries(levelNames)) select.append(el("option", { value: key, textContent: text }));
+    select.value = channelLevel(name);
+    select.onchange = () => setChannelLevel(name, select.value);
+    const label = direct ? "@ " + with_[0] : "# " + name;
+    notifyPanel.append(el("div", { className: "row channel-row" }, el("span", { className: "label", textContent: label, title: label }), select));
+  }
+  notifyPanel.append(el("div", { className: "note", textContent: "Right-click a channel in the list for the same." }));
+}
+function openNotifyPanel() {
+  closeNotifyMenu();
+  renderNotifyPanel();
+  notifyPanel.classList.add("open");
+}
+function closeNotifyPanel() {
+  notifyPanel.classList.remove("open");
+}
+notifyButton.onclick = async () => {
+  if (notifyPanel.classList.contains("open")) { closeNotifyPanel(); return; }
+  await loadNotify();
+  openNotifyPanel();
+};
+
+// A channel's notifications, from the list.
+function openNotifyMenu(e, name, label, direct) {
+  e.preventDefault();
+  if (!notifySettings) return;
+  notifyMenu.textContent = "";
+  notifyMenu.append(el("div", { className: "head", textContent: "Notifications: " + label }));
+  const current = channelLevel(name);
+  const options = [["default", "Default (" + (direct ? "all" : levelNames[notifySettings.level].toLowerCase()) + ")"],
+    ...Object.entries(levelNames)];
+  for (const [key, text] of options) {
+    const b = el("button", { className: key === current ? "on" : "", textContent: key === "nothing" ? "Mute (nothing)" : text });
+    b.onclick = () => { closeNotifyMenu(); setChannelLevel(name, key); };
+    notifyMenu.append(b);
+  }
+  notifyMenu.classList.add("open");
+  const r = notifyMenu.getBoundingClientRect();
+  notifyMenu.style.left = Math.min(e.clientX, innerWidth - r.width - 8) + "px";
+  notifyMenu.style.top = Math.min(e.clientY, innerHeight - r.height - 8) + "px";
+}
+function closeNotifyMenu() {
+  notifyMenu.classList.remove("open");
+}
+document.addEventListener("mousedown", e => {
+  if (!notifyMenu.contains(e.target)) closeNotifyMenu();
+  if (notifyPanel.classList.contains("open") && !notifyPanel.contains(e.target) && !notifyButton.contains(e.target)) {
+    closeNotifyPanel();
+  }
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeNotifyMenu(); closeNotifyPanel(); } });
+
 input.focus();
 (async () => {
   try {
@@ -6927,12 +7207,9 @@ input.focus();
     if (font) { settings.font = font; fontSelect.value = font; }
     applySettings();
   } catch {}
-  try {
-    const notify = await window.zchatNotifySettings();
-    notifyBoxes.forEach((box, i) => { box.checked = notify[i] === "on"; });
-    showNotifySettings();
-  } catch {}
+  await loadNotify();
   window.zchatReady();
+  reportFocus();
   refreshPeople();
 })();
 </script>
