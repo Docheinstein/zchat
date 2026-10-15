@@ -22,9 +22,25 @@ inline constexpr long long for_playing = 2;
 inline constexpr long long per_beaten = 4;
 inline constexpr long long per_tie = per_beaten / 2;
 
-// The coins each player of a round wins. places[i] is where player i finished, 0 for the first, and players with the
-// same place tied. Fewer than two players win nothing.
-std::vector<long long> payouts(const std::vector<int>& places);
+// How much longer than a round of dice (a minute) a game's rounds take, about: their coins are multiplied by it, so
+// that an hour of Pokémon pays about as much as an hour of dice, and nobody plays only dice for the coins. A game not
+// listed counts 1.
+struct Length {
+    std::string_view game;
+    long long times;
+};
+
+inline constexpr std::array lengths {
+    Length {"race", 1},   Length {"dice", 1},   Length {"bomber", 2},  Length {"arena", 3},
+    Length {"frag", 3},   Length {"wordle", 5}, Length {"pokemon", 8},
+};
+
+// How many times the coins of a round of this game are multiplied (see lengths).
+long long length(std::string_view game);
+
+// The coins each player of a round of a game wins. places[i] is where player i finished, 0 for the first, and players
+// with the same place tied. Fewer than two players win nothing. The longer the game, the more (see lengths).
+std::vector<long long> payouts(const std::vector<int>& places, std::string_view game = {});
 
 // Something coins buy: what it is called (as spend() takes it), its price, and what it is, for /shop. A thing that is
 // not built yet is listed as coming soon.
