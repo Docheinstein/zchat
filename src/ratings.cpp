@@ -418,11 +418,15 @@ namespace {
             std::string line;
             for (std::size_t i = 0; i < players.size(); ++i) {
                 std::optional<long long> balance;
-                if (players[i].id == chat_.id()) {
+                const auto known = players[i].user != 0 && people_.contains(players[i].user)
+                                       ? std::optional(players[i].user)
+                                       : std::nullopt;
+                const auto by_sender = by_sender_.find(players[i].id);
+                if (players[i].id == chat_.id() || (players[i].user != 0 && players[i].user == chat_.user())) {
                     coins_ = std::min(coins::most, coins_ + payouts[i]);
                     balance = coins_;
-                } else if (const auto it = by_sender_.find(players[i].id); it != by_sender_.end()) {
-                    auto& theirs = people_[it->second].coins;
+                } else if (known || by_sender != by_sender_.end()) {
+                    auto& theirs = people_[known ? *known : by_sender->second].coins;
                     if (theirs) {
                         *theirs = std::min(coins::most, *theirs + payouts[i]);
                     }
@@ -503,9 +507,14 @@ namespace {
 
         // The ratings of a player of a round: ours, of somebody we heard from, or else of somebody by name.
         elo::Ratings& ratings_of(const Placing& p, bool& us) {
-            if (p.id == chat_.id()) {
+            if (p.id == chat_.id() || (p.user != 0 && p.user == chat_.user())) {
                 us = true;
                 return own_;
+            }
+            if (p.user != 0) {
+                if (const auto it = people_.find(p.user); it != people_.end()) {
+                    return it->second.ratings;
+                }
             }
             if (const auto it = by_sender_.find(p.id); it != by_sender_.end()) {
                 return people_[it->second].ratings;

@@ -7,7 +7,6 @@
 #ifdef ZCHAT_GUI
 #include "gui.hpp"
 #endif
-#include "history.hpp"
 #include "image.hpp"
 #include "markup.hpp"
 #include "names.hpp"
@@ -1410,17 +1409,16 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
     zchat::Chat chat(options.port, name, saved_color ? zchat::parse_color(*saved_color) : std::nullopt, terminal);
     if (const auto dir = zchat::config::dir(); !dir.empty()) {
         chat.set_user(user_id(rng), dir / "channels");
+        chat.set_store(dir);
     }
 #ifdef _WIN32
     active_chat = &chat;
     SetConsoleCtrlHandler(on_console_event, TRUE);
 #endif
 
-    // The last messages from before, like the scrollback of a chat, then the welcome.
-    if (const auto earlier = zchat::history::load(); !earlier.empty()) {
-        chat.notice(std::format("The last {} message{} from before:", earlier.size(), earlier.size() == 1 ? "" : "s"));
-        chat.print_history(earlier);
-    }
+    // The last messages from before, like the scrollback of a chat, then the welcome. (What was said while we were
+    // away comes once the others tell what they have, see Chat::set_store().)
+    chat.show_earlier();
     chat.notice(std::format("Welcome to zchat! You are {}.", chat.colored_own_name()));
     chat.notice(
         std::format("Chatting on UDP port {}. Type a message and press Enter, /help for commands.", options.port));

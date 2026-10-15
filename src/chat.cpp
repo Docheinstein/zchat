@@ -3,6 +3,7 @@
 #include "channel.hpp"
 #include "cipher.hpp"
 #include "file.hpp"
+#include "history.hpp"
 #include "image.hpp"
 #include "markup.hpp"
 #include "notify.hpp"
@@ -58,6 +59,15 @@ namespace {
     constexpr auto channels_interval = 20s;
     // Avatars kept, and how long before trying again to download one that failed.
     constexpr std::size_t max_avatars = 64;
+    // Sync (see Chat::set_store()): how often we tell what we keep, how often we ask the same peer at most, how long
+    // after start the updates due wait for what the others have, and how much a request and an answer can be.
+    constexpr auto sync_interval = 15s;
+    constexpr auto sync_pull_interval = 10s;
+    constexpr auto sync_grace = 40s;
+    constexpr std::size_t max_sync_request = 4'000'000;
+    constexpr std::size_t max_sync_response = 8'000'000;
+    // How many messages of #general from before are shown at start.
+    constexpr std::size_t earlier_shown = 50;
     constexpr auto avatar_retry = 30s;
 
     // FNV-1a: tells avatars apart, so each is downloaded once.
@@ -132,6 +142,40 @@ namespace {
         return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
     }
 
+    // Whether a record that came from another zchat is one we could have got ourselves: a message or a drawing as a
+    // packet would bring it, under its own key (see store::key_of()), or a game's record.
+    bool valid_synced(const store::Record& r) {
+        if (r.local || r.name.empty() || text::sanitize(r.name, max_name_bytes) != r.name || r.data.empty()) {
+            return false;
+        }
+        if (r.topic.starts_with('~')) {
+            return r.kind == 'g' && text::sanitize(r.data, 200) == r.data;
+        }
+        if (r.kind == 'm' && text::sanitize(r.data, max_text_bytes) != r.data) {
+            return false;
+        }
+        if (r.kind == 'a') {
+            Packet art;
+            art.type = PacketType::Art;
+            art.name = "x";
+            art.text = r.data;
+            if (const auto clean = decode(encode(art)); !clean || clean->text != r.data) {
+                return false;
+            }
+        } else if (r.kind != 'm') {
+            return false;
+        }
+        // "SENDER-SEQ-HASH", which the text must give.
+        const auto dash = r.key.find('-');
+        const auto last = r.key.rfind('-');
+        std::uint64_t seq = 0;
+        if (dash == std::string::npos || last == dash ||
+            std::from_chars(r.key.data() + dash + 1, r.key.data() + last, seq).ptr != r.key.data() + last) {
+            return false;
+        }
+        return store::key_of(r.sender, seq, r.data) == r.key;
+    }
+
 } // namespace
 
 Chat::Chat(std::uint16_t port, std::string name, std::optional<Color> color, Screen& terminal) :
@@ -164,8 +208,15 @@ void Chat::start() {
             serve_pictures(stop);
         });
     }
+    {
+        std::scoped_lock lock(sync_mutex_);
+        started_ = clock::now();
+    }
     send(PacketType::Join);
     send_channel_states();
+    if (const auto text = sync_text(); !text.empty()) {
+        send(PacketType::Sync, text);
+    }
 }
 
 void Chat::stop() {
@@ -197,7 +248,8 @@ void Chat::say(std::string_view text) {
             switch_to(std::string(channel::general));
             return;
         }
-        send(PacketType::ChannelMessage, std::format("{} m\n{}", channel, clean));
+        const auto seq = send(PacketType::ChannelMessage, std::format("{} m\n{}", channel, clean));
+        keep(channel, id_, seq, name(), 'm', clean);
         deliver(channel, {Entry::Kind::Message, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)});
         return;
     }
@@ -210,7 +262,7 @@ void Chat::say_general(std::string_view text) {
 
 void Chat::say_in_general(const std::string& clean, bool from_games_log) {
     const std::string general(channel::general);
-    send(PacketType::Message, clean);
+    const auto seq = send(PacketType::Message, clean);
     Entry entry {Entry::Kind::Message, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)};
     if (from_games_log) {
         // Said from the games log: shown there if it is a move of a game (a race's words), and else in #general.
@@ -223,12 +275,12 @@ void Chat::say_in_general(const std::string& clean, bool from_games_log) {
             deliver(std::string(channel::games_log), std::move(entry));
         } else {
             deliver(general, std::move(entry));
-            history::add({std::time(nullptr), id_, name(), clean});
+            keep(general, id_, seq, name(), 'm', clean);
             game_notice("Said in #general: the games log is for the games.");
         }
     } else {
         deliver(general, std::move(entry));
-        history::add({std::time(nullptr), id_, name(), clean});
+        keep(general, id_, seq, name(), 'm', clean);
     }
     std::scoped_lock lock(hooks_mutex_);
     if (hooks_.message) {
@@ -256,11 +308,10 @@ void Chat::draw(std::string_view art) {
     if (in_games_log()) {
         game_notice("Drawn in #general: the games log is for the games.");
     }
-    if (channel == channel::general) {
-        send(PacketType::Art, clean);
-    } else {
-        send(PacketType::ChannelMessage, std::format("{} a\n{}", channel, clean));
-    }
+    const auto seq = channel == channel::general
+                         ? send(PacketType::Art, clean)
+                         : send(PacketType::ChannelMessage, std::format("{} a\n{}", channel, clean));
+    keep(channel, id_, seq, name(), 'a', clean);
     deliver(channel, {Entry::Kind::Art, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)});
 }
 
@@ -353,8 +404,13 @@ void Chat::serve_pictures(std::stop_token stop) {
 }
 
 void Chat::serve_picture(net::TcpStream& stream, std::stop_token stop) {
-    // "GET ID": the picture, scrambled like packets, and the connection closed. "AVATAR HASH": our avatar.
+    // "GET ID": the picture, scrambled like packets, and the connection closed. "AVATAR HASH": our avatar. "SYNC
+    // USER": what they do not have of what we keep (see serve_sync()).
     const auto request = stream.read_line(64, 5s, stop);
+    if (request && request->starts_with("SYNC ")) {
+        serve_sync(stream, *request, stop);
+        return;
+    }
     std::uint64_t picture = 0;
     if (request && request->starts_with("AVATAR ")) {
         std::shared_ptr<const std::string> avatar;
@@ -1491,20 +1547,6 @@ std::string Chat::paint(Color color, std::string_view text) const {
     return std::format("\x1b[{}m{}\x1b[0m", ansi_foreground(color), text);
 }
 
-void Chat::print_history(const std::vector<history::Entry>& entries) {
-    for (const auto& entry : entries) {
-        // Tags are shown, but ring no bell: they were heard back then.
-        print_message(entry.sender, entry.name, entry.text, entry.time);
-    }
-    // Shown again when general is joined again.
-    std::scoped_lock lock(channels_mutex_);
-    auto& backlog = backlog_[std::string(channel::general)];
-    for (const auto& entry : entries) {
-        backlog.push_back({Entry::Kind::Message, entry.time, entry.sender, entry.name,
-                           std::make_shared<const std::string>(entry.text)});
-    }
-}
-
 bool Chat::print_message(std::uint64_t id, std::string_view name, std::string_view text,
                          std::optional<std::time_t> when) const {
     const std::string stamp = when ? timestamp(*when) : timestamp();
@@ -2095,7 +2137,7 @@ void Chat::game_print(std::string_view line) {
             {Entry::Kind::Line, std::time(nullptr), id_, name(), std::make_shared<const std::string>(line)});
 }
 
-void Chat::send(PacketType type, std::string_view text, bool once) {
+std::uint64_t Chat::send(PacketType type, std::string_view text, bool once) {
     Packet packet;
     packet.type = type;
     packet.sender = id_;
@@ -2105,12 +2147,14 @@ void Chat::send(PacketType type, std::string_view text, bool once) {
     packet.text = text.empty() && (type == PacketType::Here || type == PacketType::Join) ? presence_text()
                                                                                         : std::string(text);
     socket_.broadcast(cipher::scramble(encode(packet)), once);
+    return packet.seq;
 }
 
 void Chat::run(std::stop_token stop) {
     auto next_heartbeat = clock::now() + heartbeat_interval;
     auto next_refresh = clock::now() + interfaces_refresh_interval;
     auto next_channels = clock::now() + channels_interval;
+    auto next_sync = clock::now() + sync_interval;
     while (!stop.stop_requested()) {
         if (auto datagram = socket_.receive(fast_ticks_ != 0 ? 20ms : 200ms)) {
             // Older versions send plaintext: still understood, but never sent.
@@ -2129,6 +2173,13 @@ void Chat::run(std::stop_token stop) {
         if (now >= next_channels) {
             send_channel_states();
             next_channels = now + channels_interval;
+        }
+        finish_synced();
+        if (now >= next_sync) {
+            if (const auto text = sync_text(); !text.empty()) {
+                send(PacketType::Sync, text);
+            }
+            next_sync = now + sync_interval;
         }
         if (now >= next_heartbeat) {
             send(PacketType::Here);
@@ -2220,9 +2271,12 @@ void Chat::handle(const Packet& packet, std::uint32_t from) {
     }
     switch (packet.type) {
     case PacketType::Join:
-        // Let the newcomer know we are here, and about our channels.
+        // Let the newcomer know we are here, about our channels, and what we keep.
         send(PacketType::Here);
         send_channel_states();
+        if (const auto text = sync_text(); !text.empty()) {
+            send(PacketType::Sync, text);
+        }
         break;
     case PacketType::Message: {
         // A move of a game (a race's words) goes to the games log, where there is one.
@@ -2235,7 +2289,7 @@ void Chat::handle(const Packet& packet, std::uint32_t from) {
                 {Entry::Kind::Message, std::time(nullptr), packet.sender, packet.name,
                  std::make_shared<const std::string>(packet.text)});
         if (!move) {
-            history::add({std::time(nullptr), packet.sender, packet.name, packet.text});
+            keep(std::string(channel::general), packet.sender, packet.seq, packet.name, 'm', packet.text);
         }
         std::scoped_lock lock(hooks_mutex_);
         if (hooks_.message) {
@@ -2251,6 +2305,7 @@ void Chat::handle(const Packet& packet, std::uint32_t from) {
         break;
     }
     case PacketType::Art:
+        keep(std::string(channel::general), packet.sender, packet.seq, packet.name, 'a', packet.text);
         deliver(std::string(channel::general), {Entry::Kind::Art, std::time(nullptr), packet.sender, packet.name,
                                                 std::make_shared<const std::string>(packet.text)});
         break;
@@ -2273,10 +2328,14 @@ void Chat::handle(const Packet& packet, std::uint32_t from) {
         if (channel.empty() || channel == channel::general || (kind != "m" && kind != "a") || !in_channel(channel)) {
             break;
         }
+        keep(channel, packet.sender, packet.seq, packet.name, kind == "m" ? 'm' : 'a', packet.text.substr(nl + 1));
         deliver(channel, {kind == "m" ? Entry::Kind::Message : Entry::Kind::Art, std::time(nullptr), packet.sender,
                           packet.name, std::make_shared<const std::string>(packet.text.substr(nl + 1))});
         break;
     }
+    case PacketType::Sync:
+        receive_sync(packet, from);
+        break;
     case PacketType::Offer:
         receive_offer(packet, from);
         break;
@@ -2308,6 +2367,357 @@ void Chat::prune_silent_peers() {
     }
     for (const auto& who : gone) {
         notice(std::format("{} vanished (timed out)", who));
+    }
+}
+
+void Chat::set_store(const std::filesystem::path& dir) {
+    store_ = std::make_unique<store::Store>(dir / "store");
+    queue_ = std::make_unique<store::Queue>(dir / "queue");
+    const std::string general(channel::general);
+    // The history of older versions, the first time: kept here only, as its messages have no key the others know.
+    if (store_->records(general).empty()) {
+        for (const auto& e : history::load()) {
+            store_->add({general, "h" + store::key_of(e.sender, static_cast<std::uint64_t>(e.time), e.text), e.time,
+                         e.sender, 0, e.name, 'm', e.text, true});
+        }
+    }
+    // What was said in our channels, as if we had been there.
+    std::scoped_lock lock(channels_mutex_);
+    for (const auto& topic : store_->topics()) {
+        if (topic.starts_with('~')) {
+            continue;
+        }
+        if (topic != general) {
+            const auto it = channels_.find(topic);
+            if (it == channels_.end() || it->second.deleted || !it->second.has(user_)) {
+                continue;
+            }
+        }
+        auto& backlog = backlog_[topic];
+        for (auto& r : store_->records(topic)) {
+            backlog.push_back({r.kind == 'a' ? Entry::Kind::Art : Entry::Kind::Message, r.time, r.sender, r.name,
+                               std::make_shared<const std::string>(std::move(r.data))});
+        }
+        while (backlog.size() > max_backlog) {
+            backlog.pop_front();
+        }
+    }
+}
+
+void Chat::show_earlier() {
+    std::vector<Entry> earlier;
+    {
+        std::scoped_lock lock(channels_mutex_);
+        const auto it = backlog_.find(std::string(channel::general));
+        if (it == backlog_.end()) {
+            return;
+        }
+        const std::size_t n = std::min(it->second.size(), earlier_shown);
+        earlier.assign(it->second.end() - static_cast<std::ptrdiff_t>(n), it->second.end());
+    }
+    if (earlier.empty()) {
+        return;
+    }
+    notice(std::format("The last {} message{} from before:", earlier.size(), earlier.size() == 1 ? "" : "s"));
+    for (const auto& entry : earlier) {
+        show(entry, false);
+    }
+}
+
+void Chat::keep_game(std::string_view game) {
+    std::scoped_lock lock(sync_mutex_);
+    game_topics_.insert(std::format("~{}", game));
+}
+
+void Chat::record(std::string_view game, std::string key, std::string data) {
+    if (store_) {
+        store_->add({std::format("~{}", game), std::move(key), std::time(nullptr), id_, user_, name(), 'g',
+                     std::move(data)});
+    }
+}
+
+void Chat::record_from(std::uint64_t sender, std::string_view name, std::string_view game, std::string key,
+                       std::string data) {
+    if (store_) {
+        store_->add({std::format("~{}", game), std::move(key), std::time(nullptr), sender, user_of(sender),
+                     std::string(name), 'g', std::move(data)});
+    }
+}
+
+std::vector<store::Record> Chat::records(std::string_view game) const {
+    return store_ ? store_->records(std::format("~{}", game)) : std::vector<store::Record> {};
+}
+
+std::uint64_t Chat::records_version() const {
+    return store_ ? store_->version() : 0;
+}
+
+void Chat::schedule(std::string key, std::time_t due) {
+    if (queue_) {
+        queue_->add(std::move(key), due);
+    }
+}
+
+std::vector<std::string> Chat::take_due(std::string_view prefix) {
+    {
+        std::scoped_lock lock(sync_mutex_);
+        if (!queue_ || started_ == clock::time_point {} || clock::now() - started_ < sync_grace) {
+            return {};
+        }
+    }
+    return queue_->take_due(prefix);
+}
+
+std::uint64_t Chat::user_of(std::uint64_t sender) const {
+    if (sender == id_) {
+        return user_;
+    }
+    std::scoped_lock lock(peers_mutex_);
+    const auto it = peers_.find(sender);
+    return it == peers_.end() ? 0 : it->second.user;
+}
+
+void Chat::keep(std::string topic, std::uint64_t sender, std::uint64_t seq, std::string_view name, char kind,
+                std::string data) {
+    if (!store_ || data.empty()) {
+        return;
+    }
+    std::string key = store::key_of(sender, seq, data);
+    store_->add({std::move(topic), std::move(key), std::time(nullptr), sender, user_of(sender), std::string(name),
+                 kind, std::move(data)});
+}
+
+std::vector<std::string> Chat::sync_topics() const {
+    std::vector<std::string> topics {std::string(channel::general)};
+    {
+        std::scoped_lock lock(channels_mutex_);
+        for (const auto& [name, c] : channels_) {
+            if (!c.deleted && c.has(user_)) {
+                topics.push_back(name);
+            }
+        }
+    }
+    std::scoped_lock lock(sync_mutex_);
+    topics.insert(topics.end(), game_topics_.begin(), game_topics_.end());
+    return topics;
+}
+
+std::string Chat::sync_text() const {
+    // "PORT TOPIC:DIGEST ...", as many as fit (see PacketType::Sync).
+    if (!store_ || !listener_) {
+        return {};
+    }
+    std::string text = std::to_string(listener_->port());
+    for (const auto& topic : sync_topics()) {
+        const std::string item = std::format(" {}:{:08x}", topic, store_->digest(topic));
+        if (text.size() + item.size() > max_sync_bytes) {
+            break;
+        }
+        text += item;
+    }
+    return text;
+}
+
+void Chat::receive_sync(const Packet& packet, std::uint32_t from) {
+    if (!store_ || from == 0) {
+        return;
+    }
+    std::string_view text = packet.text;
+    const auto space = text.find(' ');
+    const std::string_view port_text = text.substr(0, space);
+    unsigned port = 0;
+    if (const auto [ptr, ec] = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
+        ec != std::errc {} || ptr != port_text.data() + port_text.size() || port == 0 || port > 65535) {
+        return;
+    }
+    // Their digests, by topic.
+    std::map<std::string, std::uint32_t, std::less<>> theirs;
+    text.remove_prefix(space == std::string_view::npos ? text.size() : space + 1);
+    while (!text.empty()) {
+        const auto end = text.find(' ');
+        const std::string_view item = text.substr(0, end);
+        text.remove_prefix(end == std::string_view::npos ? text.size() : end + 1);
+        const auto colon = item.rfind(':');
+        std::uint32_t digest = 0;
+        if (colon != std::string_view::npos &&
+            std::from_chars(item.data() + colon + 1, item.data() + item.size(), digest, 16).ptr ==
+                item.data() + item.size()) {
+            theirs[std::string(item.substr(0, colon))] = digest;
+        }
+    }
+    // The topics we both keep, of which they have something (and not what we have).
+    std::vector<std::string> wanted;
+    for (auto& topic : sync_topics()) {
+        if (const auto it = theirs.find(topic); it != theirs.end() && it->second != 0 &&
+                                                it->second != store_->digest(topic)) {
+            wanted.push_back(std::move(topic));
+        }
+    }
+    if (wanted.empty()) {
+        return;
+    }
+    {
+        std::scoped_lock lock(sync_mutex_);
+        auto& peer = sync_peers_[packet.sender];
+        if (peer.pulling || clock::now() - peer.last_pull < sync_pull_interval) {
+            return;
+        }
+        peer.pulling = true;
+        peer.last_pull = clock::now();
+    }
+    const std::string who = colored_name(packet.sender, packet.name);
+    const std::uint64_t sender = packet.sender;
+    if (!start_transfer([this, sender, who, from, port, wanted = std::move(wanted)](std::stop_token stop) mutable {
+            pull(sender, who, from, static_cast<std::uint16_t>(port), std::move(wanted), stop);
+        })) {
+        std::scoped_lock lock(sync_mutex_);
+        sync_peers_[sender].pulling = false;
+    }
+}
+
+void Chat::pull(std::uint64_t sender, std::string peer_name, std::uint32_t from, std::uint16_t port,
+                std::vector<std::string> topics, std::stop_token stop) {
+    std::string request = std::format("SYNC {:x}\n", user_);
+    for (const auto& topic : topics) {
+        request += topic;
+        for (const auto& key : store_->keys(topic)) {
+            request += ' ';
+            request += key;
+        }
+        request += '\n';
+    }
+    request += "END\n";
+    std::optional<std::string> data;
+    if (auto stream = net::TcpStream::connect(from, port, connect_timeout);
+        stream && stream->send_all(request, transfer_timeout, stop)) {
+        data = stream->read_all(max_sync_response, transfer_timeout, stop);
+    }
+    std::vector<store::Record> records;
+    if (const auto plain = data ? cipher::unscramble(*data) : std::nullopt) {
+        std::string_view rest = *plain;
+        while (!rest.empty()) {
+            const auto nl = rest.find('\n');
+            if (auto r = store::decode(rest.substr(0, nl))) {
+                records.push_back(std::move(*r));
+            }
+            rest.remove_prefix(nl == std::string_view::npos ? rest.size() : nl + 1);
+        }
+    }
+    std::scoped_lock lock(sync_mutex_);
+    sync_peers_[sender].pulling = false;
+    if (!records.empty()) {
+        synced_.push_back({std::move(peer_name), std::move(records)});
+    }
+}
+
+bool Chat::may_see(std::uint64_t user, std::string_view topic) const {
+    if (topic == channel::general || topic.starts_with('~')) {
+        return true;
+    }
+    // A channel's, or a private chat's: for its members (as we know them), and only if we are one.
+    std::scoped_lock lock(channels_mutex_);
+    const auto it = channels_.find(std::string(topic));
+    return user != 0 && it != channels_.end() && !it->second.deleted && it->second.has(user) && it->second.has(user_);
+}
+
+void Chat::serve_sync(net::TcpStream& stream, std::string_view request, std::stop_token stop) {
+    std::uint64_t user = 0;
+    const std::string_view hex = request.substr(5);
+    if (!store_ || std::from_chars(hex.data(), hex.data() + hex.size(), user, 16).ptr != hex.data() + hex.size()) {
+        return;
+    }
+    // A line per topic, "TOPIC KEY KEY ...", the keys they have; then "END".
+    std::string response;
+    std::size_t budget = max_sync_response - 1024;
+    for (int topics = 0; topics < 256; ++topics) {
+        const auto line = stream.read_line(max_sync_request, 5s, stop);
+        if (!line || *line == "END") {
+            break;
+        }
+        std::string_view rest = *line;
+        const auto space = rest.find(' ');
+        const std::string topic(rest.substr(0, space));
+        rest.remove_prefix(space == std::string_view::npos ? rest.size() : space + 1);
+        if (!store::valid_topic(topic) || !may_see(user, topic)) {
+            continue;
+        }
+        std::set<std::string, std::less<>> theirs;
+        while (!rest.empty()) {
+            const auto end = rest.find(' ');
+            theirs.emplace(rest.substr(0, end));
+            rest.remove_prefix(end == std::string_view::npos ? rest.size() : end + 1);
+        }
+        for (const auto& r : store_->missing(topic, theirs, budget)) {
+            const std::string line_out = store::encode(r);
+            budget -= std::min(budget, line_out.size() + 1);
+            response += line_out;
+            response += '\n';
+        }
+    }
+    if (!response.empty()) {
+        stream.send_all(cipher::scramble(response), transfer_timeout, stop);
+    }
+}
+
+void Chat::finish_synced() {
+    std::vector<Synced> batches;
+    {
+        std::scoped_lock lock(sync_mutex_);
+        batches.swap(synced_);
+    }
+    if (batches.empty() || !store_) {
+        return;
+    }
+    const auto topics = sync_topics();
+    const std::time_t now = std::time(nullptr);
+    for (auto& batch : batches) {
+        std::map<std::string, std::vector<store::Record>> fresh;
+        for (auto& r : batch.records) {
+            // Only what we could have got ourselves, in what we keep, and not from the future.
+            if (std::ranges::find(topics, r.topic) == topics.end() || r.time > now + 24 * 60 * 60 ||
+                !valid_synced(r) || !store_->add(r, now)) {
+                continue;
+            }
+            if (!r.topic.starts_with('~')) {
+                fresh[r.topic].push_back(std::move(r));
+            }
+        }
+        for (auto& [topic, records] : fresh) {
+            deliver_missed(topic, std::move(records), batch.from);
+        }
+    }
+}
+
+void Chat::deliver_missed(const std::string& topic, std::vector<store::Record> records, const std::string& from) {
+    std::ranges::stable_sort(records, {}, &store::Record::time);
+    std::vector<Entry> entries;
+    for (auto& r : records) {
+        entries.push_back({r.kind == 'a' ? Entry::Kind::Art : Entry::Kind::Message, r.time, r.sender, r.name,
+                           std::make_shared<const std::string>(std::move(r.data))});
+    }
+    bool current = false;
+    {
+        std::scoped_lock lock(channels_mutex_);
+        current = topic == current_;
+        auto& backlog = backlog_[topic];
+        for (const auto& entry : entries) {
+            backlog.insert(std::ranges::upper_bound(backlog, entry.time, {}, &Entry::time), entry);
+        }
+        while (backlog.size() > max_backlog) {
+            backlog.pop_front();
+        }
+        if (!current) {
+            unread_.insert(topic);
+        }
+    }
+    const std::string what = std::format("{} message{}", entries.size(), entries.size() == 1 ? "" : "s");
+    if (!current) {
+        notice(std::format("📥 {} you missed in {}, from {}: {}", what, channel_label(topic), from, join_hint(topic)));
+        return;
+    }
+    notice(std::format("📥 {} you missed, from {}:", what, from));
+    for (const auto& entry : entries) {
+        show(entry, false);
     }
 }
 

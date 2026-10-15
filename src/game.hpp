@@ -76,6 +76,9 @@ struct Placing {
     std::uint64_t id = 0; // sender id
     std::string name;
     int place = 0;
+    // Their user id (see Chat::user()), when known: for a round settled later (see store::Queue), when the sender ids
+    // of then are gone.
+    std::uint64_t user = 0;
 };
 
 // The Elo ratings of the games, one per game and a general one of them all, and their leaderboards (see

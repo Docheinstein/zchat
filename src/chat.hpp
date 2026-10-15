@@ -3,11 +3,11 @@
 #include "channel.hpp"
 #include "color.hpp"
 #include "file.hpp"
-#include "history.hpp"
 #include "markup.hpp"
 #include "net.hpp"
 #include "protocol.hpp"
 #include "screen.hpp"
+#include "store.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -109,6 +109,36 @@ public:
         return user_;
     }
 
+    // Keeps what is said in the folder (see store.hpp), and the updates due later (see store::Queue), so that what
+    // was said while we were away comes from whoever has it: the others tell what they keep (PacketType::Sync), and
+    // what one has and the other does not is sent over (see pull() and serve_sync()). After set_user(), before
+    // start(); without it, nothing is kept. The history of older versions is kept too, the first time.
+    void set_store(const std::filesystem::path& dir);
+
+    // Prints the last messages of #general from before, kept by the store.
+    void show_earlier();
+
+    // A game's records (see store::Record): kept and synced like messages, under the topic "~GAME", for what a game
+    // must know even if it was not running then (e.g. who played the Wordle of a day). keep_game() makes the game's
+    // records synced; record() adds one of ours, record_from() one of someone else (a sender). The key is the
+    // game's own (see store::valid_key()). Thread-safe.
+    void keep_game(std::string_view game);
+    void record(std::string_view game, std::string key, std::string data);
+    void record_from(std::uint64_t sender, std::string_view name, std::string_view game, std::string key,
+                     std::string data);
+    std::vector<store::Record> records(std::string_view game) const;
+    // Changes whenever a record (or a message) is kept.
+    std::uint64_t records_version() const;
+
+    // Updates due at a time, even if nobody is online then (see store::Queue): add one by key, and take the ones due.
+    // None are due in the first moments after start(), so that what the others have (their records) comes first.
+    // Thread-safe.
+    void schedule(std::string key, std::time_t due);
+    std::vector<std::string> take_due(std::string_view prefix);
+
+    // The user id of a sender (ours too), 0 when unknown.
+    std::uint64_t user_of(std::uint64_t sender) const;
+
     // Channels (see channel.hpp): what we say, draw and send goes to the current one. Each returns what went wrong, or
     // nullopt. The channel of add_to_channel() and the others is the current one when empty; people are named as
     // they are in the chat (they must be online).
@@ -191,9 +221,6 @@ public:
     void notify_event(std::string_view where, std::string_view title, std::string_view text, std::uint64_t from = 0,
                       std::string command = {}) const;
 
-    // Prints messages from the history (see history.hpp), each with the time it was sent at.
-    void print_history(const std::vector<history::Entry>& entries);
-
     // Our id, which changes with the color.
     std::uint64_t id() const {
         return id_;
@@ -264,7 +291,8 @@ private:
     // from is the address the packet came from.
     void handle(const Packet& packet, std::uint32_t from);
     // With once, to each network once, see net::BroadcastSocket::broadcast().
-    void send(PacketType type, std::string_view text = {}, bool once = false);
+    // Returns the packet's sequence number.
+    std::uint64_t send(PacketType type, std::string_view text = {}, bool once = false);
     // Returns whether the message tags us. when is the time it was sent at, for messages from the history.
     bool print_message(std::uint64_t id, std::string_view name, std::string_view text,
                        std::optional<std::time_t> when = std::nullopt) const;
@@ -330,6 +358,28 @@ private:
     void send_channel_states();
     void save_channels() const;
     void prune_silent_peers();
+
+    // Sync (see set_store()). Keeps what was said (live): ours, or another's, by their packet.
+    void keep(std::string topic, std::uint64_t sender, std::uint64_t seq, std::string_view name, char kind,
+              std::string data);
+    // The topics we keep: #general, our channels and private chats, and the games' (see keep_game()).
+    std::vector<std::string> sync_topics() const;
+    // What we tell about them (PacketType::Sync).
+    std::string sync_text() const;
+    // Another's Sync: when they have something we do not, we ask them for it (see pull()).
+    void receive_sync(const Packet& packet, std::uint32_t from);
+    // Asks a peer for the records of topics we do not have, on a thread of its own: "SYNC USER", then a line per
+    // topic, its name and the keys we have, then "END"; it sends the records we lack.
+    void pull(std::uint64_t sender, std::string peer_name, std::uint32_t from, std::uint16_t port,
+              std::vector<std::string> topics, std::stop_token stop);
+    // Answers a "SYNC USER" request, with the records of the topics USER may see (see pull()).
+    void serve_sync(net::TcpStream& stream, std::string_view request, std::stop_token stop);
+    // Whether a user may have a topic's records.
+    bool may_see(std::uint64_t user, std::string_view topic) const;
+    // On the chat thread: keeps what came from pull(), and shows what we missed.
+    void finish_synced();
+    // Messages we missed, from the store of someone else: put among the others of their channel, by time.
+    void deliver_missed(const std::string& topic, std::vector<store::Record> records, const std::string& from);
     // Pictures too big for a packet, see send_picture(): offered, and downloaded by the others from us, on threads
     // of their own (see start_transfer()); or else sent in Chunks, asked for again when some do not arrive.
     struct Incoming;
@@ -442,6 +492,24 @@ private:
     // The last name of each user heard, for the private chats with who is not in the chat now: kept with the channels.
     // Guarded by peers_mutex_.
     std::map<std::uint64_t, std::string> names_;
+
+    // Sync (see set_store()): what we keep, the updates due later, the games' topics, when we started (see
+    // take_due()), the peers we asked lately (by sender), and what came from them, for the chat thread.
+    std::unique_ptr<store::Store> store_;
+    std::unique_ptr<store::Queue> queue_;
+    mutable std::mutex sync_mutex_;
+    std::set<std::string, std::less<>> game_topics_;
+    clock::time_point started_ {};
+    struct SyncPeer {
+        clock::time_point last_pull {};
+        bool pulling = false;
+    };
+    std::map<std::uint64_t, SyncPeer> sync_peers_;
+    struct Synced {
+        std::string from;
+        std::vector<store::Record> records;
+    };
+    std::vector<Synced> synced_;
 
     // Held while a hook runs, so set_game_hooks() can wait for it.
     std::mutex hooks_mutex_;

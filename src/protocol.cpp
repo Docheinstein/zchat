@@ -62,6 +62,9 @@ namespace {
         if (type == PacketType::ChannelState) {
             return text::sanitize(text, max_channel_state_bytes);
         }
+        if (type == PacketType::Sync) {
+            return text::sanitize(text, max_sync_bytes);
+        }
         if (type == PacketType::ChannelMessage) {
             // "CHANNEL KIND", then a message (KIND m) or a drawing (KIND a).
             const auto nl = text.find('\n');
@@ -141,6 +144,9 @@ std::optional<Packet> decode(std::string_view data) {
         break;
     case 'C':
         packet.type = PacketType::ChannelMessage;
+        break;
+    case 'S':
+        packet.type = PacketType::Sync;
         break;
     default:
         return std::nullopt;
