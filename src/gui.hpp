@@ -52,8 +52,10 @@ public:
     void bell() override;
     bool show_image(std::string_view line, int width, int height, const std::vector<Frame>& frames) override;
     bool show_file(std::string_view line, std::size_t index, std::string_view name, std::string_view size) override;
-    bool show_message(std::string_view line, std::optional<std::string_view> quote,
-                      std::string_view reply_quote) override;
+    bool show_message(std::string_view line, std::optional<std::string_view> quote, std::string_view reply_quote,
+                      std::string_view key) override;
+    bool show_reactions(std::string_view key, const std::vector<Reaction>& reactions) override;
+    void set_reactor(std::function<void(std::string_view key, std::string_view emoji)> reactor) override;
     void nudge() override;
     void notify(const Notification& notification) override;
     std::optional<bool> focused() const override;

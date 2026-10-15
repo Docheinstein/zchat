@@ -598,6 +598,10 @@ void print_help(zchat::Chat& chat) {
     chat.notice("Messages, pictures and files:");
     chat.notice("  /quote [@NAME] MESSAGE  reply quoting the last message in the channel (of NAME)");
     chat.notice("               (in the window, hover on a message and click Quote)");
+    chat.notice("  :NAME:      an emoji by its name, like :rofl: or :+1: (type ':' and a few letters to pick one;");
+    chat.notice("               in the window, 😀 by the input box picks them too)");
+    chat.notice("  /react [@NAME] EMOJI  react to the last message (of NAME) with an emoji, or take it back");
+    chat.notice("               (in the window, hover on a message and pick one)");
     chat.notice("  /tags [NAME] list the tags for messages, like <color=red>text</color>, or explain one");
     chat.notice("  /image [SIZE] FILE  send a picture (windows show it, terminals draw it with characters)");
     chat.notice("  /ascii [SIZE] [TEXTURE%] FILE  send a picture drawn with characters, for everyone");
@@ -1433,6 +1437,10 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
     terminal.set_avatars([&chat](std::string_view hash) {
         return chat.avatar(hash);
     });
+    // The window's reaction buttons.
+    terminal.set_reactor([&chat](std::string_view key, std::string_view emoji) {
+        chat.react(key, emoji);
+    });
     terminal.set_channels([&chat] {
         std::vector<zchat::Screen::ChannelItem> items;
         for (const auto& c : chat.channels()) {
@@ -1522,6 +1530,15 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
         }
         if (input == "/who" || input == "/list") {
             print_who(chat);
+        } else if (input == "/react" || input.starts_with("/react ")) {
+            // /react [@NAME] EMOJI: the last message (of NAME).
+            const auto words = split_words(input.substr(std::string_view("/react").size()));
+            if (words.empty() || words.size() > 2 || (words.size() == 2 && !words[0].starts_with('@'))) {
+                chat.notice("Use /react EMOJI, or /react @NAME EMOJI: e.g. /react 👍 or /react @Rex :joy:");
+            } else if (const auto error = chat.react_last(words.size() == 2 ? words[0] : std::string_view(),
+                                                          words.back())) {
+                chat.notice(*error);
+            }
         } else if (input == "/quote" || input.starts_with("/quote ")) {
             quote_reply(chat, input.substr(std::string_view("/quote").size()));
         } else if (input == "/whoami") {

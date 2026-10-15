@@ -132,13 +132,34 @@ public:
     // the reply (see markup::quote()). When the message quotes another one, quote is that quote's line (the name, then
     // the text), shown with it. Returns false where messages cannot be quoted but with /quote (a terminal), for it to
     // be printed instead. Thread-safe.
+    // key is the message's (see store::key_of()), to react to it (see set_reactor()); empty when it cannot be.
     virtual bool show_message(std::string_view line, std::optional<std::string_view> quote,
-                              std::string_view reply_quote) {
+                              std::string_view reply_quote, std::string_view key = {}) {
         (void)line;
         (void)quote;
         (void)reply_quote;
+        (void)key;
         return false;
     }
+
+    // The reactions to a message (by its key): each emoji, how many reacted with it, whether we did, and who.
+    struct Reaction {
+        std::string emoji;
+        std::size_t count = 0;
+        bool mine = false;
+        std::string who;
+    };
+    // Shows them under the message, where it is shown, if this screen can: returns false where it cannot (a
+    // terminal), for them to be printed instead. Thread-safe.
+    virtual bool show_reactions(std::string_view key, const std::vector<Reaction>& reactions) {
+        (void)key;
+        (void)reactions;
+        return false;
+    }
+
+    // Sets what reacting to a message on the screen does (the window's reaction buttons): the message's key, and the
+    // emoji. Called without the screen locked.
+    virtual void set_reactor(std::function<void(std::string_view key, std::string_view emoji)> /*reactor*/) {}
 
     // A trill (/trill): brings the window to the front, shown again if it is minimized, and shakes it, where it can
     // (see popup::nudge()). Takes about half a second. Thread-safe.

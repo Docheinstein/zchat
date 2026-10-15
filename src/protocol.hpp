@@ -52,6 +52,9 @@ enum class PacketType : char {
     // the TCP port to ask for records with "SYNC" (see Chat::serve_sync()), and for each topic we keep, the digest
     // of its records in hex. Sent now and then, and when somebody joins. Older versions do not know 'S' and ignore it.
     Sync = 'S',
+    // A reaction to a message: "TOPIC KEY on|off EMOJI", the message's channel and key (see store::key_of()), and an
+    // emoji added or taken away. Older versions do not know 'E' and ignore it.
+    Reaction = 'E',
 };
 
 struct Packet {
@@ -85,6 +88,7 @@ inline constexpr std::size_t max_chunks = (max_image_bytes + max_chunk_bytes - 1
 inline constexpr std::size_t max_resend_bytes = 4000;
 inline constexpr std::size_t max_channel_state_bytes = 1200;
 inline constexpr std::size_t max_sync_bytes = 1400;
+inline constexpr std::size_t max_reaction_bytes = 200;
 // The size of an avatar's text (a picture, see image::encode_avatar()), downloaded like an offered Image.
 inline constexpr std::size_t max_avatar_bytes = 4'000'000;
 

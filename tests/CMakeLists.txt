@@ -11,6 +11,7 @@ add_executable(zchat_tests
     "${PROJECT_SOURCE_DIR}/src/commands.cpp"
     "${PROJECT_SOURCE_DIR}/src/config.cpp"
     "${PROJECT_SOURCE_DIR}/src/elo.cpp"
+    "${PROJECT_SOURCE_DIR}/src/emojis.cpp"
     "${PROJECT_SOURCE_DIR}/src/markup.cpp"
     "${PROJECT_SOURCE_DIR}/src/notify.cpp"
     "${PROJECT_SOURCE_DIR}/src/pokemon_state.cpp"
@@ -24,7 +25,8 @@ target_link_libraries(zchat_tests PRIVATE Threads::Threads)
 
 target_include_directories(zchat_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}")
 # The sample battles the tests replay.
-target_compile_definitions(zchat_tests PRIVATE ZCHAT_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/pokemon")
+target_compile_definitions(zchat_tests PRIVATE ZCHAT_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/pokemon"
+                                               ZCHAT_GEMOJI="${PROJECT_SOURCE_DIR}/third_party/gemoji/emoji.json")
 # CHANGELOG.md, which the changelog tests read.
 target_compile_definitions(zchat_tests PRIVATE ZCHAT_CHANGELOG="${PROJECT_SOURCE_DIR}/CHANGELOG.md")
 

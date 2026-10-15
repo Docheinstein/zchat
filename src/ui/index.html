@@ -13,6 +13,7 @@
     --accent: #6ea8ff;
     --input: #1e222a;
     --size: 14px;
+    --emoji-font: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji";
     --font: "Cascadia Mono", "Cascadia Code", Consolas, Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace;
   }
   * { box-sizing: border-box; }
@@ -318,6 +319,55 @@
     background: var(--panel); color: var(--muted); }
   #log .message:hover .quote-button { display: block; }
   #log .message .quote-button:hover { border-color: var(--accent); color: var(--text); }
+  /* A message's actions, shown on hover: quick reactions, the emoji picker, and quoting it. */
+  #log .message .actions { position: absolute; top: 0; right: 4px; display: none; gap: 1px; padding: 1px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 7px; box-shadow: 0 2px 8px #0006;
+    z-index: 2; }
+  #log .message:hover .actions { display: flex; }
+  #log .message .actions button { font: inherit; font-size: 0.9em; border: none; background: none; cursor: pointer;
+    padding: 0 5px; border-radius: 5px; color: var(--muted); font-family: var(--emoji-font), var(--font); }
+  #log .message .actions button:hover { background: #2a3140; color: var(--text); }
+  #log .message .actions .quote-button { position: static; display: block; border: none; background: none; }
+  /* Its reactions: each emoji and how many, ours outlined; a click adds ours or takes it back. */
+  #log .message .reactions { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px 6ch; }
+  #log .message .reactions button { font: inherit; font-size: 0.9em; padding: 0 7px; line-height: 1.6;
+    border-radius: 10px; border: 1px solid var(--border); background: var(--input); color: var(--text);
+    cursor: pointer; font-family: var(--emoji-font), var(--font); }
+  #log .message .reactions button:hover { border-color: var(--muted); }
+  #log .message .reactions button.mine { border-color: var(--accent); background: #6ea8ff26; }
+  #log .message .reactions .add { color: var(--muted); }
+  /* The emoji picker: 😀 by the input box, or a message's to react. */
+  .input-row { display: flex; gap: 8px; align-items: center; }
+  .input-row #input { flex: 1; min-width: 0; }
+  #emoji-open { flex: none; width: 40px; height: 40px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--input); cursor: pointer; font-size: 20px; line-height: 1; filter: grayscale(.6);
+    font-family: var(--emoji-font); }
+  #emoji-open:hover, #emoji-open.on { border-color: var(--accent); filter: none; }
+  #emoji-picker { position: fixed; z-index: 40; width: 356px; height: 410px; max-height: calc(100vh - 20px);
+    display: none; flex-direction: column; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 8px 28px #000a; }
+  #emoji-picker.open { display: flex; }
+  #emoji-picker .search { margin: 10px 10px 6px; background: var(--input); color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; font: inherit; outline: none; }
+  #emoji-picker .search:focus { border-color: var(--accent); }
+  #emoji-picker .tabs { display: flex; padding: 0 6px 4px; border-bottom: 1px solid var(--border); }
+  #emoji-picker .tabs button { flex: 1; border: none; background: none; cursor: pointer; font-size: 16px;
+    padding: 4px 0; border-radius: 6px; filter: grayscale(1); opacity: .7; font-family: var(--emoji-font); }
+  #emoji-picker .tabs button:hover { filter: none; opacity: 1; background: #2a3140; }
+  #emoji-picker .grid { flex: 1; overflow-y: auto; padding: 2px 8px 8px; }
+  #emoji-picker h4 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--muted); margin: 10px 2px 4px; }
+  #emoji-picker .cells { display: grid; grid-template-columns: repeat(9, 1fr); }
+  #emoji-picker .cells button { font-size: 22px; background: none; border: none; cursor: pointer; border-radius: 6px;
+    padding: 3px 0; line-height: 1.2; font-family: var(--emoji-font); }
+  #emoji-picker .cells button:hover { background: #2a3140; }
+  #emoji-picker .none { color: var(--muted); padding: 20px 4px; text-align: center; }
+  #emoji-picker .footer { display: flex; gap: 10px; align-items: center; min-height: 44px; padding: 4px 12px;
+    border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; overflow: hidden; }
+  #emoji-picker .footer .big { font-size: 26px; font-family: var(--emoji-font); }
+  #emoji-picker .footer .name { color: var(--text); font-weight: 600; }
+  #mentions div.emoji .glyph { font-family: var(--emoji-font); margin-right: 8px; }
+  #mentions div.emoji .about { color: var(--muted); margin-left: 8px; }
   /* Pictures and the paint canvas: characters touching, like in a terminal. */
   #log .block { white-space: pre; line-height: 1; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
   #log .file { display: flex; align-items: center; gap: 10px; margin: 4px 0 6px 6ch; padding: 8px 12px;
@@ -579,8 +629,12 @@
   <div id="inputbar">
     <div id="mentions"></div>
     <div id="quoting"><span class="text"></span><button title="Do not quote it">✕</button></div>
-    <input id="input" autocomplete="off" spellcheck="false" placeholder="Type a message, or /help for commands">
+    <div class="input-row">
+      <input id="input" autocomplete="off" spellcheck="false" placeholder="Type a message, or /help for commands">
+      <button id="emoji-open" title="Emoji (or type : and a name, like :rofl:)">😀</button>
+    </div>
   </div>
+  <div id="emoji-picker" role="dialog" aria-label="Emoji"></div>
 </main>
 <div id="profile">
   <div class="preview"><span class="avatar"></span><span class="name"></span></div>
@@ -849,10 +903,11 @@ window.zchat = {
   },
   // A chat message, and a button to reply quoting it, putting replyQuote before the reply. quote is the line of the
   // message it quotes (the name, then the text), or null.
-  message(line, quote, replyQuote) {
+  message(line, quote, replyQuote, key) {
     const stick = atBottom();
     const div = document.createElement("div");
     div.className = "message";
+    if (key) div.dataset.key = key;
     if (quote !== null) {
       const q = document.createElement("div");
       q.className = "quote";
@@ -863,14 +918,32 @@ window.zchat = {
     head.className = "line";
     ansiToNodes(line, head);
     div.appendChild(head);
+    // On hover: quick reactions, the picker for another, and quoting it.
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    if (key) {
+      for (const emoji of quickReactions) {
+        const b = document.createElement("button");
+        b.textContent = emoji;
+        b.title = "React with " + emoji;
+        b.onclick = () => react(key, emoji);
+        actions.appendChild(b);
+      }
+      const more = document.createElement("button");
+      more.textContent = "☺+";
+      more.title = "React with another emoji";
+      more.onclick = e => { e.stopPropagation(); openPicker(more, key); };
+      actions.appendChild(more);
+    }
     if (replyQuote) {
       const button = document.createElement("button");
       button.className = "quote-button";
       button.textContent = "❝ Quote";
       button.title = "Reply quoting this message";
       button.onclick = () => startQuote(replyQuote);
-      div.appendChild(button);
+      actions.appendChild(button);
     }
+    if (actions.childElementCount) div.appendChild(actions);
     log.appendChild(div);
     while (log.childElementCount > maxLines) log.firstElementChild.remove();
     if (stick) log.scrollTop = log.scrollHeight;
@@ -6813,6 +6886,213 @@ async function refreshPeople() {
 }
 setInterval(refreshPeople, 2000);
 
+// --- Emoji (see emojis.hpp): the picker (😀 by the input box, or ☺+ on a message to react), the list that ':' and a
+// few letters open while typing, and the reactions under messages (zchat.reactions(); a click reacts, zchatReact()).
+// The table comes from zchatEmojiTable(): [[emoji, category, "names", "tags", description], ...].
+const quickReactions = ["👍", "❤️", "😂", "😮", "😢", "🎉"];
+const emojiCategories = [["Recent", "🕘"], ["Smileys & Emotion", "😀"], ["People & Body", "👋"],
+  ["Animals & Nature", "🐻"], ["Food & Drink", "🍔"], ["Activities", "⚽"], ["Travel & Places", "✈️"],
+  ["Objects", "💡"], ["Symbols", "🔣"], ["Flags", "🏳️"]];
+let emojiTable = null;
+async function emojiList() {
+  if (!emojiTable) {
+    try { emojiTable = await window.zchatEmojiTable(); } catch { return []; }
+  }
+  return emojiTable;
+}
+// Used lately, the latest first: in this window's storage, a convenience.
+function recentEmoji() {
+  try { const r = JSON.parse(localStorage.getItem("zchat-emoji-recent")); return Array.isArray(r) ? r : []; }
+  catch { return []; }
+}
+function usedEmoji(emoji) {
+  const recent = [emoji, ...recentEmoji().filter(e => e !== emoji)].slice(0, 27);
+  try { localStorage.setItem("zchat-emoji-recent", JSON.stringify(recent)); } catch {}
+}
+// The rows matching what is typed: a name starting with it first, then one with it, a tag, the description.
+function emojiMatches(rows, typed, max) {
+  const q = typed.toLowerCase();
+  const found = [];
+  for (const row of rows) {
+    const names = row[2].split(" "), tags = row[3].split(" ");
+    let rank = names.some(n => n.startsWith(q)) ? 0 : names.some(n => n.includes(q)) ? 1
+      : tags.some(t => t.startsWith(q)) ? 2 : row[4].toLowerCase().includes(q) ? 3 : 4;
+    if (rank < 4) found.push([rank, found.length, row]);
+  }
+  found.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  return found.slice(0, max).map(f => f[2]);
+}
+function react(key, emoji) {
+  usedEmoji(emoji);
+  try { window.zchatReact(key, emoji); } catch {}
+}
+
+// The picker: for the input box (pickerKey null), or to react to a message.
+const picker = document.getElementById("emoji-picker");
+const emojiButton = document.getElementById("emoji-open");
+let pickerKey = null;
+function pickerCell(row) {
+  const b = document.createElement("button");
+  b.textContent = row[0];
+  b.title = ":" + row[2].split(" ")[0] + ":";
+  b.onmouseenter = () => showEmojiInFooter(row);
+  b.onclick = e => pickEmoji(row[0], e.shiftKey);
+  return b;
+}
+function showEmojiInFooter(row) {
+  const footer = picker.querySelector(".footer");
+  const big = document.createElement("span");
+  big.className = "big";
+  big.textContent = row[0];
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = row[2].split(" ").map(n => ":" + n + ":").join(" ");
+  const about = document.createElement("span");
+  about.textContent = row[4];
+  footer.replaceChildren(big, name, about);
+}
+// Shift+click picks several for the input box, the picker staying open.
+function pickEmoji(emoji, more) {
+  if (pickerKey) {
+    react(pickerKey, emoji);
+    closePicker();
+    return;
+  }
+  usedEmoji(emoji);
+  const start = input.selectionStart ?? input.value.length, end = input.selectionEnd ?? start;
+  input.setRangeText(emoji, start, end, "end");
+  if (!more) { closePicker(); input.focus(); }
+}
+async function renderPicker() {
+  const rows = await emojiList();
+  const grid = picker.querySelector(".grid");
+  const q = picker.querySelector(".search").value.trim().replace(/^:|:$/g, "");
+  grid.textContent = "";
+  if (q) {
+    const found = emojiMatches(rows, q, 200);
+    if (!found.length) {
+      const none = document.createElement("div");
+      none.className = "none";
+      none.textContent = "No emoji called so.";
+      grid.appendChild(none);
+      return;
+    }
+    const cells = document.createElement("div");
+    cells.className = "cells";
+    cells.append(...found.map(pickerCell));
+    grid.appendChild(cells);
+    showEmojiInFooter(found[0]);
+    return;
+  }
+  const byEmoji = new Map(rows.map(r => [r[0], r]));
+  for (const [category] of emojiCategories) {
+    const list = category === "Recent" ? recentEmoji().map(e => byEmoji.get(e)).filter(Boolean)
+      : rows.filter(r => r[1] === category);
+    if (!list.length) continue;
+    const title = document.createElement("h4");
+    title.textContent = category;
+    title.dataset.category = category;
+    const cells = document.createElement("div");
+    cells.className = "cells";
+    cells.append(...list.map(pickerCell));
+    grid.append(title, cells);
+  }
+}
+function buildPicker() {
+  if (picker.childElementCount) return;
+  const search = document.createElement("input");
+  search.className = "search";
+  search.placeholder = "Search emoji";
+  search.spellcheck = false;
+  search.oninput = renderPicker;
+  search.onkeydown = e => {
+    if (e.key === "Enter") {
+      const first = picker.querySelector(".cells button");
+      if (first) first.click();
+      e.preventDefault();
+    } else if (e.key === "Escape") {
+      closePicker();
+      if (!pickerKey) input.focus();
+      e.preventDefault();
+    }
+  };
+  const tabs = document.createElement("div");
+  tabs.className = "tabs";
+  for (const [category, icon] of emojiCategories) {
+    const b = document.createElement("button");
+    b.textContent = icon;
+    b.title = category;
+    b.onclick = () => {
+      search.value = "";
+      renderPicker().then(() => picker.querySelector(`h4[data-category="${category}"]`)?.scrollIntoView());
+    };
+    tabs.appendChild(b);
+  }
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  const footer = document.createElement("div");
+  footer.className = "footer";
+  footer.textContent = "Type to search, or :name: in a message";
+  picker.append(search, tabs, grid, footer);
+}
+// Opens it by anchor (a button): above it, or below where there is no room; inside the window.
+async function openPicker(anchor, key) {
+  if (picker.classList.contains("open") && pickerKey === key) { closePicker(); return; }
+  buildPicker();
+  pickerKey = key;
+  picker.querySelector(".search").value = "";
+  await renderPicker();
+  picker.classList.add("open");
+  emojiButton.classList.toggle("on", !key);
+  const r = anchor.getBoundingClientRect(), p = picker.getBoundingClientRect();
+  const top = r.top - p.height - 6 >= 8 ? r.top - p.height - 6 : Math.min(r.bottom + 6, innerHeight - p.height - 8);
+  picker.style.top = Math.max(8, top) + "px";
+  picker.style.left = Math.max(8, Math.min(r.right - p.width, innerWidth - p.width - 8)) + "px";
+  picker.querySelector(".grid").scrollTop = 0;
+  picker.querySelector(".search").focus();
+}
+function closePicker() {
+  picker.classList.remove("open");
+  emojiButton.classList.remove("on");
+  pickerKey = null;
+}
+emojiButton.onclick = e => { e.stopPropagation(); openPicker(emojiButton, null); };
+document.addEventListener("mousedown", e => {
+  if (picker.classList.contains("open") && !picker.contains(e.target) && e.target !== emojiButton &&
+      !e.target.closest?.(".actions")) {
+    closePicker();
+  }
+});
+
+// The reactions under a message, as zchat says: [[emoji, count, mine, who], ...].
+zchat.reactions = (key, list) => {
+  const div = log.querySelector(`.message[data-key="${CSS.escape(key)}"]`);
+  if (!div) return;
+  const stick = atBottom();
+  let row = div.querySelector(".reactions");
+  if (!list.length) { row?.remove(); return; }
+  if (!row) {
+    row = document.createElement("div");
+    row.className = "reactions";
+    div.insertBefore(row, div.querySelector(".actions"));
+  }
+  const chips = list.map(([emoji, count, mine, who]) => {
+    const b = document.createElement("button");
+    b.className = mine ? "mine" : "";
+    b.textContent = emoji + " " + count;
+    b.title = who + " reacted with " + emoji + (mine ? " (click to take yours back)" : " (click to react too)");
+    b.onclick = () => react(key, emoji);
+    return b;
+  });
+  const add = document.createElement("button");
+  add.className = "add";
+  add.textContent = "☺+";
+  add.title = "React with another emoji";
+  add.onclick = e => { e.stopPropagation(); openPicker(add, key); };
+  row.replaceChildren(...chips, add);
+  if (stick) log.scrollTop = log.scrollHeight;
+};
+
 // --- Quoting: the Quote button of a message shows it above the input box, and the next message sent (not a command)
 // replies to it. replyQuote is "<quote=NAME>TEXT</quote> ", as zchat makes it.
 const quoting = document.getElementById("quoting");
@@ -6840,7 +7120,7 @@ quoting.querySelector("button").onclick = () => { stopQuote(); input.focus(); };
 // the list of commands. Escape stops quoting.
 const sent = [];
 let sentPos = 0, draft = "";
-// What the list shows: "people" or "commands".
+// What the list shows: "people", "commands" or "emoji".
 let list = [], selected = 0, atStart = -1, picking = "";
 
 // The commands, from zchatCommands(): [name, args, about, runs alone]; they do not change, so asked for once.
@@ -6858,6 +7138,12 @@ async function updateMentions() {
   // What is typed of a command, at the start of the line ("//" starts a message with a slash).
   if (/^\/[^\s/]*$/.test(before)) {
     await updateCommands(before.toLowerCase());
+    return;
+  }
+  // ':' and two letters or more of an emoji's name, starting a word.
+  const colon = /(^|\s):([a-z0-9_+\-]{2,})$/i.exec(before);
+  if (colon) {
+    await updateEmojiList(colon[2], caret - colon[2].length - 1);
     return;
   }
   const at = before.lastIndexOf("@");
@@ -6895,6 +7181,41 @@ function acceptMention(i) {
   input.value = input.value.slice(0, atStart) + "@" + name + " " + input.value.slice(caret);
   const pos = atStart + name.length + 2;
   input.setSelectionRange(pos, pos);
+  closeMentions();
+}
+// The emoji whose names have what is typed after ':': Tab or Enter puts the emoji in its place.
+async function updateEmojiList(typed, start) {
+  list = emojiMatches(await emojiList(), typed, 8);
+  if (!list.length) { closeMentions(); return; }
+  picking = "emoji";
+  atStart = start;
+  selected = Math.min(selected, list.length - 1);
+  mentionsBox.textContent = "";
+  list.forEach((row, i) => {
+    const d = document.createElement("div");
+    d.className = "emoji" + (i === selected ? " selected" : "");
+    const glyph = document.createElement("span");
+    glyph.className = "glyph";
+    glyph.textContent = row[0];
+    const name = document.createElement("span");
+    name.textContent = ":" + row[2].split(" ")[0] + ":";
+    const about = document.createElement("span");
+    about.className = "about";
+    about.textContent = row[4];
+    d.append(glyph, name, about);
+    d.onmousedown = e => { e.preventDefault(); acceptEmoji(i); };
+    mentionsBox.appendChild(d);
+  });
+  mentionsBox.style.display = "block";
+  mentionsBox.querySelector(".selected")?.scrollIntoView({ block: "nearest" });
+}
+function acceptEmoji(i) {
+  const emoji = list[i][0];
+  const caret = input.selectionStart;
+  input.value = input.value.slice(0, atStart) + emoji + input.value.slice(caret);
+  const pos = atStart + emoji.length;
+  input.setSelectionRange(pos, pos);
+  usedEmoji(emoji);
   closeMentions();
 }
 // The commands starting with what is typed: the name, what it takes and what it does.
@@ -6952,7 +7273,9 @@ input.addEventListener("keydown", e => {
       // A command that needs nothing more: Enter runs it, sent below.
       acceptCommand(selected, false);
     } else if (e.key === "Tab" || e.key === "Enter") {
-      if (picking === "commands") acceptCommand(selected, true); else acceptMention(selected);
+      if (picking === "commands") acceptCommand(selected, true);
+      else if (picking === "emoji") acceptEmoji(selected);
+      else acceptMention(selected);
       e.preventDefault();
       return;
     }

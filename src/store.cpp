@@ -87,7 +87,7 @@ std::optional<Record> decode(std::string_view line) {
     const std::string_view kind = a[6].str();
     r.data = std::string(a[7].str());
     r.local = a[8].number != 0;
-    if (!sender || !user || kind.size() != 1 || std::string_view("mag").find(kind[0]) == std::string_view::npos ||
+    if (!sender || !user || kind.size() != 1 || std::string_view("magr").find(kind[0]) == std::string_view::npos ||
         !valid_key(r.key) || !valid_topic(r.topic) || r.time <= 0) {
         return std::nullopt;
     }
@@ -196,6 +196,19 @@ bool Store::add(Record record, std::time_t now) {
 bool Store::has(std::string_view key) const {
     std::scoped_lock lock(mutex_);
     return keys_.contains(key);
+}
+
+std::optional<Record> Store::find(std::string_view key) const {
+    std::scoped_lock lock(mutex_);
+    if (!keys_.contains(key)) {
+        return std::nullopt;
+    }
+    for (const auto& [topic, records] : topics_) {
+        if (const auto it = records.find(key); it != records.end()) {
+            return it->second;
+        }
+    }
+    return std::nullopt;
 }
 
 std::uint64_t Store::version() const {

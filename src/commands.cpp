@@ -8,7 +8,7 @@ namespace zchat::commands {
 namespace {
 
     // As print_help() in main.cpp tells about them: a command added there goes here too.
-    constexpr std::array<Command, 39> table {{
+    constexpr std::array<Command, 40> table {{
         {"/add", "[#CHANNEL] NAME", "add someone to a channel"},
         {"/addemoji", "NAME [SIZE] FILE", "save a picture as an emoji"},
         {"/ascii", "[SIZE] [TEXTURE%] FILE", "send a picture drawn with characters"},
@@ -36,6 +36,7 @@ namespace {
         {"/notify", "[SETTING]", "the notification settings"},
         {"/quit", "", "leave the chat"},
         {"/quote", "[@NAME] MESSAGE", "reply quoting the last message"},
+        {"/react", "[@NAME] EMOJI", "react to the last message with an emoji"},
         {"/remove", "[#CHANNEL] NAME", "remove someone from a channel"},
         {"/removeemoji", "NAME", "delete a saved emoji"},
         {"/save", "[N]", "save file N in your downloads (alone: list them)"},
