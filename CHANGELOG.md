@@ -9,6 +9,11 @@ the first words in bold are what zchat shows when it says what is new.
 
 ## 2026-10-15
 
+* **Emoji**: type `:rofl:` and it is sent as 🤣 (`:` and two letters list the matching ones, in a terminal too), or
+  pick any of them from 😀 by the input box, searchable, by category, with the ones you used lately first.
+* **Reactions**: hover on a message and react with 👍 ❤️ 😂 😮 😢 🎉, or ☺+ for any emoji; reactions show under the
+  message, with how many, and a click adds yours or takes it back. `/react [@NAME] EMOJI` in a terminal. Whoever
+  was away gets them too.
 * **Commands are suggested as you type them**: a `/` at the start of the line lists the commands, with what they
   take and what they do, narrowed down letter by letter (in a terminal too). Up/Down choose, Tab completes, Enter
   runs one that needs nothing more (or completes it, for the rest to be typed), Escape closes the list.

@@ -31,7 +31,8 @@ struct Record {
     std::uint64_t sender = 0;
     std::uint64_t user = 0;
     std::string name;
-    // 'm' a message, 'a' a drawing (see PacketType::Art), 'g' a game's record.
+    // 'm' a message, 'a' a drawing (see PacketType::Art), 'r' a reaction to one ("KEY on|off EMOJI", see
+    // PacketType::Reaction), 'g' a game's record.
     char kind = 'm';
     std::string data;
     // Kept here only, never told about: the history of older versions, whose messages have no key the others know.
@@ -67,6 +68,8 @@ public:
     // Keeps a record; false when it is known already (by key), or too old.
     bool add(Record record, std::time_t now = std::time(nullptr));
     bool has(std::string_view key) const;
+    // A record by key.
+    std::optional<Record> find(std::string_view key) const;
     // Changes with every record added: to tell whether anything is new.
     std::uint64_t version() const;
 

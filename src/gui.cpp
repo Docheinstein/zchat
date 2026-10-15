@@ -3,6 +3,7 @@
 #include "changelog.hpp"
 #include "commands.hpp"
 #include "config.hpp"
+#include "emojis.hpp"
 #include "image.hpp"
 #include "json.hpp"
 #include "notify.hpp"
@@ -309,6 +310,7 @@ struct Gui::Impl {
     std::function<std::vector<ChannelItem>()> channel_source;
     std::function<ChannelPeople(std::string_view)> people_source;
     std::function<std::optional<std::string>(std::string_view)> rewriter;
+    std::function<void(std::string_view, std::string_view)> reactor;
 
 
     // Runs JavaScript in the page, from any thread.
@@ -543,6 +545,41 @@ Gui::Gui() {
         }
         return notify::to_json(notify::current());
     });
+    // The emoji, for the picker and the :name: list: [[emoji, category, "names", "tags", description], ...] (see
+    // emojis.hpp). Made once.
+    view.bind("zchatEmojiTable", [](const std::string&) -> std::string {
+        static const std::string table = [] {
+            std::string out = "[";
+            for (const auto& e : emojis::all()) {
+                std::string names;
+                for (const auto& a : e.aliases) {
+                    names += (names.empty() ? "" : " ") + a;
+                }
+                std::string tags;
+                for (const auto& t : e.tags) {
+                    tags += (tags.empty() ? "" : " ") + t;
+                }
+                out += std::format("{}[{},{},{},{},{}]", out.size() > 1 ? "," : "", json_string(e.emoji),
+                                   json_string(e.category), json_string(names), json_string(tags),
+                                   json_string(e.description));
+            }
+            return out + "]";
+        }();
+        return table;
+    });
+    // A reaction button: [key, emoji] (see set_reactor()).
+    view.bind("zchatReact", [this](const std::string& args) -> std::string {
+        const auto strings = json_strings(args);
+        std::function<void(std::string_view, std::string_view)> reactor;
+        {
+            std::scoped_lock lock(impl_->mutex);
+            reactor = impl_->reactor;
+        }
+        if (strings.size() >= 2 && reactor) {
+            reactor(strings[0], strings[1]);
+        }
+        return "null";
+    });
     // A notification to see what they look like, even with the window in front.
     view.bind("zchatTestNotification", [this](const std::string&) -> std::string {
         Mention self;
@@ -719,15 +756,39 @@ bool Gui::show_file(std::string_view line, std::size_t index, std::string_view n
     return true;
 }
 
-bool Gui::show_message(std::string_view line, std::optional<std::string_view> quote, std::string_view reply_quote) {
-    const std::string js = std::format("zchat.message({},{},{})", json_string(line),
-                                       quote ? json_string(*quote) : std::string("null"), json_string(reply_quote));
+bool Gui::show_message(std::string_view line, std::optional<std::string_view> quote, std::string_view reply_quote,
+                       std::string_view key) {
+    const std::string js =
+        std::format("zchat.message({},{},{},{})", json_string(line), quote ? json_string(*quote) : std::string("null"),
+                    json_string(reply_quote), json_string(key));
     std::scoped_lock lock(impl_->mutex);
     if (!impl_->ready) {
         return false;
     }
     impl_->eval(js);
     return true;
+}
+
+bool Gui::show_reactions(std::string_view key, const std::vector<Reaction>& reactions) {
+    // [[emoji, count, mine, who], ...]
+    std::string list = "[";
+    for (const auto& r : reactions) {
+        list += std::format("{}[{},{},{},{}]", list.size() > 1 ? "," : "", json_string(r.emoji), r.count, r.mine,
+                            json_string(r.who));
+    }
+    list += "]";
+    const std::string js = std::format("zchat.reactions({},{})", json_string(key), list);
+    std::scoped_lock lock(impl_->mutex);
+    if (!impl_->ready) {
+        return false;
+    }
+    impl_->eval(js);
+    return true;
+}
+
+void Gui::set_reactor(std::function<void(std::string_view key, std::string_view emoji)> reactor) {
+    std::scoped_lock lock(impl_->mutex);
+    impl_->reactor = std::move(reactor);
 }
 
 void Gui::nudge() {

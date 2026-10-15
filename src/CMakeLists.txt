@@ -19,6 +19,8 @@ target_sources(zchat PUBLIC
     config.cpp
     dice.cpp
     elo.cpp
+    emojis.cpp
+    emojis_data.cpp
     file.cpp
     game.cpp
     history.cpp
@@ -125,6 +127,16 @@ add_custom_command(
     DEPENDS "${zchat_words}" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     VERBATIM)
 target_sources(zchat PRIVATE "${zchat_generated}/wordle_words.hpp")
+
+# The Unicode emoji and their names (see emojis.hpp), built into the executable.
+set(zchat_gemoji "${PROJECT_SOURCE_DIR}/third_party/gemoji/emoji.json")
+add_custom_command(
+    OUTPUT "${zchat_generated}/gemoji_json.hpp"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${zchat_gemoji}" "-DOUTPUT=${zchat_generated}/gemoji_json.hpp"
+            -DNAME=gemoji_json -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS "${zchat_gemoji}" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    VERBATIM)
+target_sources(zchat PRIVATE "${zchat_generated}/gemoji_json.hpp")
 
 # The bridge between zchat and the Pokémon Showdown simulator, for /game pokemon, built into the executable: zchat
 # writes it next to the simulator when it runs a battle (see pokemon_engine.hpp).

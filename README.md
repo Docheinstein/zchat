@@ -103,6 +103,8 @@ While chatting:
 | `/ascii FILE`      | send a picture drawn with characters (blocks of color), for everyone |
 | `/ascii SIZE FILE` | the same at another size: `small`, `medium`, `large` (default), a width like `40`, or `40x20` (up to 64x32) |
 | `/ascii 30% FILE`  | the same with texture: from `0%`, blocks only (the default), to `100%`, symbols only; with a size too, in any order (`/ascii small 30% FILE`); `/image 30% FILE` does the same |
+| `:NAME:`           | an emoji by its name, like `:rofl:` 🤣 or `:+1:` 👍, sent as the emoji itself; `:` and two letters list the matching ones (Tab or Enter picks one), and in the window 😀 by the input box picks them from all of them, searchable |
+| `/react EMOJI`     | react to the last message with an emoji (itself, or `:NAME:`), or take the reaction back; `/react @NAME EMOJI` reacts to the last message of NAME. In the window, hover on a message: 👍 ❤️ 😂 😮 😢 🎉 or ☺+ for any other, and a click on a reaction under a message adds yours or takes it back |
 | `/addemoji NAME [SIZE] FILE` | save a picture as an emoji, sent as `/image` sends it (a GIF plays); the same name again replaces it |
 | `/addemoji NAME ascii [SIZE] [TEXTURE%] FILE` | save an emoji drawn with characters, as `/ascii` draws it (a `TEXTURE%` alone does too) |
 | `/emoji NAME`      | send a saved emoji; `/emoji NAME ascii` draws a picture emoji with characters instead; `/emoji` alone lists yours |
@@ -334,7 +336,11 @@ ends (the winner, the Elo and the coins) even if nobody was online at its midnig
 updates due later wait in the `queue` file of the config folder, and run 40 seconds after zchat starts, once what
 the others have has come.
 
-Emoji are saved in the `emoji` folder of the config folder (`%APPDATA%\zchat\emoji` on Windows), one file each, as
+The emoji and their names are GitHub's [gemoji](https://github.com/github/gemoji) (in `third_party/gemoji`, MIT),
+built into zchat. Reactions travel and are kept like messages (an `E` packet, and records in the `store` file), so
+whoever was away gets them too, under the message they are about.
+
+Saved emoji (pictures of your own, `/addemoji`) are saved in the `emoji` folder of the config folder (`%APPDATA%\zchat\emoji` on Windows), one file each, as
 it is sent: `NAME.pic` for a real picture, `NAME.art` for one drawn with characters. So `/emoji NAME` sends it right
 away and the same every time, even if the image file is gone. Names are letters, digits, `-` and `_`, up to 32, and are not case-sensitive.
 

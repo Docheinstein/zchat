@@ -139,6 +139,13 @@ public:
     // The user id of a sender (ours too), 0 when unknown.
     std::uint64_t user_of(std::uint64_t sender) const;
 
+    // Reacts to a message (by its key, see store::key_of()) with an emoji (itself, or its name, see emojis::find()),
+    // or takes the reaction back when we reacted with it already: everybody in its channel sees it under the message.
+    void react(std::string_view key, std::string_view emoji);
+    // Reacts to the last message of the current channel from someone else, or from person (named as /quote takes
+    // them). Returns what went wrong, or nullopt.
+    std::optional<std::string> react_last(std::string_view person, std::string_view emoji);
+
     // Channels (see channel.hpp): what we say, draw and send goes to the current one. Each returns what went wrong, or
     // nullopt. The channel of add_to_channel() and the others is the current one when empty; people are named as
     // they are in the chat (they must be online).
@@ -283,6 +290,9 @@ private:
         std::size_t file_index = 0;
         std::string file_name;
         std::string file_size;
+        // A message's or a drawing's key (see store::key_of()), to react to it; empty when it has none (the history
+        // of older versions).
+        std::string key = {};
     };
 
     void run(std::stop_token stop);
@@ -295,7 +305,10 @@ private:
     std::uint64_t send(PacketType type, std::string_view text = {}, bool once = false);
     // Returns whether the message tags us. when is the time it was sent at, for messages from the history.
     bool print_message(std::uint64_t id, std::string_view name, std::string_view text,
-                       std::optional<std::time_t> when = std::nullopt) const;
+                       std::optional<std::time_t> when = std::nullopt, std::string_view key = {}) const;
+    // The message itself, without its reactions.
+    bool print_message_line(std::uint64_t id, std::string_view name, std::string_view text,
+                            std::optional<std::time_t> when, std::string_view key) const;
     // Turns the "@Name" tags of the people in the chat into markup showing them bold in their color, ours also
     // underlined. Sets tags_us when we are tagged, and by_name (if given) when by our name, not only by @everyone.
     std::string mark_mentions(std::string_view text, bool& tags_us, bool* by_name = nullptr) const;
@@ -360,8 +373,9 @@ private:
     void prune_silent_peers();
 
     // Sync (see set_store()). Keeps what was said (live): ours, or another's, by their packet.
-    void keep(std::string topic, std::uint64_t sender, std::uint64_t seq, std::string_view name, char kind,
-              std::string data);
+    // Returns its key.
+    std::string keep(std::string topic, std::uint64_t sender, std::uint64_t seq, std::string_view name, char kind,
+                     std::string data);
     // The topics we keep: #general, our channels and private chats, and the games' (see keep_game()).
     std::vector<std::string> sync_topics() const;
     // What we tell about them (PacketType::Sync).
@@ -380,6 +394,18 @@ private:
     void finish_synced();
     // Messages we missed, from the store of someone else: put among the others of their channel, by time.
     void deliver_missed(const std::string& topic, std::vector<store::Record> records, const std::string& from);
+
+    // Reactions (see react()): who reacted with what to each message (by key), the latest of each person and emoji
+    // winning, as records ('r', see store::Record) say; "WHO" is a user id in hex, or "s" and a sender id.
+    void receive_reaction(const Packet& packet);
+    // Takes in a reaction record (ours, live, synced or kept); returns whether what is shown changes.
+    bool apply_reaction(const store::Record& record);
+    std::vector<Screen::Reaction> reactions_of(std::string_view key) const;
+    // Shows a message's reactions where it is (the window); returns false where they cannot be (a terminal).
+    bool show_reactions(std::string_view key) const;
+    // A message, shortly, for what is said about it ("Rex: “hello”").
+    std::string message_summary(std::string_view key) const;
+    std::string own_who() const;
     // Pictures too big for a packet, see send_picture(): offered, and downloaded by the others from us, on threads
     // of their own (see start_transfer()); or else sent in Chunks, asked for again when some do not arrive.
     struct Incoming;
@@ -510,6 +536,15 @@ private:
         std::vector<store::Record> records;
     };
     std::vector<Synced> synced_;
+    struct ReactionState {
+        std::string emoji;
+        std::string who;
+        std::string name;
+        std::time_t time = 0;
+        bool on = false;
+    };
+    mutable std::mutex reactions_mutex_;
+    std::map<std::string, std::vector<ReactionState>, std::less<>> reactions_;
 
     // Held while a hook runs, so set_game_hooks() can wait for it.
     std::mutex hooks_mutex_;

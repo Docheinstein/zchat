@@ -2,6 +2,7 @@
 
 #include "channel.hpp"
 #include "cipher.hpp"
+#include "emojis.hpp"
 #include "file.hpp"
 #include "history.hpp"
 #include "image.hpp"
@@ -142,6 +143,28 @@ namespace {
         return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
     }
 
+    // What a reaction record says: "KEY on|off EMOJI" (see PacketType::Reaction), the emoji one of ours.
+    struct ReactionData {
+        std::string key;
+        bool on = false;
+        std::string emoji;
+    };
+
+    std::optional<ReactionData> parse_reaction(std::string_view data) {
+        const auto first = data.find(' ');
+        const auto second = first == std::string_view::npos ? first : data.find(' ', first + 1);
+        if (second == std::string_view::npos) {
+            return std::nullopt;
+        }
+        const std::string_view key = data.substr(0, first);
+        const std::string_view state = data.substr(first + 1, second - first - 1);
+        const emojis::Emoji* emoji = emojis::find(data.substr(second + 1));
+        if (!store::valid_key(key) || (state != "on" && state != "off") || !emoji) {
+            return std::nullopt;
+        }
+        return ReactionData {std::string(key), state == "on", emoji->emoji};
+    }
+
     // Whether a record that came from another zchat is one we could have got ourselves: a message or a drawing as a
     // packet would bring it, under its own key (see store::key_of()), or a game's record.
     bool valid_synced(const store::Record& r) {
@@ -154,6 +177,9 @@ namespace {
         if (r.kind == 'm' && text::sanitize(r.data, max_text_bytes) != r.data) {
             return false;
         }
+        if (r.kind == 'r' && (text::sanitize(r.data, max_reaction_bytes) != r.data || !parse_reaction(r.data))) {
+            return false;
+        }
         if (r.kind == 'a') {
             Packet art;
             art.type = PacketType::Art;
@@ -162,7 +188,7 @@ namespace {
             if (const auto clean = decode(encode(art)); !clean || clean->text != r.data) {
                 return false;
             }
-        } else if (r.kind != 'm') {
+        } else if (r.kind != 'm' && r.kind != 'r') {
             return false;
         }
         // "SENDER-SEQ-HASH", which the text must give.
@@ -240,7 +266,8 @@ void Chat::stop() {
 }
 
 void Chat::say(std::string_view text) {
-    const std::string clean = text::sanitize(text, max_text_bytes);
+    // ":rofl:" is sent as 🤣, so that every zchat shows it, older ones too.
+    const std::string clean = text::sanitize(emojis::replace(text), max_text_bytes);
     const std::string channel = speaking_channel();
     if (channel != channel::general) {
         if (!in_channel(channel)) {
@@ -249,21 +276,23 @@ void Chat::say(std::string_view text) {
             return;
         }
         const auto seq = send(PacketType::ChannelMessage, std::format("{} m\n{}", channel, clean));
-        keep(channel, id_, seq, name(), 'm', clean);
-        deliver(channel, {Entry::Kind::Message, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)});
+        Entry entry {Entry::Kind::Message, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)};
+        entry.key = keep(channel, id_, seq, name(), 'm', clean);
+        deliver(channel, std::move(entry));
         return;
     }
     say_in_general(clean, in_games_log());
 }
 
 void Chat::say_general(std::string_view text) {
-    say_in_general(text::sanitize(text, max_text_bytes), false);
+    say_in_general(text::sanitize(emojis::replace(text), max_text_bytes), false);
 }
 
 void Chat::say_in_general(const std::string& clean, bool from_games_log) {
     const std::string general(channel::general);
     const auto seq = send(PacketType::Message, clean);
     Entry entry {Entry::Kind::Message, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)};
+    entry.key = store::key_of(id_, seq, clean);
     if (from_games_log) {
         // Said from the games log: shown there if it is a move of a game (a race's words), and else in #general.
         bool move = false;
@@ -311,8 +340,9 @@ void Chat::draw(std::string_view art) {
     const auto seq = channel == channel::general
                          ? send(PacketType::Art, clean)
                          : send(PacketType::ChannelMessage, std::format("{} a\n{}", channel, clean));
-    keep(channel, id_, seq, name(), 'a', clean);
-    deliver(channel, {Entry::Kind::Art, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)});
+    Entry entry {Entry::Kind::Art, std::time(nullptr), id_, name(), std::make_shared<const std::string>(clean)};
+    entry.key = keep(channel, id_, seq, name(), 'a', clean);
+    deliver(channel, std::move(entry));
 }
 
 void Chat::send_picture(std::string_view picture) {
@@ -1548,7 +1578,23 @@ std::string Chat::paint(Color color, std::string_view text) const {
 }
 
 bool Chat::print_message(std::uint64_t id, std::string_view name, std::string_view text,
-                         std::optional<std::time_t> when) const {
+                         std::optional<std::time_t> when, std::string_view key) const {
+    const bool tagged = print_message_line(id, name, text, when, key);
+    // Its reactions, under it: in the window, or a line of their own.
+    if (!key.empty()) {
+        if (const auto reactions = reactions_of(key); !reactions.empty() && !terminal_.show_reactions(key, reactions)) {
+            std::string line;
+            for (const auto& r : reactions) {
+                line += std::format("{}{} {}", line.empty() ? "" : "  ", r.emoji, r.count);
+            }
+            terminal_.print(terminal_.colors() ? std::format("\x1b[90m      {}\x1b[0m", line) : "      " + line);
+        }
+    }
+    return tagged;
+}
+
+bool Chat::print_message_line(std::uint64_t id, std::string_view name, std::string_view text,
+                              std::optional<std::time_t> when, std::string_view key) const {
     const std::string stamp = when ? timestamp(*when) : timestamp();
     const std::string time = terminal_.colors() ? std::format("\x1b[90m{}\x1b[0m", stamp) : stamp;
     bool tags_us = false;
@@ -1559,7 +1605,7 @@ bool Chat::print_message(std::uint64_t id, std::string_view name, std::string_vi
         std::format("{} {}: {}", time, colored_name(id, name), markup::render(marked, terminal_.colors()));
     const std::string reply_quote = markup::quote(name, text);
     if (!quote) {
-        if (!terminal_.show_message(line, std::nullopt, reply_quote)) {
+        if (!terminal_.show_message(line, std::nullopt, reply_quote, key)) {
             terminal_.print(line);
         }
         return tags_us;
@@ -1568,7 +1614,7 @@ bool Chat::print_message(std::uint64_t id, std::string_view name, std::string_vi
     tags_us = tags_us || quotes_us(*quote);
     const std::string quoted =
         std::format("{}: {}", colored_name_of(quote->name), markup::render(quote->text, false));
-    if (!terminal_.show_message(line, quoted, reply_quote)) {
+    if (!terminal_.show_message(line, quoted, reply_quote, key)) {
         // The quote first, under the time, then the message.
         terminal_.print(terminal_.colors() ? std::format("\x1b[90m      ┃\x1b[0m {}\n{}", quoted, line)
                                            : std::format("      | {}\n{}", quoted, line));
@@ -1910,7 +1956,7 @@ void Chat::show(const Entry& entry, bool live) {
     switch (entry.kind) {
     case Entry::Kind::Message:
         // (Tags are told about when they arrive, by deliver(), not when shown again.)
-        print_message(entry.id, entry.name, *entry.data, when);
+        print_message(entry.id, entry.name, *entry.data, when, entry.key);
         break;
     case Entry::Kind::Art:
         print_art(entry.id, entry.name, *entry.data, when);
@@ -2285,9 +2331,10 @@ void Chat::handle(const Packet& packet, std::uint32_t from) {
             std::scoped_lock lock(hooks_mutex_);
             move = hooks_.claims && hooks_.claims(packet.sender, packet.text);
         }
-        deliver(std::string(move ? channel::games_log : channel::general),
-                {Entry::Kind::Message, std::time(nullptr), packet.sender, packet.name,
-                 std::make_shared<const std::string>(packet.text)});
+        Entry entry {Entry::Kind::Message, std::time(nullptr), packet.sender, packet.name,
+                     std::make_shared<const std::string>(packet.text)};
+        entry.key = store::key_of(packet.sender, packet.seq, packet.text);
+        deliver(std::string(move ? channel::games_log : channel::general), std::move(entry));
         if (!move) {
             keep(std::string(channel::general), packet.sender, packet.seq, packet.name, 'm', packet.text);
         }
@@ -2304,11 +2351,14 @@ void Chat::handle(const Packet& packet, std::uint32_t from) {
         }
         break;
     }
-    case PacketType::Art:
+    case PacketType::Art: {
         keep(std::string(channel::general), packet.sender, packet.seq, packet.name, 'a', packet.text);
-        deliver(std::string(channel::general), {Entry::Kind::Art, std::time(nullptr), packet.sender, packet.name,
-                                                std::make_shared<const std::string>(packet.text)});
+        Entry entry {Entry::Kind::Art, std::time(nullptr), packet.sender, packet.name,
+                     std::make_shared<const std::string>(packet.text)};
+        entry.key = store::key_of(packet.sender, packet.seq, packet.text);
+        deliver(std::string(channel::general), std::move(entry));
         break;
+    }
     case PacketType::Image:
         receive_picture(packet.sender, packet.name, packet.text);
         break;
@@ -2329,12 +2379,17 @@ void Chat::handle(const Packet& packet, std::uint32_t from) {
             break;
         }
         keep(channel, packet.sender, packet.seq, packet.name, kind == "m" ? 'm' : 'a', packet.text.substr(nl + 1));
-        deliver(channel, {kind == "m" ? Entry::Kind::Message : Entry::Kind::Art, std::time(nullptr), packet.sender,
-                          packet.name, std::make_shared<const std::string>(packet.text.substr(nl + 1))});
+        Entry entry {kind == "m" ? Entry::Kind::Message : Entry::Kind::Art, std::time(nullptr), packet.sender,
+                     packet.name, std::make_shared<const std::string>(packet.text.substr(nl + 1))};
+        entry.key = store::key_of(packet.sender, packet.seq, *entry.data);
+        deliver(channel, std::move(entry));
         break;
     }
     case PacketType::Sync:
         receive_sync(packet, from);
+        break;
+    case PacketType::Reaction:
+        receive_reaction(packet);
         break;
     case PacketType::Offer:
         receive_offer(packet, from);
@@ -2381,6 +2436,14 @@ void Chat::set_store(const std::filesystem::path& dir) {
                          e.sender, 0, e.name, 'm', e.text, true});
         }
     }
+    // The reactions, to what is shown below.
+    for (const auto& topic : store_->topics()) {
+        for (const auto& r : store_->records(topic)) {
+            if (r.kind == 'r') {
+                apply_reaction(r);
+            }
+        }
+    }
     // What was said in our channels, as if we had been there.
     std::scoped_lock lock(channels_mutex_);
     for (const auto& topic : store_->topics()) {
@@ -2395,8 +2458,12 @@ void Chat::set_store(const std::filesystem::path& dir) {
         }
         auto& backlog = backlog_[topic];
         for (auto& r : store_->records(topic)) {
+            if (r.kind != 'm' && r.kind != 'a') {
+                continue;
+            }
             backlog.push_back({r.kind == 'a' ? Entry::Kind::Art : Entry::Kind::Message, r.time, r.sender, r.name,
                                std::make_shared<const std::string>(std::move(r.data))});
+            backlog.back().key = r.local ? std::string() : r.key;
         }
         while (backlog.size() > max_backlog) {
             backlog.pop_front();
@@ -2477,14 +2544,14 @@ std::uint64_t Chat::user_of(std::uint64_t sender) const {
     return it == peers_.end() ? 0 : it->second.user;
 }
 
-void Chat::keep(std::string topic, std::uint64_t sender, std::uint64_t seq, std::string_view name, char kind,
-                std::string data) {
-    if (!store_ || data.empty()) {
-        return;
-    }
+std::string Chat::keep(std::string topic, std::uint64_t sender, std::uint64_t seq, std::string_view name, char kind,
+                       std::string data) {
     std::string key = store::key_of(sender, seq, data);
-    store_->add({std::move(topic), std::move(key), std::time(nullptr), sender, user_of(sender), std::string(name),
-                 kind, std::move(data)});
+    if (store_ && !data.empty()) {
+        store_->add({std::move(topic), key, std::time(nullptr), sender, user_of(sender), std::string(name), kind,
+                     std::move(data)});
+    }
+    return key;
 }
 
 std::vector<std::string> Chat::sync_topics() const {
@@ -2678,7 +2745,14 @@ void Chat::finish_synced() {
                 !valid_synced(r) || !store_->add(r, now)) {
                 continue;
             }
-            if (!r.topic.starts_with('~')) {
+            if (r.kind == 'r') {
+                // Shown where the message is, if it is.
+                if (apply_reaction(r)) {
+                    if (const auto data = parse_reaction(r.data)) {
+                        show_reactions(data->key);
+                    }
+                }
+            } else if (!r.topic.starts_with('~')) {
                 fresh[r.topic].push_back(std::move(r));
             }
         }
@@ -2694,6 +2768,7 @@ void Chat::deliver_missed(const std::string& topic, std::vector<store::Record> r
     for (auto& r : records) {
         entries.push_back({r.kind == 'a' ? Entry::Kind::Art : Entry::Kind::Message, r.time, r.sender, r.name,
                            std::make_shared<const std::string>(std::move(r.data))});
+        entries.back().key = r.key;
     }
     bool current = false;
     {
@@ -2718,6 +2793,171 @@ void Chat::deliver_missed(const std::string& topic, std::vector<store::Record> r
     notice(std::format("📥 {} you missed, from {}:", what, from));
     for (const auto& entry : entries) {
         show(entry, false);
+    }
+}
+
+std::string Chat::own_who() const {
+    return user_ ? std::format("{:x}", user_) : std::format("s{:x}", id_.load());
+}
+
+bool Chat::apply_reaction(const store::Record& record) {
+    const auto data = parse_reaction(record.data);
+    if (!data) {
+        return false;
+    }
+    const std::string who = record.user ? std::format("{:x}", record.user) : std::format("s{:x}", record.sender);
+    std::scoped_lock lock(reactions_mutex_);
+    auto& states = reactions_[data->key];
+    const auto it = std::ranges::find_if(states, [&](const ReactionState& s) {
+        return s.emoji == data->emoji && s.who == who;
+    });
+    if (it == states.end()) {
+        // (One taken back before we heard of it is kept too, so that an older one heard later does not count.)
+        states.push_back({data->emoji, who, record.name, record.time, data->on});
+        return data->on;
+    }
+    if (record.time < it->time) {
+        return false;
+    }
+    const bool changed = it->on != data->on;
+    it->on = data->on;
+    it->time = record.time;
+    it->name = record.name;
+    return changed;
+}
+
+std::vector<Screen::Reaction> Chat::reactions_of(std::string_view key) const {
+    std::vector<Screen::Reaction> out;
+    const std::string own = own_who();
+    std::scoped_lock lock(reactions_mutex_);
+    const auto it = reactions_.find(key);
+    if (it == reactions_.end()) {
+        return out;
+    }
+    // By emoji, in the order they first came.
+    for (const auto& s : it->second) {
+        if (!s.on) {
+            continue;
+        }
+        auto r = std::ranges::find(out, s.emoji, &Screen::Reaction::emoji);
+        if (r == out.end()) {
+            out.push_back({s.emoji});
+            r = out.end() - 1;
+        }
+        ++r->count;
+        r->mine = r->mine || s.who == own;
+        r->who += std::format("{}{}", r->who.empty() ? "" : ", ", s.who == own ? std::string("you") : s.name);
+    }
+    return out;
+}
+
+bool Chat::show_reactions(std::string_view key) const {
+    return terminal_.show_reactions(key, reactions_of(key));
+}
+
+std::string Chat::message_summary(std::string_view key) const {
+    const auto r = store_ ? store_->find(key) : std::nullopt;
+    if (!r) {
+        return "a message";
+    }
+    if (r->kind == 'a') {
+        return std::format("{}'s drawing", colored_name(r->sender, r->name));
+    }
+    const auto quote = markup::split_quote(r->data);
+    std::string text = markup::render(quote ? quote->reply : std::string_view(r->data), false);
+    if (text.size() > 40) {
+        text = text::sanitize(text, 40) + "…";
+    }
+    return std::format("{}: “{}”", colored_name(r->sender, r->name), text);
+}
+
+void Chat::react(std::string_view key, std::string_view emoji_text) {
+    if (emoji_text.size() > 2 && emoji_text.front() == ':' && emoji_text.back() == ':') {
+        emoji_text = emoji_text.substr(1, emoji_text.size() - 2);
+    }
+    const emojis::Emoji* emoji = emojis::find(emoji_text);
+    const auto message = store_ && store::valid_key(key) ? store_->find(key) : std::nullopt;
+    if (!emoji || !message || (message->kind != 'm' && message->kind != 'a') || message->local ||
+        (message->topic != channel::general && !in_channel(message->topic))) {
+        return;
+    }
+    // Again: taken back.
+    bool mine = false;
+    {
+        const std::string own = own_who();
+        std::scoped_lock lock(reactions_mutex_);
+        if (const auto it = reactions_.find(key); it != reactions_.end()) {
+            for (const auto& s : it->second) {
+                mine = mine || (s.emoji == emoji->emoji && s.who == own && s.on);
+            }
+        }
+    }
+    const char* state = mine ? "off" : "on";
+    const auto seq = send(PacketType::Reaction, std::format("{} {} {} {}", message->topic, key, state, emoji->emoji));
+    const std::string data = std::format("{} {} {}", key, state, emoji->emoji);
+    keep(message->topic, id_, seq, name(), 'r', data);
+    apply_reaction({message->topic, store::key_of(id_, seq, data), std::time(nullptr), id_, user_, name(), 'r', data});
+    if (!show_reactions(key)) {
+        notice(std::format("You {} {} {}.", mine ? "took back your" : "reacted", emoji->emoji,
+                           mine ? std::format("on {}", message_summary(key)) : "to " + message_summary(key)));
+    }
+}
+
+std::optional<std::string> Chat::react_last(std::string_view person, std::string_view emoji) {
+    while (!person.empty() && person.front() == '@') {
+        person.remove_prefix(1);
+    }
+    std::string key;
+    {
+        std::scoped_lock lock(channels_mutex_);
+        const auto it = backlog_.find(current_);
+        if (it != backlog_.end()) {
+            for (const auto& entry : std::views::reverse(it->second)) {
+                if (entry.key.empty() || (entry.kind != Entry::Kind::Message && entry.kind != Entry::Kind::Art)) {
+                    continue;
+                }
+                if (person.empty() ? entry.id != id_ : lowercase(entry.name) == lowercase(person)) {
+                    key = entry.key;
+                    break;
+                }
+            }
+        }
+    }
+    if (key.empty()) {
+        return person.empty() ? std::string("No message to react to here.")
+                              : std::format("No message of {} to react to here.", text::sanitize(person, 40));
+    }
+    std::string_view name = emoji;
+    if (name.size() > 2 && name.front() == ':' && name.back() == ':') {
+        name = name.substr(1, name.size() - 2);
+    }
+    if (!emojis::find(name)) {
+        return std::format("{} is not an emoji: type one, or its name like :thumbsup: (in the window, pick it).",
+                           text::sanitize(emoji, 40));
+    }
+    react(key, name);
+    return std::nullopt;
+}
+
+void Chat::receive_reaction(const Packet& packet) {
+    // "TOPIC KEY on|off EMOJI": in #general or a channel of ours.
+    const std::string_view text = packet.text;
+    const auto space = text.find(' ');
+    if (space == std::string_view::npos) {
+        return;
+    }
+    const std::string topic(text.substr(0, space));
+    const auto data = parse_reaction(text.substr(space + 1));
+    if (!data || (topic != channel::general && !in_channel(topic))) {
+        return;
+    }
+    const std::string record = std::format("{} {} {}", data->key, data->on ? "on" : "off", data->emoji);
+    keep(topic, packet.sender, packet.seq, packet.name, 'r', record);
+    const bool changed = apply_reaction({topic, store::key_of(packet.sender, packet.seq, record), std::time(nullptr),
+                                        packet.sender, user_of(packet.sender), packet.name, 'r', record});
+    if (!show_reactions(data->key) && changed && data->on) {
+        notice(std::format("{} reacted {} to {}", colored_name(packet.sender, packet.name), data->emoji,
+                           message_summary(data->key)));
     }
 }
 

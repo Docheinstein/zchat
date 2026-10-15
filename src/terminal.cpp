@@ -1,5 +1,6 @@
 #include "terminal.hpp"
 
+#include "emojis.hpp"
 #include "popup.hpp"
 #include "protocol.hpp"
 #include "text.hpp"
@@ -591,11 +592,21 @@ void Terminal::set_mentions(std::function<std::vector<Mention>()> source) {
 
 std::vector<Terminal::Mention> Terminal::mention_matches_locked() const {
     std::vector<Mention> matches;
-    if (!mention_start_ || !mention_source_) {
+    if (!mention_start_ || *mention_start_ >= buffer_.size()) {
         return matches;
     }
     const std::size_t from = *mention_start_ + 1;
     const std::string typed = lowercase(std::string_view(buffer_).substr(from, cursor_ - from));
+    // ':' and a name: the emoji (see emojis.hpp), "🤣 :rofl:".
+    if (buffer_[*mention_start_] == ':') {
+        for (const auto* e : emojis::search(typed, 8)) {
+            matches.push_back({std::format("{} :{}:", e->emoji, e->aliases.front()), ""});
+        }
+        return matches;
+    }
+    if (!mention_source_) {
+        return matches;
+    }
     for (auto& mention : mention_source_()) {
         if (lowercase(mention.name).starts_with(typed)) {
             matches.push_back(std::move(mention));
@@ -606,7 +617,27 @@ std::vector<Terminal::Mention> Terminal::mention_matches_locked() const {
 
 void Terminal::update_mention_locked(char32_t typed) {
     // The list needs cursor movements to be drawn below the input line.
-    if (!vt_ || !mention_source_) {
+    if (!vt_) {
+        return;
+    }
+    // ':' and two letters or more of an emoji's name, starting a word, open the emoji's list.
+    std::size_t word = cursor_;
+    while (word > 0 && buffer_[word - 1] != ' ') {
+        --word;
+    }
+    const std::string_view typing = std::string_view(buffer_).substr(word, cursor_ - word);
+    const bool emoji_name = typing.size() >= 3 && typing.front() == ':' &&
+                            typing.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_+-", 1) ==
+                                std::string_view::npos;
+    if (emoji_name) {
+        mention_start_ = word;
+        mention_selected_ = 0;
+        return;
+    }
+    if (mention_start_ && *mention_start_ < buffer_.size() && buffer_[*mention_start_] == ':') {
+        mention_start_.reset();
+    }
+    if (!mention_source_) {
         return;
     }
     // An '@' starting a word opens the list; one inside a word, like in an email address, does not.
@@ -623,7 +654,9 @@ void Terminal::update_mention_locked(char32_t typed) {
 void Terminal::accept_mention_locked(const Mention& mention) {
     const std::size_t start = *mention_start_;
     mention_start_.reset();
-    const std::string inserted = "@" + mention.name + " ";
+    // An emoji ("🤣 :rofl:"): itself, in place of its name.
+    const std::string inserted = buffer_[start] == ':' ? mention.name.substr(0, mention.name.find(' '))
+                                                       : "@" + mention.name + " ";
     if (buffer_.size() - (cursor_ - start) + inserted.size() > max_text_bytes) {
         return;
     }
