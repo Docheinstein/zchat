@@ -58,7 +58,8 @@ private:
 void clean_up();
 
 // Starts the updated zchat with the same arguments, in the same terminal. On Linux it replaces this process and
-// returns only on failure (with 1); on Windows it runs as a child, and its exit code is returned when it ends.
-int restart(char** argv);
+// returns only on failure (with 1). On Windows it runs as a child: with wait (a terminal, which the shell would take
+// back otherwise), its exit code is returned when it ends; without (a window), 0 is returned as soon as it started.
+int restart(char** argv, bool wait = true);
 
 } // namespace zchat::update
