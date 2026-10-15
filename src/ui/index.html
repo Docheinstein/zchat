@@ -590,6 +590,7 @@
     <button id="channel-delete" class="danger" title="Delete this channel, for everybody" hidden>Delete</button>
   </span>
   <span class="spacer"></span>
+  <button id="hub-open" title="The hub: a 3D world to walk around in with everybody, and go bowling (an experiment)">🕹️ Hub</button>
   <button id="wd-open" title="Enter the world: a room to walk around in with everybody, where what you say shows over your head">🌍 Enter World</button>
   <button id="candor-open" title="Radical Candor: an idle game, ZURU style">🗣️ Candor</button>
   <button id="casino-open" title="The casino: blackjack, roulette and the horse race, for coins">🎰 Casino</button>
@@ -5883,6 +5884,7 @@ const wdStyle = `
 document.getElementById("wd-style").textContent = wdStyle;
 const wdFloat = document.getElementById("wd-float");
 const wdOpenButton = document.getElementById("wd-open");
+document.getElementById("hub-open").onclick = () => window.zchatSend("/hub");
 let wdState = null, wdPopup = null, wdLoopToken = 0, wdLooping = false, wdLoopView = null, wdLast = 0;
 // Us: in the world or not, in which room, where (in tiles), which way we face, whether we walk, and what we said last.
 // Our name, color and avatar come in the state (wdSelf).

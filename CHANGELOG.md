@@ -9,6 +9,9 @@ the first words in bold are what zchat shows when it says what is new.
 
 ## 2026-10-15
 
+* **The hub (experimental)**: 🕹️ Hub at the top (or `/hub`) opens a 3D world in a window of its own, where
+  everybody in the chat walks around as a crewmate of their color, talks over their head, and goes bowling: two
+  lanes, ten frames, the others watching. Windows only for now.
 * **Messages from before look as they did**: when the window opens, the messages shown from before have their
   reactions (who reacted, a click to react), Quote buttons, pictures and files again, instead of plain text.
 * **Unread messages on the taskbar icon**: while you look elsewhere, a red circle on zchat's button in the taskbar

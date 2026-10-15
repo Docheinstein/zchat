@@ -65,6 +65,9 @@ public:
 
     // Says it in #general, whatever channel is shown (as what is said in the world, see world.cpp).
     void say_general(std::string_view text);
+    // The same, soon, from the chat's thread: for what runs in a game's hooks (like the hub, see hub.cpp), which
+    // cannot say anything themselves, as saying calls the hooks. Thread-safe.
+    void say_soon(std::string text);
 
     // Sends a picture drawn with characters to everybody: its rows, separated by '\n'.
     void draw(std::string_view art);
@@ -536,6 +539,9 @@ private:
         std::vector<store::Record> records;
     };
     std::vector<Synced> synced_;
+    // What say_soon() was given, for the chat's thread.
+    std::mutex say_soon_mutex_;
+    std::vector<std::string> said_soon_;
     struct ReactionState {
         std::string emoji;
         std::string who;

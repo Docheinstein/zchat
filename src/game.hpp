@@ -156,6 +156,10 @@ public:
     // (see world.cpp).
     void world(std::string_view args);
 
+    // /hub ARGS: without any, the hub opens (a 3D world, in a window of its own, see hub.cpp); /hub who tells who is
+    // in it.
+    void hub(std::string_view args);
+
 private:
     struct Score {
         std::string name;                             // colored, as last seen
@@ -201,6 +205,8 @@ std::unique_ptr<Game> make_roulette(Chat& chat, Screen& terminal, Games& games);
 std::unique_ptr<Game> make_horses(Chat& chat, Screen& terminal, Games& games);
 // Not a game: the world (/world), a room to walk around in with everybody, which travels as Game packets too.
 std::unique_ptr<Game> make_world(Chat& chat, Screen& terminal, Games& games);
+// Not a game either: the hub (/hub), a 3D world in a window of its own, which travels as Game packets too.
+std::unique_ptr<Game> make_hub(Chat& chat, Screen& terminal, Games& games);
 // Not a game: the votes of /kick, which travel as Game packets too; spend pays for one (see Games::spend()).
 std::unique_ptr<Game> make_kick(Chat& chat, Screen& terminal, std::function<void()> kicked,
                                 std::function<bool(std::string_view)> spend);

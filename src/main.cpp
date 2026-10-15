@@ -637,6 +637,8 @@ void print_help(zchat::Chat& chat) {
     chat.notice("               (in its own window; /casino help: how to play in the chat)");
     chat.notice("  /world       enter the world: a room to walk around in with everybody, where what you say");
     chat.notice("               shows over your head (in the window: 🌍 Enter World; /world who: who is in it)");
+    chat.notice("  /hub         open the hub: a 3D world to walk around in with everybody, and go bowling, in a");
+    chat.notice("               window of its own (in the window: 🕹️ Hub; /hub who: who is in it). An experiment");
     chat.notice("Notifications:");
     chat.notice("  /notify      show the notification settings (in the window: 🔔 at the top)");
     chat.notice("  /notify all|mentions|nothing  which messages notify: all, only tags and private ones, or none");
@@ -1584,6 +1586,8 @@ int run(const Options& options, zchat::Screen& terminal, bool& restart) {
             games.coins("shop");
         } else if (input == "/casino" || input.starts_with("/casino ")) {
             games.casino(input.substr(std::min(input.size(), std::string_view("/casino ").size())));
+        } else if (input == "/hub" || input.starts_with("/hub ")) {
+            games.hub(input.substr(std::min(input.size(), std::string_view("/hub ").size())));
         } else if (input == "/world" || input.starts_with("/world ")) {
             games.world(input.substr(std::min(input.size(), std::string_view("/world ").size())));
         } else if (input == "/ascii" || input.starts_with("/ascii ")) {

@@ -284,6 +284,11 @@ void Chat::say(std::string_view text) {
     say_in_general(clean, in_games_log());
 }
 
+void Chat::say_soon(std::string text) {
+    std::scoped_lock lock(say_soon_mutex_);
+    said_soon_.push_back(std::move(text));
+}
+
 void Chat::say_general(std::string_view text) {
     say_in_general(text::sanitize(emojis::replace(text), max_text_bytes), false);
 }
@@ -2211,6 +2216,15 @@ void Chat::run(std::stop_token stop) {
             }
         }
         finish_downloads();
+        // (Here, without the hooks' lock: saying calls them.)
+        std::vector<std::string> soon;
+        {
+            std::scoped_lock lock(say_soon_mutex_);
+            soon.swap(said_soon_);
+        }
+        for (const auto& text : soon) {
+            say_general(text);
+        }
         request_missing_chunks();
         const auto now = clock::now();
         if (now >= next_refresh) {
