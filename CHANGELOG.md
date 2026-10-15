@@ -9,6 +9,8 @@ the first words in bold are what zchat shows when it says what is new.
 
 ## 2026-10-15
 
+* **Links are clickable**: `http://`, `https://` and `www.` links in messages are underlined and open in your
+  browser with a click, no more retyping them letter by letter. Only web links open.
 * **Notifications set as in Discord**: 🔔 at the top right, or `/notify` and `/dnd` (in a terminal too): all
   messages, only @mentions and private messages, or nothing, for all channels or each one (right-click a channel to
   mute it). Pick the sound (six of them, and their volume), the taskbar flashing, the unread count in the title,
