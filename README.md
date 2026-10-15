@@ -60,7 +60,8 @@ without it they are the desktop's own notifications.
 🔔 at the top right (or `/notify` and `/dnd`, also in a terminal) sets what notifies and how, as in Discord: all the
 messages, only the @mentions and private messages (the default), or nothing, for all the channels and for each one
 (right-click a channel to mute it); a sound (six to choose from, and its volume), the taskbar flashing and the number of
-unread messages in the title; what the notifications show of a message (all of it, only who sent it, or nothing); and
+unread messages in the title and on zchat's button in the taskbar (a red circle with how many, on Windows, and in
+the docks and panels of Linux that show counts); what the notifications show of a message (all of it, only who sent it, or nothing); and
 whether @everyone counts. **Do Not Disturb** keeps everything quiet for 15 minutes, an hour, 8 hours, a day or until it
 is turned off: 🔕 at the top and a red dot by your name say it is on, and trills sent to you meanwhile only show in the
 chat. Nothing notifies about the channel you are looking at.

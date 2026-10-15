@@ -303,6 +303,8 @@ struct Gui::Impl {
     std::string info = "{}";
     // Whether the window has the focus, as the page tells: -1 until it does.
     std::atomic<int> focus {-1};
+    // The messages since the window was looked at, on its taskbar button (see popup::badge()).
+    std::atomic<int> unread {0};
 
     std::function<std::vector<Mention>()> mention_source;
     std::function<Mention()> self_source;
@@ -519,6 +521,10 @@ Gui::Gui() {
         const auto parsed = json::parse(args);
         if (parsed && (*parsed)[0].is_bool()) {
             impl_->focus = (*parsed)[0].boolean ? 1 : 0;
+            // Looked at: the count on the taskbar goes.
+            if ((*parsed)[0].boolean && impl_->unread.exchange(0) > 0) {
+                popup::badge(impl_->view.native_window(), 0);
+            }
         }
         return "null";
     });
@@ -538,10 +544,14 @@ Gui::Gui() {
     view.bind("zchatNotifySettings", [](const std::string&) -> std::string {
         return notify::to_json(notify::current());
     });
-    view.bind("zchatSaveNotifySettings", [](const std::string& args) -> std::string {
+    view.bind("zchatSaveNotifySettings", [this](const std::string& args) -> std::string {
         const auto strings = json_strings(args);
         if (!strings.empty()) {
             notify::set(notify::from_json(strings.front(), notify::current()));
+        }
+        // Turned off: the count on the taskbar goes too.
+        if (!notify::current().taskbar && impl_->unread.exchange(0) > 0) {
+            popup::badge(impl_->view.native_window(), 0);
         }
         return notify::to_json(notify::current());
     });
@@ -827,6 +837,16 @@ void Gui::notify(const Notification& n) {
     }
     if (n.flash) {
         popup::flash(impl_->view.native_window());
+    }
+    // One more on the taskbar, while the window is not looked at.
+    if (n.counts && n.taskbar && impl_->focus != 1) {
+        const int count = ++impl_->unread;
+        impl_->view.dispatch([this, count] {
+            // (Unless it was looked at meanwhile.)
+            if (impl_->unread == count) {
+                popup::badge(impl_->view.native_window(), count);
+            }
+        });
     }
     if (!n.desktop) {
         return;

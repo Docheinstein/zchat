@@ -9,6 +9,9 @@ the first words in bold are what zchat shows when it says what is new.
 
 ## 2026-10-15
 
+* **Unread messages on the taskbar icon**: while you look elsewhere, a red circle on zchat's button in the taskbar
+  counts the new messages, until you look at zchat again. On Windows, and on Linux in the docks and panels that show
+  counts (Ubuntu Dock, Dash to Dock, KDE). 🔔 → Window turns it off, or `/notify taskbar off`.
 * **Emoji**: type `:rofl:` and it is sent as 🤣 (`:` and two letters list the matching ones, in a terminal too), or
   pick any of them from 😀 by the input box, searchable, by category, with the ones you used lately first.
 * **Reactions**: hover on a message and react with 👍 ❤️ 😂 😮 😢 🎉, or ☺+ for any emoji; reactions show under the

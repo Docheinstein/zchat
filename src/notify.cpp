@@ -214,6 +214,7 @@ std::vector<std::pair<std::string, std::string>> to_config(const Settings& s) {
         {"notify_volume", std::to_string(s.volume)},
         {"notify_flash", std::string(yes_no(s.flash))},
         {"notify_badge", std::string(yes_no(s.badge))},
+        {"notify_taskbar", std::string(yes_no(s.taskbar))},
         {"notify_suppress_everyone", std::string(yes_no(s.suppress_everyone))},
         {"notify_dnd_until", s.dnd_until == dnd_forever ? std::string("forever") : std::to_string(s.dnd_until)},
         {"notify_dnd_trills", std::string(yes_no(s.dnd_trills))},
@@ -254,6 +255,7 @@ Settings from_config(const std::function<std::optional<std::string>(std::string_
     }
     boolean("notify_flash", s.flash);
     boolean("notify_badge", s.badge);
+    boolean("notify_taskbar", s.taskbar);
     boolean("notify_suppress_everyone", s.suppress_everyone);
     if (const auto v = get("notify_dnd_until"); v) {
         s.dnd_until = *v == "forever" ? dnd_forever : parse_number<long long>(*v).value_or(0);
@@ -273,11 +275,11 @@ std::string to_json(const Settings& s) {
     channels += "}";
     // dnd_until: -1 for forever, else seconds since 1970 (0 when off).
     return std::format("{{\"level\":{},\"desktop\":{},\"messages\":{},\"events\":{},\"when_focused\":{},"
-                       "\"preview\":{},\"sound\":{},\"sound_name\":{},\"volume\":{},\"flash\":{},\"badge\":{},"
+                       "\"preview\":{},\"sound\":{},\"sound_name\":{},\"volume\":{},\"flash\":{},\"badge\":{},\"taskbar\":{},"
                        "\"suppress_everyone\":{},\"dnd_until\":{},\"dnd_trills\":{},\"channels\":{}}}",
                        json::quote(name(s.level)), s.desktop, s.messages, s.events, s.when_focused,
                        json::quote(name(s.preview)), s.sound,
-                       json::quote(s.sound_name), s.volume, s.flash, s.badge, s.suppress_everyone,
+                       json::quote(s.sound_name), s.volume, s.flash, s.badge, s.taskbar, s.suppress_everyone,
                        s.dnd_until == dnd_forever ? -1LL : static_cast<long long>(s.dnd_until), s.dnd_trills,
                        channels);
 }
@@ -310,6 +312,7 @@ Settings from_json(std::string_view text, Settings s) {
     }
     boolean("flash", s.flash);
     boolean("badge", s.badge);
+    boolean("taskbar", s.taskbar);
     boolean("suppress_everyone", s.suppress_everyone);
     if (const auto* until = v.find("dnd_until"); until && until->is_number()) {
         s.dnd_until = until->number < 0 ? dnd_forever : static_cast<std::time_t>(until->number);

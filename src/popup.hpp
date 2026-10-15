@@ -77,4 +77,10 @@ void toast(Toast toast);
 // GtkWindow* on Linux. Thread-safe.
 void flash(void* window);
 
+// Shows a number on a window's button in the taskbar (as for nudge()), how many messages came since it was looked at;
+// 0 takes it away. On Windows a red circle over the icon; on Linux the count of the desktop's dock or panel, where it
+// shows one (the Unity launcher API: GNOME's Dash to Dock and Ubuntu Dock, KDE Plasma's task manager...). On the
+// window's thread.
+void badge(void* window, int count);
+
 } // namespace zchat::popup

@@ -253,7 +253,7 @@ foreach(target IN LISTS zchat_targets)
 endforeach()
 
 if (WIN32)
-    target_link_libraries(zchat PRIVATE ws2_32 iphlpapi shell32 ole32 winmm user32 gdi32)
+    target_link_libraries(zchat PRIVATE ws2_32 iphlpapi shell32 ole32 uuid winmm user32 gdi32)
 endif()
 if (MINGW)
     # A self-contained .exe, without the MinGW runtime DLLs next to it.

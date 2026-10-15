@@ -390,8 +390,9 @@ void print_notify(zchat::Chat& chat) {
     chat.notice(std::format("Desktop notifications: {} (messages: {}, games and other events: {}){}, preview: {}",
                             on(s.desktop), on(s.messages), on(s.events),
                             s.when_focused ? ", also when zchat is in front" : "", notify::name(s.preview)));
-    chat.notice(std::format("Sound: {} ({}, {}%), taskbar flashing: {}, unread count in the title: {}", on(s.sound),
-                            s.sound_name, s.volume, on(s.flash), on(s.badge)));
+    chat.notice(std::format("Sound: {} ({}, {}%), taskbar flashing: {}, unread count in the title: {}, on the taskbar "
+                            "icon: {}",
+                            on(s.sound), s.sound_name, s.volume, on(s.flash), on(s.badge), on(s.taskbar)));
     chat.notice(std::format("@everyone: {}", s.suppress_everyone ? "does not notify" : "notifies"));
     const auto channels = chat.channels();
     for (const auto& [name, level] : s.channels) {
@@ -480,6 +481,7 @@ void notify_command(zchat::Chat& chat, zchat::Screen& screen, std::string_view a
                         : first == "flash"    ? &s.flash
                         : first == "focused"  ? &s.when_focused
                         : first == "badge"    ? &s.badge
+                        : first == "taskbar"  ? &s.taskbar
                         : first == "trills"   ? &s.dnd_trills
                         : first == "everyone" ? &s.suppress_everyone
                                               : nullptr;
@@ -639,9 +641,10 @@ void print_help(zchat::Chat& chat) {
     chat.notice("  /notify      show the notification settings (in the window: 🔔 at the top)");
     chat.notice("  /notify all|mentions|nothing  which messages notify: all, only tags and private ones, or none");
     chat.notice("  /notify #CHANNEL|@NAME|here all|mentions|nothing|default  the same, for one channel or private chat");
-    chat.notice("  /notify desktop|messages|events|sound|flash|focused|everyone|trills on|off  desktop");
-    chat.notice("               notifications (for messages, for games and other events), sound, taskbar flashing,");
-    chat.notice("               notifying while zchat is in front, @everyone, trills in Do Not Disturb");
+    chat.notice("  /notify desktop|messages|events|sound|flash|badge|taskbar|focused|everyone|trills on|off");
+    chat.notice("               desktop notifications (for messages, for games and other events), sound, taskbar");
+    chat.notice("               flashing, the unread count in the title and on the taskbar icon, notifying while zchat");
+    chat.notice("               is in front, @everyone, trills in Do Not Disturb");
     chat.notice("  /notify preview full|name|hidden  what desktop notifications show of a message");
     chat.notice("  /notify test  try a notification");
     chat.notice("  /dnd [30m|1h|8h|...|off]  Do Not Disturb: nothing notifies (for a while, or until /dnd off)");

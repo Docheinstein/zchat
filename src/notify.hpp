@@ -59,6 +59,8 @@ struct Settings {
     bool flash = true;
     // The number of unread messages in the title of the window.
     bool badge = true;
+    // ... and on its button in the taskbar (see popup::badge()).
+    bool taskbar = true;
     // @everyone does not notify (as if it tagged someone else).
     bool suppress_everyone = false;
     // Until when nothing notifies: 0 for never, dnd_forever until it is turned off.
