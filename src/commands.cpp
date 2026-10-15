@@ -8,7 +8,7 @@ namespace zchat::commands {
 namespace {
 
     // As print_help() in main.cpp tells about them: a command added there goes here too.
-    constexpr std::array<Command, 40> table {{
+    constexpr std::array<Command, 41> table {{
         {"/add", "[#CHANNEL] NAME", "add someone to a channel"},
         {"/addemoji", "NAME [SIZE] FILE", "save a picture as an emoji"},
         {"/ascii", "[SIZE] [TEXTURE%] FILE", "send a picture drawn with characters"},
@@ -26,6 +26,7 @@ namespace {
         {"/forget", "", "forget the saved name and get a new one"},
         {"/game", "[help NAME]", "the games everyone can play"},
         {"/help", "[game]", "show the help"},
+        {"/hub", "[who]", "open the 3D hub, with everybody, and go bowling"},
         {"/image", "[SIZE] FILE", "send a picture"},
         {"/join", "NAME", "go to a channel"},
         {"/kick", "NAME", "ask the others to vote NAME out (/kick yes, /kick no)"},

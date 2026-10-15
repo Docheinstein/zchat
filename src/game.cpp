@@ -41,6 +41,7 @@ Games::Games(Chat& chat, Screen& terminal, std::function<void()> kicked) :
     games_.push_back(make_roulette(chat, terminal, *this));
     games_.push_back(make_horses(chat, terminal, *this));
     games_.push_back(make_world(chat, terminal, *this));
+    games_.push_back(make_hub(chat, terminal, *this));
     // Kicks cost coins, which the ratings keep (made next).
     games_.push_back(make_kick(chat, terminal, std::move(kicked), [this](std::string_view item) {
         return ratings_->spend(item);
@@ -276,6 +277,20 @@ void Games::world(std::string_view args) {
         chat_.notice(
             std::format("Unknown command {} for /world: /world enters the world, /world who tells who is in it.",
                         text::sanitize(args, 32)));
+    }
+}
+
+void Games::hub(std::string_view args) {
+    while (!args.empty() && args.front() == ' ') {
+        args.remove_prefix(1);
+    }
+    std::scoped_lock lock(mutex_);
+    Game* hub = std::ranges::find(games_, "hub", &Game::name)->get();
+    if (args.empty()) {
+        hub->start();
+    } else if (!hub->command(args)) {
+        chat_.notice(std::format("Unknown command {} for /hub: /hub opens the hub, /hub who tells who is in it.",
+                                 text::sanitize(args, 32)));
     }
 }
 

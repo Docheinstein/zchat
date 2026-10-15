@@ -345,6 +345,15 @@ Saved emoji (pictures of your own, `/addemoji`) are saved in the `emoji` folder 
 it is sent: `NAME.pic` for a real picture, `NAME.art` for one drawn with characters. So `/emoji NAME` sends it right
 away and the same every time, even if the image file is gone. Names are letters, digits, `-` and `_`, up to 32, and are not case-sensitive.
 
+
+### The hub
+
+🕹️ Hub, at the top of the window (or `/hub`), opens the hub: an experiment, a 3D world in a window of its own that
+everybody in the chat can drop into, like PlayStation Home. Everybody in it is a crewmate of their color: WASD walks
+(Shift runs), dragging the mouse looks around, Enter talks (in `#general`, over your head), and at the end of the
+path there is a bowling pavilion with two lanes: E near one plays a game of ten frames, which the others watch as it
+goes. `/hub who` tells who is in it. It is `hub/`, built with zchat on Windows (`-DZCHAT_HUB=OFF` leaves it out):
+see [hub/README.md](hub/README.md).
 ### Channels
 
 Everybody is always in `#general`, which older versions see too. Other channels are made with `/create`: a public
