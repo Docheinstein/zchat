@@ -39,6 +39,7 @@ target_sources(zchat PUBLIC
     ratings.cpp
     roulette.cpp
     spy.cpp
+    store.cpp
     protocol.cpp
     sound.cpp
     terminal.cpp

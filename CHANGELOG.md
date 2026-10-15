@@ -9,6 +9,12 @@ the first words in bold are what zchat shows when it says what is new.
 
 ## 2026-10-15
 
+* **Messages you missed come to you**: what was said while you were away, in `#general`, your channels and your
+  private chats, comes from whoever has it as soon as you are back (📥), even if who said it is gone: every zchat
+  keeps the last 30 days of what it can see, and they compare what they have. Messages from before show again when
+  zchat starts, in every channel.
+* **The Wordle day ends even if nobody is online at midnight**: whoever played it is kept and synced, and the winner
+  and the coins come as soon as somebody is back.
 * **Links are clickable**: `http://`, `https://` and `www.` links in messages are underlined and open in your
   browser with a click, no more retyping them letter by letter. Only web links open.
 * **Changelog**: what is new in zchat, a day at a time, in `CHANGELOG.md` and in zchat itself: 📜 at the top of the

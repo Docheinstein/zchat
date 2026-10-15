@@ -48,6 +48,10 @@ enum class PacketType : char {
     // or the drawing. (Pictures in a channel are Images whose text starts with "channel CHANNEL" and '\n'.) Older
     // versions do not know 'C' and ignore it, so what is said in a channel stays out of their general.
     ChannelMessage = 'C',
+    // What we keep of what was said (see store.hpp), so that who missed something gets it: "PORT TOPIC:DIGEST ...",
+    // the TCP port to ask for records with "SYNC" (see Chat::serve_sync()), and for each topic we keep, the digest
+    // of its records in hex. Sent now and then, and when somebody joins. Older versions do not know 'S' and ignore it.
+    Sync = 'S',
 };
 
 struct Packet {
@@ -80,6 +84,7 @@ inline constexpr std::size_t max_chunk_bytes = 8'000;
 inline constexpr std::size_t max_chunks = (max_image_bytes + max_chunk_bytes - 1) / max_chunk_bytes;
 inline constexpr std::size_t max_resend_bytes = 4000;
 inline constexpr std::size_t max_channel_state_bytes = 1200;
+inline constexpr std::size_t max_sync_bytes = 1400;
 // The size of an avatar's text (a picture, see image::encode_avatar()), downloaded like an offered Image.
 inline constexpr std::size_t max_avatar_bytes = 4'000'000;
 

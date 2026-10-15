@@ -318,10 +318,21 @@ The name set with `/nick` is saved in the `zchat` config folder: `%APPDATA%\zcha
 `~/.config/zchat/config` on Linux (or `$XDG_CONFIG_HOME/zchat/config`). On start, `--name` wins over the saved
 name, which wins over a random one. The color set with `/color` is saved there too.
 
-The last 50 chat messages, sent and received, are kept in the `history` file of the config folder, with the time
-they were sent at, and shown again when zchat starts, before the welcome (with their date when they are not from
-today). Pictures, joins and other notices are not kept. The file is plain text, one message per line: delete it to
-forget them.
+What is said (messages and drawings, in `#general`, your channels and your private chats) is kept for 30 days in
+the `store` file of the config folder, one record per line (JSON): the last 50 messages of `#general` are shown again
+when zchat starts, before the welcome (with their date when they are not from today), and each channel has its own
+when you go to it. Pictures, files, joins and other notices are not kept. Delete the file to forget them. (The
+`history` file of older versions is brought over once, and only shown here.)
+
+There is no server, so the zchats keep it for each other: every 15 seconds, and when somebody joins, each one tells
+the others what it keeps (a hash of what it has of each topic, a `S` packet), and when two see they differ, one asks
+the other over TCP for what it lacks (`SYNC`, on the port of the pictures). So what was said while you were away
+comes to you (📥) as soon as you are back and somebody who has it is online, even if who said it is gone: A says
+something alone, B comes and gets it from A, A leaves, C comes and gets it from B. Channels and private chats are only
+told to their members. Games keep what they must know the same way: who played the Wordle of a day, so that the day
+ends (the winner, the Elo and the coins) even if nobody was online at its midnight, as soon as somebody is back. Such
+updates due later wait in the `queue` file of the config folder, and run 40 seconds after zchat starts, once what
+the others have has come.
 
 Emoji are saved in the `emoji` folder of the config folder (`%APPDATA%\zchat\emoji` on Windows), one file each, as
 it is sent: `NAME.pic` for a real picture, `NAME.art` for one drawn with characters. So `/emoji NAME` sends it right
