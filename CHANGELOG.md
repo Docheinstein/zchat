@@ -11,6 +11,9 @@ the first words in bold are what zchat shows when it says what is new.
 
 * **Links are clickable**: `http://`, `https://` and `www.` links in messages are underlined and open in your
   browser with a click, no more retyping them letter by letter. Only web links open.
+* **Changelog**: what is new in zchat, a day at a time, in `CHANGELOG.md` and in zchat itself: 📜 at the top of the
+  window, `/changelog [N|all]` (in a terminal too), and after an update zchat says once what is new since you last
+  looked.
 * **Longer games pay more coins**, so that an hour of any game pays about the same: a round's coins are multiplied
   by about how many minutes it takes, ×2 in Bomber, ×3 in Arena and Frag, ×5 in Wordle and ×8 in Pokémon (race and
   dice ×1).
@@ -44,9 +47,9 @@ the first words in bold are what zchat shows when it says what is new.
 
 ## 2026-10-08
 
-* Pokémon challenges come up in a popup.
+* **Pokémon challenges** come up in a popup.
 * **Coins start over**: everybody starts again from 50 on their first start of this zchat, since balances had been
-  changed by hand; what older versions say about coins is ignored.
+  changed by hand; what older versions say about coins is ignored. The sealed balances get a new key, too.
 
 ## 2026-10-07
 
@@ -58,27 +61,40 @@ the first words in bold are what zchat shows when it says what is new.
   chat of just the two of you, listed under Private chats; `/leave` closes it until something new is said.
 * **Quotes**: hover a message and click Quote, or `/quote [@NAME] MESSAGE`; the quote shows above the reply, and
   whoever is quoted hears a sound.
-* Pokémon battles are animated, moves too, in a bigger window.
+* **Animated Pokémon battles**: the Pokémon and their moves are animated, in a bigger window.
 
 ## 2026-10-06
 
-* **Radical Candor** (`/game candor`, 🗣️ Candor at the top): an idle game, ZURU style, with Auto toggles that keep
-  hiring while you are away, and Shareholders, a tier after the Board who elect Board Members (×3 with the
-  Brutally Honest AGM upgrade). The Max hire button takes clicks again.
-* Each line in the chat shows the time it came at; hovering on it shows the date too.
+* **Shareholders** in Radical Candor: a new tier after the Board, who elect Board Members; the Brutally Honest AGM
+  upgrade makes them ×3.
+* Radical Candor's Max hire button takes clicks again: its label no longer gets rebuilt mid-click.
+
+## 2026-10-05
+
+* **Radical Candor** (`/game candor`, 🗣️ Candor at the top): an idle game, ZURU style, where you hire Developers,
+  HR Partners, Team Leads and on up to the Board, to make candor until JavaScript runs out of numbers.
+* **Autobuy** in Radical Candor: each tier has an Auto toggle, which keeps hiring whenever candor pays for it, even
+  while you are away.
+* **Dates in the chat**: each line shows the time it came at; hovering on it shows the date too.
 
 ## 2026-10-02
 
-* **New games for the whole chat**: Bomber (`/game bomber`, Bomberman), Arena (`/game arena`, a top-down shooter)
-  and Frag (`/game frag`, a cartoon first-person shooter), three-minute deathmatches where each player taken out
-  pays a coin.
+* **Bomber** (`/game bomber`): Bomberman for the whole chat; blow up crates and each other, and the last one
+  standing wins Elo and coins.
+* **Arena** (`/game arena`): a top-down shooter for the whole chat, three minutes of deathmatch; each player taken
+  out pays a coin, and the window shows what they made you.
+* **Frag** (`/game frag`): a cartoon first-person shooter for the whole chat, three minutes of deathmatch; each
+  player taken out pays a coin.
 * **Casino**: blackjack, roulette and a horse race for coins, at tables the whole chat shares, in a window of its
   own (`/casino`, 🎰 Casino at the top).
-* **Spy**: `/spy @NAME` asks to see someone's screens, captured only if they allow it from a popup in the corner;
-  10 coins when accepted, 5 of which go to whoever agrees.
+* **Spy**: `/spy @NAME` asks to see someone's screens, captured only if they let you, from a popup in the corner
+  like the dice window. Not answering in time lets you in too, and only `/spy deny` refuses. 10 coins when
+  accepted, 5 of which go to whoever agrees.
 * **Games log**: in the window, what the games say goes to `#games-log`, so the chat stays a chat.
-* At startup zchat checks for a newer version in the background and says what is new.
-* Pokémon gets a Poké Ball: on its button at the top, and a red ◓ in front of its notices.
+* **What is new at startup**: zchat checks for a newer version in the background and says what is new, and that
+  `/update` installs it.
+* Pokémon gets a Poké Ball instead of the swords: its button at the top is Pokémon, not Battle, and its notices
+  start with a red ◓, like a Poké Ball's top.
 
 ## 2026-10-01
 
@@ -87,37 +103,55 @@ the first words in bold are what zchat shows when it says what is new.
 * **Elo ratings** for the games, overall and per game, with leaderboards: `/game leaderboard [NAME|all]`
   (or `/game top`) and `/game elo [NAME]`.
 * **/kick NAME**: the rest of the chat votes someone out in 20 seconds (`/kick yes`, `/kick no`, or the Kick and
-  Grace buttons); with at least as many votes to kick as to grace, their zchat closes.
+  Grace buttons); with at least as many votes to kick as to grace, their zchat closes. `/kick @NAME` works too: the
+  `@` the list of people types is not part of the name (for the Pokémon challenges too).
 * **Pokémon of every generation**: random battles from Gen 1 to Gen 9, with Mega Evolution, Ultra Burst, Z-Moves
-  and Dynamax; challenges pop up as a card with Accept and Decline; Cancel takes a choice back, as on Showdown.
-* `/help` is grouped by topic, and `/game help NAME` tells how to play each game.
+  and Dynamax; ⚔ Battle in the window picks who and which generation.
+* **Pokémon challenges** pop up in the window as a card with Accept and Decline buttons, and the seconds left to
+  answer; `/game pokemon challenge` finds people by their plain names, so it works in a window too.
+* **Cancel in Pokémon**: takes a choice back, as on Showdown, until the other player chooses too
+  (`/game pokemon cancel`).
+* The only move left in a Pokémon battle (Recharge, a locked Outrage, Struggle, Gen 1's sleepy Fight) can be
+  clicked: it has no PP, it is not out of them.
+* **/help by topic**, with the games' commands only under `/game`: `/game help NAME` (or `/help game NAME`) tells
+  how to play one.
 * Dropping a file on the window works on Linux, and the window builds there; the Windows version cross-compiles
   from Linux.
+* The tests build again with Visual Studio.
 
 ## 2026-09-30
 
-* **The window**: zchat gets a graphical window, with avatars (`/avatar`, GIFs play), channels, chat history,
-  emojis and GIFs.
+* **The window**: zchat gets a graphical window, with chat history, emojis, and a place to change your avatar and
+  name.
+* **Avatars**: `/avatar FILE` sets the picture everybody sees next to your name (a GIF plays).
+* **Channels**: public ones anybody can join and private ones for who you add.
+* **GIFs**: send them, and they play.
 * **Files**: send any type of file, downloadable with `/save`.
-* **/trill [MP3]**: everybody hears an MP3 once (`/trill` alone plays the built-in *Fahhh*), with a STOP to catch,
-  a shaking window and a flying picture.
+* **/trill [MP3]**: everybody else hears an MP3 once at full volume (`/trill` alone plays the built-in *Fahhh*),
+  with a STOP to catch, a shaking window and a flying picture.
 * **/game pokemon**: Pokémon Showdown's random battles between two people in the chat, in a Showdown-like window
   anybody can watch.
 * **/game wordle**: the New York Times' Wordle of the day for the whole chat, lasting until the new word at
   midnight.
-* The dice game gets a window, and pictures look better as ASCII art.
+* **Dice in a window**: the dice game gets its own window.
+* **Better ASCII art**: pictures drawn with characters look better, and `/ascii` takes how much texture to use
+  (0% blocks only, to 100% symbols only).
 
 ## 2026-09-29
 
-* **Games**: `/game race` (a typing race that copy and paste cannot win), `/game paint` (a shared 16×16 canvas) and
-  `/game dice` (push your luck).
-* **Tagging with @** and **@everyone**, with a list of who is online and a notification sound.
-* **Pictures**: send them by dropping them or with `/image`, shown as blocks of color, scaled, the same in every
-  terminal.
-* Bold, italic, underline and strikethrough; nicknames and name colors; `/whoami`.
+* **Games**: `/game race`, a typing race (first called Fastest finger, `/game finger`) that copy and paste cannot
+  win; `/game paint`, a shared 16×16 canvas everyone colors; and `/game dice`, push your luck.
+* **Tagging with @** and **@everyone**, with a list of who is online to pick from and a notification sound.
+* **Pictures**: send them by dropping them or with `/image`, colored, scaled, and shown as blocks of color that
+  look the same in every terminal and font. Dropped pictures with quotes in their name work, and
+  `extras/terminator_fix_drop.py` fixes dropping files on Terminator 2.1.3.
+* **Text styles**: bold, italic, underline, strikethrough and color tags (`/tags`), and the cursor moves left and
+  right in what you type, which scrolls sideways when it is long.
+* **Names**: `/nick` and `/color` set your name and its color, `/forget` gets a new random one, and `/whoami`
+  shows it.
 * **/update** pulls, rebuilds and restarts zchat, listing what is new.
-* Messages no longer travel over the network in plaintext.
+* **Scrambled packets**: messages no longer travel over the network in plaintext.
 
 ## 2026-09-25
 
-* First version: a chat for everyone on the local network, with no server, no accounts and no setup.
+* **First version**: a chat for everyone on the local network, with no server, no accounts and no setup.
