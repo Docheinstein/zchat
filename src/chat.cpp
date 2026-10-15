@@ -1439,7 +1439,7 @@ void Chat::switch_to(const std::string& name) {
         notice(std::format("You are in {}: only the two of you see what is said, drawn and sent here; /leave "
                            "closes it.{}",
                            channel_label(name),
-                           entries.empty() ? " Nothing said here yet (since zchat started)." : ""));
+                           entries.empty() ? " Nothing said here in the last 30 days." : ""));
         for (const auto& entry : entries) {
             show(entry, false);
         }
@@ -1451,7 +1451,7 @@ void Chat::switch_to(const std::string& name) {
                            name, entries.empty() ? " No game has said anything yet (since zchat started)." : ""));
     } else {
         notice(std::format("You are in #{}{}.{}", name, what,
-                           entries.empty() ? " Nothing said here yet (since zchat started)." : ""));
+                           entries.empty() ? " Nothing said here in the last 30 days." : ""));
     }
     for (const auto& entry : entries) {
         show(entry, false);
