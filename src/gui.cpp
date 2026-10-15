@@ -297,9 +297,20 @@ struct Gui::Impl {
     std::deque<std::string> lines;
     bool closed = false;
     bool interrupted = false;
-    // Until the page has loaded, what is printed waits here.
+    // Until the page has loaded, what is shown waits here, as the page's calls (see show()).
     bool ready = false;
     std::vector<std::string> waiting;
+
+    // Shows something (the page's JavaScript that does it): right away, or once the page has loaded, in order, so that
+    // what is shown at start (the messages from before, with their reactions and pictures) is as it is later. With
+    // the mutex locked.
+    void show(std::string js) {
+        if (ready) {
+            eval(std::move(js));
+        } else {
+            waiting.push_back(std::move(js));
+        }
+    }
     std::string info = "{}";
     // Whether the window has the focus, as the page tells: -1 until it does.
     std::atomic<int> focus {-1};
@@ -355,8 +366,8 @@ Gui::Gui() {
         std::scoped_lock lock(impl_->mutex);
         impl_->ready = true;
         impl_->view.eval(std::format("zchat.info({})", impl_->info));
-        for (const auto& line : impl_->waiting) {
-            impl_->view.eval(std::format("zchat.print({})", json_string(line)));
+        for (const auto& js : impl_->waiting) {
+            impl_->view.eval(js);
         }
         impl_->waiting.clear();
         return "null";
@@ -661,11 +672,7 @@ void Gui::set_prompt(std::string, std::size_t) {
 
 void Gui::print(std::string_view line) {
     std::scoped_lock lock(impl_->mutex);
-    if (!impl_->ready) {
-        impl_->waiting.emplace_back(line);
-        return;
-    }
-    impl_->eval(std::format("zchat.print({})", json_string(line)));
+    impl_->show(std::format("zchat.print({})", json_string(line)));
 }
 
 std::optional<std::string> Gui::read_line() {
@@ -718,10 +725,7 @@ bool Gui::show_game(std::string_view game, std::string_view state) {
 
 bool Gui::clear() {
     std::scoped_lock lock(impl_->mutex);
-    if (!impl_->ready) {
-        return false;
-    }
-    impl_->eval("zchat.clear()");
+    impl_->show("zchat.clear()");
     return true;
 }
 
@@ -745,37 +749,23 @@ bool Gui::show_image(std::string_view line, int width, int height, const std::ve
         list += std::format("[\"data:{};base64,{}\",{}]", frame.mime, frame.base64, frame.delay_ms);
     }
     list += "]";
-    const std::string js = std::format("zchat.image({},{},{},{})", json_string(line), width, height, list);
     std::scoped_lock lock(impl_->mutex);
-    if (!impl_->ready) {
-        // Before the page is loaded: nothing can be shown yet, the chat draws it instead (only at start, if ever).
-        return false;
-    }
-    impl_->eval(js);
+    impl_->show(std::format("zchat.image({},{},{},{})", json_string(line), width, height, list));
     return true;
 }
 
 bool Gui::show_file(std::string_view line, std::size_t index, std::string_view name, std::string_view size) {
-    const std::string js =
-        std::format("zchat.file({},{},{},{})", json_string(line), index, json_string(name), json_string(size));
     std::scoped_lock lock(impl_->mutex);
-    if (!impl_->ready) {
-        return false;
-    }
-    impl_->eval(js);
+    impl_->show(std::format("zchat.file({},{},{},{})", json_string(line), index, json_string(name), json_string(size)));
     return true;
 }
 
 bool Gui::show_message(std::string_view line, std::optional<std::string_view> quote, std::string_view reply_quote,
                        std::string_view key) {
-    const std::string js =
-        std::format("zchat.message({},{},{},{})", json_string(line), quote ? json_string(*quote) : std::string("null"),
-                    json_string(reply_quote), json_string(key));
     std::scoped_lock lock(impl_->mutex);
-    if (!impl_->ready) {
-        return false;
-    }
-    impl_->eval(js);
+    impl_->show(std::format("zchat.message({},{},{},{})", json_string(line),
+                            quote ? json_string(*quote) : std::string("null"), json_string(reply_quote),
+                            json_string(key)));
     return true;
 }
 
@@ -787,12 +777,8 @@ bool Gui::show_reactions(std::string_view key, const std::vector<Reaction>& reac
                             json_string(r.who));
     }
     list += "]";
-    const std::string js = std::format("zchat.reactions({},{})", json_string(key), list);
     std::scoped_lock lock(impl_->mutex);
-    if (!impl_->ready) {
-        return false;
-    }
-    impl_->eval(js);
+    impl_->show(std::format("zchat.reactions({},{})", json_string(key), list));
     return true;
 }
 
