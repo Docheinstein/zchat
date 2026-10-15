@@ -55,11 +55,17 @@ namespace {
 
 } // namespace
 
-std::vector<long long> payouts(const std::vector<int>& places) {
+long long length(std::string_view game) {
+    const auto it = std::ranges::find(lengths, game, &Length::game);
+    return it == lengths.end() ? 1 : it->times;
+}
+
+std::vector<long long> payouts(const std::vector<int>& places, std::string_view game) {
     std::vector<long long> out(places.size(), 0);
     if (places.size() < 2) {
         return out;
     }
+    const long long times = length(game);
     for (std::size_t i = 0; i < places.size(); ++i) {
         out[i] = for_playing;
         for (std::size_t j = 0; j < places.size(); ++j) {
@@ -67,6 +73,7 @@ std::vector<long long> payouts(const std::vector<int>& places) {
                 out[i] += places[i] < places[j] ? per_beaten : places[i] == places[j] ? per_tie : 0;
             }
         }
+        out[i] *= times;
     }
     return out;
 }

@@ -215,7 +215,9 @@ before trills show nothing; the ones with sound-only trills play the sound of tr
 Winning games is not only for the leaderboards: every round of a game with a winner (the same rounds that change Elo
 ratings: race, dice, wordle, pokemon, bomber, arena and frag) pays its players coins, which buy the annoying commands. Each player gets 2
 for playing, and 4 more for each player they beat (2 for each they tied with): the winner of a duel gets 6 and the
-loser 2, and the winner of a race of five 18. Everybody starts with 50, enough to trill and kick right away, and the
+loser 2, and the winner of a race of five 18. Longer games pay more, so that an hour of any of them pays about the
+same: a round's coins are multiplied by about how many minutes it takes, x2 in bomber, x3 in arena and frag, x5 in
+wordle and x8 in pokemon (race and dice x1; see `coins::lengths` in `src/coins.hpp`). Everybody starts with 50, enough to trill and kick right away, and the
 chat shows what each player of a round won, with their new balance. In frag every player you take out pays you 1 coin
 more, right away, whether you win the round or not.
 

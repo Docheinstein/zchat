@@ -30,6 +30,13 @@ TEST(coins_payouts) {
     // Alone, or nobody: nothing.
     CHECK_EQ(payouts({0})[0], 0LL);
     CHECK(payouts({}).empty());
+    // Longer games pay more: a duel of Pokémon more than one of dice, by the game's length.
+    CHECK_EQ(payouts({0, 1}, "dice")[0], for_playing + per_beaten);
+    CHECK_EQ(payouts({0, 1}, "pokemon")[0], length("pokemon") * (for_playing + per_beaten));
+    CHECK(length("pokemon") > length("wordle"));
+    CHECK(length("wordle") > length("dice"));
+    CHECK_EQ(length("nothing"), 1LL);
+    CHECK_EQ(payouts({0}, "pokemon")[0], 0LL);
 }
 
 TEST(coins_prices) {

@@ -203,7 +203,7 @@ namespace {
                 }
             }
             chat_.game_notice(std::format("📈 Elo in {}: {}. In all games: {}.", game, lines[0], lines[1]));
-            pay(players, places);
+            pay(game, players, places);
             if (us) {
                 config::set("elo", elo::encode(own_));
                 save_coins();
@@ -271,7 +271,8 @@ namespace {
             }
             chat_.game_notice(
                 std::format("  Win rounds of /game to earn more: {} for playing, and {} more for each player "
-                            "you beat ({} for a tie).",
+                            "you beat ({} for a tie), times how long the game takes: x2 bomber, x3 arena and frag, "
+                            "x5 wordle, x8 pokemon.",
                             plural(coins::for_playing, "coin"), coins::per_beaten, coins::per_tie));
         }
 
@@ -410,10 +411,10 @@ namespace {
             return name;
         }
 
-        // The coins of a round's players (the best placed first, at places): ours are ours to change; the others'
-        // change too, to show them, until they tell theirs.
-        void pay(const std::vector<Placing>& players, const std::vector<int>& places) {
-            const auto payouts = coins::payouts(places);
+        // The coins of a round of game's players (the best placed first, at places): ours are ours to change; the
+        // others' change too, to show them, until they tell theirs.
+        void pay(std::string_view game, const std::vector<Placing>& players, const std::vector<int>& places) {
+            const auto payouts = coins::payouts(places, game);
             std::string line;
             for (std::size_t i = 0; i < players.size(); ++i) {
                 std::optional<long long> balance;
