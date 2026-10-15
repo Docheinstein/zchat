@@ -1,5 +1,6 @@
 #include "gui.hpp"
 
+#include "changelog.hpp"
 #include "config.hpp"
 #include "image.hpp"
 #include "json.hpp"
@@ -507,6 +508,18 @@ Gui::Gui() {
             impl_->focus = (*parsed)[0].boolean ? 1 : 0;
         }
         return "null";
+    });
+    // The changelog (📜), its days newest first: [{"date": "YYYY-MM-DD", "items": ["markdown", ...]}, ...].
+    view.bind("zchatChangelog", [](const std::string&) -> std::string {
+        std::string out = "[";
+        for (const auto& day : changelog::parse(changelog::text())) {
+            out += (out.size() == 1 ? "" : ",") + std::string("{\"date\":") + json_string(day.date) + ",\"items\":[";
+            for (std::size_t i = 0; i < day.items.size(); ++i) {
+                out += (i == 0 ? "" : ",") + json_string(day.items[i]);
+            }
+            out += "]}";
+        }
+        return out + "]";
     });
     // The notification settings (🔔), as notify::to_json() writes them; saving them gives them back as saved.
     view.bind("zchatNotifySettings", [](const std::string&) -> std::string {

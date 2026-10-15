@@ -4,6 +4,7 @@ file(GLOB zchat_test_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cp
 add_executable(zchat_tests
     ${zchat_test_sources}
     "${PROJECT_SOURCE_DIR}/src/casino.cpp"
+    "${PROJECT_SOURCE_DIR}/src/changelog.cpp"
     "${PROJECT_SOURCE_DIR}/src/channel.cpp"
     "${PROJECT_SOURCE_DIR}/src/coins.cpp"
     "${PROJECT_SOURCE_DIR}/src/color.cpp"
@@ -22,6 +23,8 @@ target_link_libraries(zchat_tests PRIVATE Threads::Threads)
 target_include_directories(zchat_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}")
 # The sample battles the tests replay.
 target_compile_definitions(zchat_tests PRIVATE ZCHAT_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/pokemon")
+# CHANGELOG.md, which the changelog tests read.
+target_compile_definitions(zchat_tests PRIVATE ZCHAT_CHANGELOG="${PROJECT_SOURCE_DIR}/CHANGELOG.md")
 
 if (MSVC)
     # /MP: the sources compiled in parallel, which Visual Studio's projects do not do otherwise.
